@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.testnet
+.env.mainnet
+!.env.example
+!.env.testnet.example
+
+# Sandbox verification artifacts (not needed locally)
+tsconfig.verify.json
+src/@types/

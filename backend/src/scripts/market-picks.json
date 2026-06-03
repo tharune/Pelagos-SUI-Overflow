@@ -1,0 +1,212 @@
+{
+  "PBU-HIGH-MED": {
+    "description": "High-confidence bundle - 10+ uncorrelated markets ~85-95%",
+    "theme": "High Probability Q2 2026",
+    "legs": [
+      {
+        "market_id": "704474",
+        "conditionId": "0xd4a3de1964b1f3fa1edeca40dbc3ef6663a56fda84e804066c23096b615904f9",
+        "question": "Will Byron Donalds be the Republican nominee for Florida Governor?",
+        "probability": 0.815,
+        "endDate": "2026-08-18T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-byron-donalds-be-the-republican-nominee-for-florida-governor",
+        "volume": 96024
+      },
+      {
+        "market_id": "1032360",
+        "conditionId": "0x34d867aeff04b463703f13cddd9fd311f6756eba27be3037cf1153ab32d0a758",
+        "question": "Will Silver (SI) settle over $60 on the final trading day of June 2026?",
+        "probability": 0.805,
+        "endDate": "2026-06-30T17:30:00Z",
+        "polymarket_url": "https://polymarket.com/event/si-above-60-jun-2026",
+        "volume": 9887
+      },
+      {
+        "market_id": "1283385",
+        "conditionId": "0x27530b14f2a2cf4e69103b658c6357d55e5068d433689d725ed8718cb61d5513",
+        "question": "Will the Democratic Party win the IL-09 House seat?",
+        "probability": 0.925,
+        "endDate": "2026-11-03T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-democratic-party-win-the-il-09-house-seat",
+        "volume": 9715
+      },
+      {
+        "market_id": "1281109",
+        "conditionId": "0xed91c4b84104e197f69c7062fe7df6468a721048c2d7a56d229137a7f09d9bb5",
+        "question": "Will the Democratic Party win the CA-26 House seat?",
+        "probability": 0.935,
+        "endDate": "2026-11-03T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-democratic-party-win-the-ca-26-house-seat",
+        "volume": 9625
+      },
+      {
+        "market_id": "1284195",
+        "conditionId": "0x4f94ead615e1ae80cb9351a7be1cdfcd01d756edab94d5f0d528c26b059d148d",
+        "question": "Will the Democratic Party win the NM-01 House seat?",
+        "probability": 0.92,
+        "endDate": "2026-11-03T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-democratic-party-win-the-nm-01-house-seat",
+        "volume": 9610
+      },
+      {
+        "market_id": "1129970",
+        "conditionId": "0x737afe0f3f066b3680d27206f026452c4cfab0b2de1cdeac02ab16fdb252be22",
+        "question": "Will the WNBA and WNBPA sign a new CBA by June 30, 2026?",
+        "probability": 0.925,
+        "endDate": "2026-06-30T23:55:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-wnba-and-wnbpa-sign-a-new-cba-by-june-30-2026",
+        "volume": 9494
+      },
+      {
+        "market_id": "1284299",
+        "conditionId": "0xdf533114d83b2408875558a9cf8ef34fdf172d704b97261a0aa383f3197762f1",
+        "question": "Will the Democratic Party win the NY-13 House seat?",
+        "probability": 0.935,
+        "endDate": "2026-11-03T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-democratic-party-win-the-ny-13-house-seat",
+        "volume": 9483
+      },
+      {
+        "market_id": "1282793",
+        "conditionId": "0xd031dab0b5050a1ebc5820b04033a17d192eab202c7655363057cb958e4afea4",
+        "question": "Will the Democratic Party win the CA-44 House seat?",
+        "probability": 0.935,
+        "endDate": "2026-11-03T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-democratic-party-win-the-ca-44-house-seat",
+        "volume": 9405
+      },
+      {
+        "market_id": "1300847",
+        "conditionId": "0xfe6ad3c84f701a4338a0aa9f5fa979e38b0c199b280a669c44a00b1e2268d115",
+        "question": "Will Kevin Cramer vote to confirm Kevin Warsh as Chair of the Federal Reserve?",
+        "probability": 0.9495,
+        "endDate": "2026-06-30T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-kevin-cramer-vote-to-confirm-kevin-warsh-as-chair-of-the-federal-reserve",
+        "volume": 995
+      },
+      {
+        "market_id": "907493",
+        "conditionId": "0x02c23da27e72ea0b2823e6399a59a056f12c5d5d52462561362412db398253e9",
+        "question": "Will Phil Scott win the 2026 Vermont Governor Republican primary election?",
+        "probability": 0.958,
+        "endDate": "2026-08-11T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-phil-scott-win-the-2026-vermont-governor-republican-primary-election",
+        "volume": 989
+      },
+      {
+        "market_id": "1748208",
+        "conditionId": "0x58062e40752fac4da943cc20845f5d0796a5ed3412eb90cf43438989813be0a9",
+        "question": "Will Tesla (TSLA) close above $310 end of April?",
+        "probability": 0.925,
+        "endDate": "2026-04-30T20:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/tsla-above-310-on-april-30-2026",
+        "volume": 982
+      }
+    ]
+  },
+  "PBU-MID-MED": {
+    "description": "Medium-confidence bundle - 10+ uncorrelated markets ~60-75%",
+    "theme": "Mixed Q2 2026",
+    "legs": [
+      {
+        "market_id": "566187",
+        "conditionId": "0xcba24842ceac7a40d2a8b9adde1f4407999b6505193b9fd68156ae76fbffa706",
+        "question": "Will Arsenal win the 2025–26 English Premier League?",
+        "probability": 0.595,
+        "endDate": "2026-05-27T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-arsenal-win-the-202526-english-premier-league",
+        "volume": 9567178
+      },
+      {
+        "market_id": "1919425",
+        "conditionId": "0x0e4a0c937b8934c2475613b6322b3f8edc8dedc24762e01e42b0e6f87424a089",
+        "question": "US x Iran permanent peace deal by May 31, 2026?",
+        "probability": 0.595,
+        "endDate": "2026-05-31T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/us-x-iran-permanent-peace-deal-by-may-31-2026",
+        "volume": 952428
+      },
+      {
+        "market_id": "1193498",
+        "conditionId": "0x6d6fd5d251ce4cf80ec381a0fb7fcccefff4859ba7be92eddb1f7e6b1ef48595",
+        "question": "Will Arsenal win a trophy this season?",
+        "probability": 0.668,
+        "endDate": "2026-05-30T23:55:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-arsenal-win-a-trophy-this-season",
+        "volume": 99275
+      },
+      {
+        "market_id": "643372",
+        "conditionId": "0xcaae05dcafef682bc415aff28d9c9b4552c0feb3fbbb168beb053385e14dfdb8",
+        "question": "Will the Charlotte Hornets make the NBA Playoffs?",
+        "probability": 0.63,
+        "endDate": "2026-04-12T21:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-the-charlotte-hornets-make-the-nba-playoffs-311",
+        "volume": 99152
+      },
+      {
+        "market_id": "1345482",
+        "conditionId": "0xd80f3e7fc5ea2f2d5a162aaa589b9ba067be58c9a4b411ff08a22b82ffcd5dfd",
+        "question": "Will SpaceX’s initial public offering occur in June 2026 (ET)?",
+        "probability": 0.64,
+        "endDate": "2026-12-31T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-spacexs-initial-public-offering-occur-in-june-2026-et",
+        "volume": 97993
+      },
+      {
+        "market_id": "1271613",
+        "conditionId": "0xe636566f6a640292e81dcbe2a4aa527a26629465cc93683bc2422dba76874cdc",
+        "question": "Will OpenSea launch a token by December 31, 2026?",
+        "probability": 0.6035,
+        "endDate": "2027-01-01T05:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-opensea-launch-a-token-by-december-31-2026",
+        "volume": 97927
+      },
+      {
+        "market_id": "1038643",
+        "conditionId": "0x2c7f9b2304dc04b86afce858b51b01b34a742c43994a162d4c6fa551d7a3e8ea",
+        "question": "Will Loopscale launch a token by December 31, 2026?",
+        "probability": 0.585,
+        "endDate": "2027-01-01T05:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-loopscale-launch-a-token-by-december-31-2026",
+        "volume": 94801
+      },
+      {
+        "market_id": "999095",
+        "conditionId": "0x26e6aa82c5fa62e9a146521aa5bfd7b5f4c5b47b92e66507defe992bd09a173f",
+        "question": "ECB rate hike in 2026?",
+        "probability": 0.735,
+        "endDate": "2026-12-31T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/ecb-rate-hike-in-2026",
+        "volume": 93870
+      },
+      {
+        "market_id": "907358",
+        "conditionId": "0x3d6221450862c69f69e9b278a9119fc3e11f1c794650f7cddf283d4adefeee20",
+        "question": "Will Dan Cox win the 2026 Maryland Governor Republican primary election?",
+        "probability": 0.565,
+        "endDate": "2026-06-23T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-dan-cox-win-the-2026-maryland-governor-republican-primary-election",
+        "volume": 93702
+      },
+      {
+        "market_id": "630964",
+        "conditionId": "0x94521176f57d2ce81dde01e0b7699ca4279423042d37ed53908f0c8bfefe7e14",
+        "question": "Will the Republicans win the Texas Senate race in 2026?",
+        "probability": 0.57,
+        "endDate": "",
+        "polymarket_url": "https://polymarket.com/event/will-the-republicans-win-the-texas-senate-race-in-2026",
+        "volume": 93531
+      },
+      {
+        "market_id": "1285586",
+        "conditionId": "0x4a3ae5bc03b849fa2aae19b687428cc9cbf27ce27a966bacdc879fa067a62a2d",
+        "question": "Will an Anthropic Claude model score at least 45% on Humanity’s Last Exam?",
+        "probability": 0.71,
+        "endDate": "2026-06-30T00:00:00Z",
+        "polymarket_url": "https://polymarket.com/event/will-an-anthropic-claude-model-score-at-least-45-on-humanitys-last-exam",
+        "volume": 93472
+      }
+    ]
+  }
+}

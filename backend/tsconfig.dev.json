@@ -1,0 +1,14 @@
+{
+  // Runtime config for tsx (dev watch + scripts).
+  //
+  // The base tsconfig maps "@mysten/sui/*" to the SDK's .d.mts type files so
+  // `tsc` can type-check a pure-ESM, exports-map-only package under classic
+  // module resolution. tsx honors tsconfig `paths` at RUNTIME, so under the base
+  // config it would try to execute those declaration files (and fail). Clearing
+  // `paths` here lets tsx resolve the SDK's real .mjs entrypoints via the package
+  // exports map. Compiled output (`node dist`) is unaffected — it ignores paths.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {}
+  }
+}

@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pelagos · Protocol Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07080b;
+    --bg-2: #0a0c11;
+    --panel: #10131a;
+    --panel-2: #141821;
+    --border: #1a1f2a;
+    --border-strong: #232a38;
+    --text: #e8edf5;
+    --text-2: #a0adc2;
+    --text-3: #5e6b80;
+    --text-4: #3a4458;
+    --teal: #2dd4bf;
+    --teal-dim: #14b8a6;
+    --blue: #60a5fa;
+    --blue-dim: #3b82f6;
+    --amber: #fbbf24;
+    --amber-dim: #f59e0b;
+    --green: #4ade80;
+    --green-dim: #22c55e;
+    --red: #f87171;
+    --red-dim: #ef4444;
+    --violet: #c084fc;
+    --violet-dim: #a855f7;
+    --pink: #f472b6;
+    --pink-dim: #ec4899;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-feature-settings: 'cv02','cv03','cv04','cv11';
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+  a { color: inherit; }
+  code, .mono, .val { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
+
+  /* === Header === */
+  header {
+    position: sticky; top: 0; z-index: 30;
+    background: rgba(7, 8, 11, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 26px; height: 26px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--teal) 0%, var(--blue) 100%);
+    display: grid; place-items: center;
+    font-weight: 700; color: #001814; font-size: 13px;
+  }
+  .brand-title { font-size: 14px; font-weight: 700; letter-spacing: 0.08em; }
+  .brand-sub { color: var(--text-3); font-size: 12px; }
+  .breadcrumb-sep { color: var(--text-4); margin: 0 2px; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .status-pill.ok    { background: rgba(74, 222, 128, 0.12); color: var(--green); border: 1px solid rgba(74, 222, 128, 0.25); }
+  .status-pill.warn  { background: rgba(251, 191, 36, 0.12); color: var(--amber); border: 1px solid rgba(251, 191, 36, 0.25); }
+  .status-pill.err   { background: rgba(248, 113, 113, 0.12); color: var(--red); border: 1px solid rgba(248, 113, 113, 0.25); }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.3);
+  }
+  .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 currentColor, 0 0 0 2px rgba(0,0,0,0.3); opacity: 1; }
+    50%      { box-shadow: 0 0 0 6px rgba(255,255,255,0), 0 0 0 2px rgba(0,0,0,0.3); opacity: 0.55; }
+  }
+
+  .controls { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .controls .meta { color: var(--text-3); font-family: 'JetBrains Mono', monospace; margin-right: 6px; }
+  .btn {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 6px 12px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { border-color: var(--border-strong); background: var(--panel-2); }
+  .btn.accent { background: rgba(45, 212, 191, 0.08); color: var(--teal); border-color: rgba(45, 212, 191, 0.25); }
+  .btn.accent:hover { background: rgba(45, 212, 191, 0.15); }
+  .btn.warn { color: var(--amber); border-color: rgba(251, 191, 36, 0.25); background: rgba(251, 191, 36, 0.06); }
+  select.btn { padding-right: 22px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23a0adc2'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+
+  /* === Grid === */
+  main { padding: 18px 24px 48px; display: flex; flex-direction: column; gap: 14px; }
+  .row-label {
+    color: var(--text-4); font-size: 10px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 10px 0 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .row-label::before { content: ''; display: inline-block; width: 14px; height: 1px; background: var(--text-4); }
+  .row-label::after  { content: ''; flex: 1; height: 1px; background: var(--border); margin-left: 6px; }
+
+  .grid { display: grid; gap: 12px; }
+  .grid.c6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .grid.c5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .grid.c4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .grid.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.c1 { grid-template-columns: 1fr; }
+  .span-2 { grid-column: span 2; }
+  .span-3 { grid-column: span 3; }
+
+  /* === Panel === */
+  .panel {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+    min-height: 120px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+  }
+  .panel:hover { border-color: var(--border-strong); }
+  .panel.accent-teal   { border-top: 1px solid; border-image: linear-gradient(90deg, var(--teal), transparent) 1; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .panel-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-3);
+  }
+  .panel-sub {
+    font-size: 10px; color: var(--text-4);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .big {
+    font-size: 28px; font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.02em; line-height: 1;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .big.sm { font-size: 22px; }
+  .big-unit { font-size: 13px; font-weight: 500; color: var(--text-3); margin-left: 4px; }
+  .big-sub { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+
+  .kv { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; padding: 3px 0; }
+  .kv + .kv { border-top: 1px solid var(--border); }
+  .kv .k { color: var(--text-3); }
+  .kv .v { color: var(--text); font-family: 'JetBrains Mono', monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* Color accents */
+  .c-teal   { color: var(--teal); }
+  .c-blue   { color: var(--blue); }
+  .c-amber  { color: var(--amber); }
+  .c-green  { color: var(--green); }
+  .c-red    { color: var(--red); }
+  .c-violet { color: var(--violet); }
+  .c-pink   { color: var(--pink); }
+  .c-muted  { color: var(--text-3); }
+
+  /* === Charts === */
+  .chart-wrap { position: relative; width: 100%; }
+  canvas { display: block; width: 100%; }
+  .chart-labels {
+    display: flex; justify-content: space-between;
+    color: var(--text-4); font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    padding-top: 4px;
+  }
+
+  /* Status mix bar */
+  .stack-bar {
+    display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border);
+  }
+  .stack-bar > div { transition: flex 0.4s ease; }
+
+  /* Tiny horizontal bar */
+  .hbar { display: flex; flex-direction: column; gap: 3px; }
+  .hbar-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; font-size: 11px; align-items: center; }
+  .hbar-row .lbl { color: var(--text-3); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar-row .val { color: var(--text); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+  .hbar-track { position: relative; height: 4px; background: var(--border); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  .hbar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; transition: width 0.4s ease; }
+
+  /* Tables */
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+  .tbl th { text-align: left; color: var(--text-4); font-weight: 500; padding: 4px 6px 8px; position: sticky; top: 0; background: var(--panel); }
+  .tbl th:last-child, .tbl td:last-child { text-align: right; }
+  .tbl tr:not(:first-child) td { border-top: 1px solid var(--border); }
+  .tbl td { padding: 6px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .tbl td.hl { color: var(--text); }
+
+  /* Request log (tail) */
+  .log { display: flex; flex-direction: column; gap: 0; max-height: 240px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .log-row { display: grid; grid-template-columns: 58px 38px 1fr 52px; gap: 8px; padding: 4px 6px; align-items: center; border-bottom: 1px solid var(--border); }
+  .log-row .t { color: var(--text-4); }
+  .log-row .st { font-weight: 600; }
+  .log-row .p { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-row .p .m { color: var(--text-3); margin-right: 4px; }
+  .log-row .d { color: var(--text-3); text-align: right; }
+
+  /* Loading / error */
+  .loading { padding: 64px; text-align: center; color: var(--text-3); }
+  .loading .spin {
+    display: inline-block; width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--teal);
+    animation: spin 0.8s linear infinite;
+    margin-right: 10px; vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .err-box {
+    color: var(--red); background: rgba(248, 113, 113, 0.06);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+    border-radius: var(--radius-sm); padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  }
+
+  footer {
+    padding: 24px; text-align: center;
+    color: var(--text-4); font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">S</div>
+    <div>
+      <div class="brand-title">PELAGOS</div>
+      <div class="brand-sub">Protocol Monitor</div>
+    </div>
+    <span class="breadcrumb-sep">/</span>
+    <span id="overall-status" class="status-pill ok"><span class="dot pulse" style="background: var(--green);"></span>CONNECTING…</span>
+  </div>
+  <div class="controls">
+    <span class="meta" id="last-updated">waiting</span>
+    <select class="btn" id="interval-select">
+      <option value="500">0.5s</option>
+      <option value="1000" selected>1s</option>
+      <option value="2000">2s</option>
+      <option value="5000">5s</option>
+      <option value="10000">10s</option>
+    </select>
+    <button class="btn" id="pause-btn">⏸ Pause</button>
+    <a class="btn accent" href="http://localhost:13101/api/docs" target="_blank">API docs ↗</a>
+    <a class="btn" href="http://localhost:13100/app" target="_blank">Open app ↗</a>
+  </div>
+</header>
+
+<main id="main">
+  <div class="loading" id="loading"><span class="spin"></span>Loading metrics from backend…</div>
+</main>
+
+<footer id="footer"></footer>
+
+<script>
+// =============================================================================
+// State + polling
+// =============================================================================
+const DATA_URL = window.location.origin + '/data';
+const HISTORY_MAX = 300;   // 5 min at 1Hz
+const state = {
+  interval: 1000,
+  paused: false,
+  timer: null,
+  lastData: null,
+  history: {
+    ts: [],           // unix ms per sample
+    total_req: [],    // cumulative
+    rpm1m: [],
+    p50: [],
+    p95: [],
+    p99: [],
+    err_rate: [],
+    heap_mb: [],
+    rss_mb: [],
+    cpu_1m: [],
+    chain_latency: [],
+  },
+};
+
+async function fetchOnce() {
+  try {
+    const res = await fetch(DATA_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    state.lastData = data;
+    appendHistory(data);
+    render(data);
+    setUpdated();
+    setOverallStatus(data);
+  } catch (err) {
+    renderError(err.message || String(err));
+  }
+}
+
+function appendHistory(d) {
+  const now = Date.now();
+  state.history.ts.push(now);
+  state.history.total_req.push(d.requests.total);
+  const rpm1m = d.requests.rpm_buckets.slice(-12).reduce((a, b) => a + b, 0); // 12 × 5s = 60s
+  state.history.rpm1m.push(rpm1m);
+  state.history.p50.push(d.requests.latency_60s.p50 ?? 0);
+  state.history.p95.push(d.requests.latency_60s.p95 ?? 0);
+  state.history.p99.push(d.requests.latency_60s.p99 ?? 0);
+  state.history.err_rate.push(d.requests.error_rate_60s.rate * 100);
+  state.history.heap_mb.push(d.process.memory.heap_used_mb);
+  state.history.rss_mb.push(d.process.memory.rss_mb);
+  state.history.cpu_1m.push(d.process.cpu.load_1m);
+  state.history.chain_latency.push(d.sui.latency_ms ?? 0);
+  for (const k of Object.keys(state.history)) {
+    if (state.history[k].length > HISTORY_MAX) state.history[k].shift();
+  }
+}
+
+function startTimer() {
+  if (state.timer) clearInterval(state.timer);
+  if (state.paused) return;
+  state.timer = setInterval(fetchOnce, state.interval);
+}
+
+document.getElementById('interval-select').addEventListener('change', (e) => {
+  state.interval = Number(e.target.value);
+  startTimer();
+});
+document.getElementById('pause-btn').addEventListener('click', () => {
+  state.paused = !state.paused;
+  const b = document.getElementById('pause-btn');
+  b.textContent = state.paused ? '▶ Resume' : '⏸ Pause';
+  b.classList.toggle('warn', state.paused);
+  startTimer();
+});
+
+function setUpdated() {
+  const el = document.getElementById('last-updated');
+  el.textContent = 'updated ' + new Date().toLocaleTimeString([], { hour12: false });
+}
+
+function setOverallStatus(d) {
+  const healthy =
+    d.sui.status === 'ok' &&
+    d.polymarket.status === 'ok' &&
+    d.requests.error_rate_60s.rate < 0.1;
+  const el = document.getElementById('overall-status');
+  el.className = 'status-pill ' + (healthy ? 'ok' : 'warn');
+  el.innerHTML = '<span class="dot pulse" style="background: var(--' + (healthy ? 'green' : 'amber') + ');"></span>' +
+    (healthy ? 'ALL SYSTEMS NORMAL' : 'DEGRADED');
+}
+
+// =============================================================================
+// Formatting helpers
+// =============================================================================
+const fmtInt = (n) => (n ?? 0).toLocaleString();
+const fmtPct = (n, d=2) => (n ?? 0).toFixed(d) + '%';
+const fmtMs  = (n) => (n == null ? '' : n + 'ms');
+const fmtUsd = (n) => '$' + (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const shortId = (s) => !s ? '' : (s.length > 18 ? s.slice(0, 10) + '...' + s.slice(-6) : s);
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + ss + 's';
+  return ss + 's';
+}
+function relTime(ts) {
+  const dt = Math.floor((Date.now() - ts) / 1000);
+  if (dt < 5) return 'now';
+  if (dt < 60) return dt + 's';
+  if (dt < 3600) return Math.floor(dt / 60) + 'm';
+  return Math.floor(dt / 3600) + 'h';
+}
+function statusColor(s) {
+  if (s === 'ok') return 'var(--green)';
+  if (s === 'not_configured') return 'var(--amber)';
+  return 'var(--red)';
+}
+
+// =============================================================================
+// Canvas chart helpers
+// =============================================================================
+function setupCanvas(canvas, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return ctx;
+}
+
+function drawBars(canvas, data, opts = {}) {
+  const w = canvas.parentElement.clientWidth || 400;
+  const h = opts.height || 80;
+  const ctx = setupCanvas(canvas, w, h);
+  ctx.clearRect(0, 0, w, h);
+  // Grid
+  ctx.strokeStyle = 'rgba(90, 105, 130, 0.08)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = (h - 1) * (i / 4);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  const max = Math.max(1, ...data);
+  const bw = w / data.length;
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i];
+    const bh = (v / max) * (h - 4);
+    const x = i * bw + 0.5;
+    const bwEff = Math.max(1, bw - 1.5);
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, h - bh, 0, h);
+    grad.addColorStop(0, opts.color || '#60a5fa');
+    grad.addColorStop(1, (opts.color || '#60a5fa') + '44');
+    ctx.fillStyle = v > 0 ? grad : 'rgba(90,105,130,0.06)';
+    // Rounded top
+    const r = Math.min(2, bwEff / 2);
+    const top = h - bh;
+    ctx.beginPath();
+    ctx.moveTo(x, h);
+    ctx.lineTo(x, top + r);
+    ctx.quadraticCurveTo(x, top, x + r, top);
+    ctx.lineTo(x + bwEff - r, top);
+    ctx.quadraticCurveTo(x + bwEff, top, x + bwEff, top + r);
+    ctx.lineTo(x + bwEff, h);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/**
+ * Multi-series smooth line chart.
+ * series: [{ data: number[], color: string, fill?: boolean, label?: string }]
+ */
+function drawLines(canvas, series, opts = {}) {
+  const w = canvas.parentElement.clientWidth || 400;
+  const h = opts.height || 120;
+  const ctx = setupCanvas(canvas, w, h);
+  ctx.clearRect(0, 0, w, h);
+  const padL = 32, padR = 4, padT = 6, padB = 4;
+  const W = w - padL - padR;
+  const H = h - padT - padB;
+
+  // Find global min/max
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) {
+    for (const v of s.data) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  // Pad
+  const span = hi - lo;
+  lo -= span * 0.05;
+  hi += span * 0.1;
+
+  // Grid lines + y-axis labels
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.fillStyle = 'rgba(160, 173, 194, 0.4)';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (H * i / 4);
+    ctx.strokeStyle = 'rgba(90, 105, 130, ' + (i === 4 ? 0.18 : 0.08) + ')';
+    ctx.lineWidth = 1;
+    ctx.setLineDash(i === 0 || i === 4 ? [] : [3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + W, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const v = hi - (span + span * 0.15) * (i / 4);
+    ctx.fillText(v < 10 ? v.toFixed(1) : Math.round(v).toString(), padL - 5, y);
+  }
+
+  // Draw each series
+  for (const s of series) {
+    const d = s.data;
+    if (d.length < 2) continue;
+    const step = W / Math.max(1, d.length - 1);
+    const pts = d.map((v, i) => ({
+      x: padL + i * step,
+      y: padT + H - ((v - lo) / (hi - lo)) * H,
+    }));
+
+    // Fill
+    if (s.fill) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, padT + H);
+      for (let i = 0; i < pts.length; i++) {
+        if (i === 0) ctx.lineTo(pts[i].x, pts[i].y);
+        else {
+          const p0 = pts[i - 1], p1 = pts[i];
+          const mx = (p0.x + p1.x) / 2;
+          ctx.bezierCurveTo(mx, p0.y, mx, p1.y, p1.x, p1.y);
+        }
+      }
+      ctx.lineTo(pts[pts.length - 1].x, padT + H);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, padT, 0, padT + H);
+      g.addColorStop(0, s.color + '33');
+      g.addColorStop(1, s.color + '00');
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+
+    // Smooth line
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      const p0 = pts[i - 1], p1 = pts[i];
+      const mx = (p0.x + p1.x) / 2;
+      ctx.bezierCurveTo(mx, p0.y, mx, p1.y, p1.x, p1.y);
+    }
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.8;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // End dot
+    const last = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = s.color + '33';
+    ctx.fill();
+  }
+}
+
+// =============================================================================
+// Render
+// =============================================================================
+function renderError(msg) {
+  document.getElementById('main').innerHTML =
+    '<div class="err-box"><strong>Cannot reach ' + DATA_URL + '</strong><br>' + msg + '</div>';
+}
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+}
+
+let scaffolded = false;
+function scaffold() {
+  const main = document.getElementById('main');
+  main.innerHTML = '';
+  main.appendChild(el('div', 'row-label', 'Overview'));
+  const r1 = el('div', 'grid c6'); main.appendChild(r1);
+  r1.innerHTML = `
+    <div class="panel" id="p-status">
+      <div class="panel-head"><span class="panel-title">Status</span><span class="panel-sub" id="s-cluster">devnet</span></div>
+      <div class="big c-green" id="s-status">ok</div>
+      <div class="big-sub" id="s-sub">loading</div>
+    </div>
+    <div class="panel" id="p-uptime">
+      <div class="panel-head"><span class="panel-title">Uptime</span><span class="panel-sub" id="s-pid"></span></div>
+      <div class="big c-teal" id="s-uptime"></div>
+      <div class="big-sub" id="s-platform"></div>
+    </div>
+    <div class="panel" id="p-reqs">
+      <div class="panel-head"><span class="panel-title">Requests total</span><span class="panel-sub">since boot</span></div>
+      <div class="big c-blue" id="s-reqs-total">0</div>
+      <div class="big-sub" id="s-reqs-mix"></div>
+    </div>
+    <div class="panel" id="p-rpm">
+      <div class="panel-head"><span class="panel-title">RPM · last 60s</span><span class="panel-sub" id="s-rpm-5m"></span></div>
+      <div class="big c-violet" id="s-rpm">0<span class="big-unit">/min</span></div>
+      <div class="chart-wrap"><canvas id="c-rpm" height="36"></canvas></div>
+    </div>
+    <div class="panel" id="p-err">
+      <div class="panel-head"><span class="panel-title">Error rate · 60s</span><span class="panel-sub" id="s-err-counts"></span></div>
+      <div class="big" id="s-err">0.00%</div>
+      <div class="chart-wrap"><canvas id="c-err" height="36"></canvas></div>
+    </div>
+    <div class="panel" id="p-p95">
+      <div class="panel-head"><span class="panel-title">p95 latency</span><span class="panel-sub" id="s-p-all"></span></div>
+      <div class="big c-amber" id="s-p95"><span class="big-unit">ms</span></div>
+      <div class="chart-wrap"><canvas id="c-p95" height="36"></canvas></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Traffic · last 5 minutes'));
+  const r2 = el('div', 'grid c3'); main.appendChild(r2);
+  r2.innerHTML = `
+    <div class="panel span-2" style="min-height:200px;">
+      <div class="panel-head"><span class="panel-title">Requests · 5s buckets</span><span class="panel-sub" id="s-bucket-total"></span></div>
+      <div class="chart-wrap" style="flex:1;"><canvas id="c-rpmbig" height="140"></canvas></div>
+      <div class="chart-labels"><span>-5m</span><span>-4m</span><span>-3m</span><span>-2m</span><span>-1m</span><span>now</span></div>
+    </div>
+    <div class="panel" style="min-height:200px;">
+      <div class="panel-head"><span class="panel-title">HTTP status mix</span><span class="panel-sub" id="s-mix-total"></span></div>
+      <div class="stack-bar" id="s-stack"></div>
+      <div class="hbar" id="s-status-breakdown"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Latency timeline'));
+  const r3 = el('div', 'grid c2'); main.appendChild(r3);
+  r3.innerHTML = `
+    <div class="panel span-2" style="min-height:220px;">
+      <div class="panel-head"><span class="panel-title">p50 / p95 / p99 over time</span><span class="panel-sub" id="s-lat-legend"></span></div>
+      <div class="chart-wrap" style="flex:1;"><canvas id="c-lat" height="160"></canvas></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Routes · last 60s'));
+  const r4 = el('div', 'grid c2'); main.appendChild(r4);
+  r4.innerHTML = `
+    <div class="panel" style="min-height:260px;">
+      <div class="panel-head"><span class="panel-title">Top routes</span><span class="panel-sub" id="s-routes-count"></span></div>
+      <table class="tbl" id="t-routes"><thead><tr><th>route</th><th>count</th><th>err</th><th>avg ms</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel" style="min-height:260px;">
+      <div class="panel-head"><span class="panel-title">Recent requests (tail)</span><span class="panel-sub" id="s-tail-count"></span></div>
+      <div class="log" id="l-tail"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Process'));
+  const r5 = el('div', 'grid c4'); main.appendChild(r5);
+  r5.innerHTML = `
+    <div class="panel" style="min-height:170px;">
+      <div class="panel-head"><span class="panel-title">Heap used</span><span class="panel-sub" id="s-heap-total"></span></div>
+      <div class="big c-teal" id="s-heap"><span>0</span><span class="big-unit">MB</span></div>
+      <div class="chart-wrap"><canvas id="c-heap" height="48"></canvas></div>
+    </div>
+    <div class="panel" style="min-height:170px;">
+      <div class="panel-head"><span class="panel-title">RSS</span><span class="panel-sub">resident set</span></div>
+      <div class="big c-blue" id="s-rss"><span>0</span><span class="big-unit">MB</span></div>
+      <div class="chart-wrap"><canvas id="c-rss" height="48"></canvas></div>
+    </div>
+    <div class="panel" style="min-height:170px;">
+      <div class="panel-head"><span class="panel-title">CPU load (1m)</span><span class="panel-sub" id="s-cpu-cores"></span></div>
+      <div class="big c-amber" id="s-cpu">0.00</div>
+      <div class="chart-wrap"><canvas id="c-cpu" height="48"></canvas></div>
+    </div>
+    <div class="panel" style="min-height:170px;">
+      <div class="panel-head"><span class="panel-title">Runtime</span><span class="panel-sub" id="s-node"></span></div>
+      <div class="kv"><span class="k">pid</span><span class="v" id="s-pid-val"></span></div>
+      <div class="kv"><span class="k">platform</span><span class="v" id="s-plat"></span></div>
+      <div class="kv"><span class="k">node</span><span class="v" id="s-node-val"></span></div>
+      <div class="kv"><span class="k">external</span><span class="v" id="s-ext"></span></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Sui · testnet'));
+  const r6 = el('div', 'grid c4'); main.appendChild(r6);
+  r6.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Package</span><span class="panel-sub" id="s-env"></span></div>
+      <div class="big c-teal" id="s-package"></div>
+      <div class="chart-wrap"><canvas id="c-package" height="40"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Active environment</span><span class="panel-sub" id="s-env-pct"></span></div>
+      <div class="hbar-track"><div class="hbar-fill" id="s-env-bar" style="background: var(--blue); width:0%"></div></div>
+      <div class="big-sub" id="s-env-text"></div>
+    </div>
+    <div class="panel" id="p-vault">
+      <div class="panel-head"><span class="panel-title">Pelagos package</span><span class="panel-sub" id="s-vault-lat"></span></div>
+      <div id="s-vault"></div>
+    </div>
+    <div class="panel" id="p-ppn">
+      <div class="panel-head"><span class="panel-title">Prediction market</span><span class="panel-sub" id="s-ppn-lat"></span></div>
+      <div id="s-ppn"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'External services'));
+  const r7 = el('div', 'grid c3'); main.appendChild(r7);
+  r7.innerHTML = `
+    <div class="panel" id="p-sb">
+      <div class="panel-head"><span class="panel-title">Supabase</span><span class="panel-sub" id="s-sb-lat"></span></div>
+      <div id="s-sb"></div>
+    </div>
+    <div class="panel" id="p-pm">
+      <div class="panel-head"><span class="panel-title">Polymarket Gamma</span><span class="panel-sub" id="s-pm-lat"></span></div>
+      <div id="s-pm"></div>
+    </div>
+    <div class="panel" id="p-rpc">
+      <div class="panel-head"><span class="panel-title">Sui RPC</span><span class="panel-sub" id="s-rpc-host"></span></div>
+      <div id="s-rpc"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Protocol state'));
+  const r8 = el('div', 'grid c4'); main.appendChild(r8);
+  r8.innerHTML = `
+    <div class="panel"><div class="panel-head"><span class="panel-title">Bundles</span></div><div class="big c-teal" id="s-bun">0</div><div class="big-sub" id="s-bun-sub"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Legs</span></div><div class="big c-blue" id="s-leg">0</div><div class="big-sub">prediction-market positions</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Positions</span></div><div class="big c-violet" id="s-pos">0</div><div class="big-sub">wallet holdings</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Transactions</span></div><div class="big c-pink" id="s-txn">0</div><div class="big-sub">deposits, redemptions</div></div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'USDC flows'));
+  const r9 = el('div', 'grid c4'); main.appendChild(r9);
+  r9.innerHTML = `
+    <div class="panel"><div class="panel-head"><span class="panel-title">Deposited</span></div><div class="big c-green" id="s-dep">$0</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Redeemed</span></div><div class="big c-amber" id="s-red">$0</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Net TVL</span><span class="panel-sub">deposited - redeemed</span></div><div class="big c-teal" id="s-tvl">$0</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Structuring fees</span><span class="panel-sub">0.5% at issuance</span></div><div class="big c-violet" id="s-fee">$0</div></div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Cron · */2 * * * *'));
+  const r10 = el('div', 'grid c2'); main.appendChild(r10);
+  r10.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Last run</span><span class="panel-sub" id="s-cron-next"></span></div>
+      <div class="big" id="s-cron-last">never</div>
+      <div class="big-sub" id="s-cron-sub"></div>
+    </div>
+    <div class="panel" style="min-height:180px;">
+      <div class="panel-head"><span class="panel-title">Cron history</span><span class="panel-sub" id="s-cron-count"></span></div>
+      <div class="log" id="l-cron"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Correlation model · audit'));
+  const r11 = el('div', 'grid c4'); main.appendChild(r11);
+  r11.innerHTML = `
+    <div class="panel"><div class="panel-head"><span class="panel-title">Audit</span></div><div class="big" id="s-ml-aud">n/a</div><div class="big-sub" id="s-ml-exec"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Classifier precision</span></div><div class="big c-teal" id="s-ml-p">n/a</div><div class="big-sub" id="s-ml-pv"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Walk-forward Δ</span></div><div class="big c-green" id="s-ml-wf">n/a</div><div class="big-sub">vs. uniform baseline</div></div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">VaR / CVaR</span></div>
+      <div class="kv"><span class="k">VaR 95</span><span class="v" id="s-ml-v95">n/a</span></div>
+      <div class="kv"><span class="k">VaR 99</span><span class="v" id="s-ml-v99">n/a</span></div>
+      <div class="kv"><span class="k">CVaR 95</span><span class="v" id="s-ml-c95">n/a</span></div>
+      <div class="kv"><span class="k">CVaR 99</span><span class="v" id="s-ml-c99">n/a</span></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Model usage · runtime'));
+  const r12 = el('div', 'grid c4'); main.appendChild(r12);
+  r12.innerHTML = `
+    <div class="panel"><div class="panel-head"><span class="panel-title">Bundles scored</span><span class="panel-sub" id="s-mu-ver"></span></div><div class="big c-blue" id="s-mu-scored">0</div><div class="big-sub" id="s-mu-last"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Accepted</span></div><div class="big c-green" id="s-mu-ok">0</div><div class="big-sub">passed VaR guardrail</div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Rejected</span></div><div class="big c-red" id="s-mu-bad">0</div><div class="big-sub">failed VaR guardrail</div></div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Runtime</span></div>
+      <div class="kv"><span class="k">strategy</span><span class="v" id="s-mu-strat">n/a</span></div>
+      <div class="kv"><span class="k">tolerance</span><span class="v" id="s-mu-tol">n/a</span></div>
+      <div class="kv"><span class="k">target size</span><span class="v" id="s-mu-tsize">n/a</span></div>
+    </div>
+  `;
+  main.appendChild(el('div', 'row-label', 'Model usage · recent events'));
+  const r13 = el('div', 'grid c1'); main.appendChild(r13);
+  r13.innerHTML = `
+    <div class="panel" style="min-height:160px;">
+      <div class="panel-head"><span class="panel-title">Last 10 bundle-creation attempts</span><span class="panel-sub" id="s-mu-events-count"></span></div>
+      <div class="log" id="l-mu"></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Market filter · funnel'));
+  const r14 = el('div', 'grid c4'); main.appendChild(r14);
+  r14.innerHTML = `
+    <div class="panel"><div class="panel-head"><span class="panel-title">Markets seen</span></div><div class="big c-blue" id="s-mf-seen">0</div><div class="big-sub" id="s-mf-runs"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Kept</span></div><div class="big c-green" id="s-mf-kept">0</div><div class="big-sub" id="s-mf-keptpct"></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Rejected</span></div><div class="big c-red" id="s-mf-rej">0</div><div class="big-sub">BS markets filtered out</div></div>
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Per-stage rejections</span></div>
+      <div class="kv"><span class="k">liquidity_floor</span><span class="v" id="s-mf-sr-liq">0</span></div>
+      <div class="kv"><span class="k">quality_nlp</span><span class="v" id="s-mf-sr-nlp">0</span></div>
+      <div class="kv"><span class="k">time_window</span><span class="v" id="s-mf-sr-tw">0</span></div>
+      <div class="kv"><span class="k">category_classify</span><span class="v" id="s-mf-sr-cat">0</span></div>
+      <div class="kv"><span class="k">diversity_prefilter</span><span class="v" id="s-mf-sr-div">0</span></div>
+    </div>
+  `;
+
+  main.appendChild(el('div', 'row-label', 'Market filter · recent runs'));
+  const r15 = el('div', 'grid c1'); main.appendChild(r15);
+  r15.innerHTML = `
+    <div class="panel" style="min-height:160px;">
+      <div class="panel-head"><span class="panel-title">Last 10 filter invocations</span><span class="panel-sub" id="s-mf-runs-count"></span></div>
+      <div class="log" id="l-mf"></div>
+    </div>
+  `;
+
+  scaffolded = true;
+}
+
+function render(d) {
+  if (!scaffolded) scaffold();
+
+  // === Overview ===
+  const healthy =
+    d.sui.status === 'ok' &&
+    d.polymarket.status === 'ok' &&
+    d.requests.error_rate_60s.rate < 0.1;
+  const statusEl = document.getElementById('s-status');
+  statusEl.textContent = healthy ? 'ok' : 'degraded';
+  statusEl.className = 'big ' + (healthy ? 'c-green' : 'c-amber');
+  document.getElementById('s-sub').textContent =
+    d.sui.network + ' · Sui ' + d.sui.latency_ms + 'ms · ' + d.polymarket.status + ' · polymarket';
+
+  document.getElementById('s-uptime').textContent = fmtUptime(d.process.uptime_seconds);
+  document.getElementById('s-pid').textContent = 'pid ' + d.process.pid;
+  document.getElementById('s-platform').textContent = d.process.platform + ' · node ' + d.process.node_version;
+
+  document.getElementById('s-reqs-total').textContent = fmtInt(d.requests.total);
+  document.getElementById('s-reqs-mix').innerHTML =
+    '<span class="c-green">' + (d.requests.by_status['2xx'] || 0) + '</span> ok · ' +
+    '<span class="c-amber">' + (d.requests.by_status['4xx'] || 0) + '</span> 4xx · ' +
+    '<span class="c-red">' + (d.requests.by_status['5xx'] || 0) + '</span> 5xx';
+
+  const rpm1m = d.requests.rpm_buckets.slice(-12).reduce((a, b) => a + b, 0);
+  const rpm5m = d.requests.rpm_buckets.reduce((a, b) => a + b, 0);
+  document.getElementById('s-rpm').innerHTML = fmtInt(rpm1m) + '<span class="big-unit">/min</span>';
+  document.getElementById('s-rpm-5m').textContent = fmtInt(rpm5m) + ' in 5m';
+  drawLines(document.getElementById('c-rpm'), [{ data: state.history.rpm1m, color: getComputedStyle(document.documentElement).getPropertyValue('--violet').trim(), fill: true }], { height: 36 });
+
+  const errRate = d.requests.error_rate_60s.rate * 100;
+  const errEl = document.getElementById('s-err');
+  errEl.textContent = fmtPct(errRate);
+  errEl.className = 'big ' + (errRate > 5 ? 'c-red' : errRate > 1 ? 'c-amber' : 'c-green');
+  document.getElementById('s-err-counts').textContent = d.requests.error_rate_60s.errors + ' / ' + d.requests.error_rate_60s.total;
+  drawLines(document.getElementById('c-err'), [{ data: state.history.err_rate, color: getComputedStyle(document.documentElement).getPropertyValue('--red').trim(), fill: true }], { height: 36 });
+
+  document.getElementById('s-p95').innerHTML = (d.requests.latency_60s.p95 ?? '') + '<span class="big-unit">ms</span>';
+  document.getElementById('s-p-all').textContent = 'p50 ' + fmtMs(d.requests.latency_60s.p50) + ' · p99 ' + fmtMs(d.requests.latency_60s.p99);
+  drawLines(document.getElementById('c-p95'), [{ data: state.history.p95, color: getComputedStyle(document.documentElement).getPropertyValue('--amber').trim(), fill: true }], { height: 36 });
+
+  // === Traffic big chart ===
+  drawBars(document.getElementById('c-rpmbig'), d.requests.rpm_buckets, { color: getComputedStyle(document.documentElement).getPropertyValue('--blue').trim(), height: 140 });
+  document.getElementById('s-bucket-total').textContent = rpm5m + ' req · 60 × 5s buckets';
+
+  // Status stack
+  const total = d.requests.total || 1;
+  const s2 = d.requests.by_status['2xx'] || 0;
+  const s3 = d.requests.by_status['3xx'] || 0;
+  const s4 = d.requests.by_status['4xx'] || 0;
+  const s5 = d.requests.by_status['5xx'] || 0;
+  const stack = document.getElementById('s-stack');
+  stack.innerHTML = '';
+  for (const s of [
+    { n: s2, c: 'var(--green)' },
+    { n: s3, c: 'var(--blue)' },
+    { n: s4, c: 'var(--amber)' },
+    { n: s5, c: 'var(--red)' },
+  ]) {
+    const d = document.createElement('div');
+    d.style.flex = String(s.n || 0);
+    d.style.background = s.c;
+    stack.appendChild(d);
+  }
+  document.getElementById('s-mix-total').textContent = fmtInt(d.requests.total) + ' requests';
+  const breakdown = document.getElementById('s-status-breakdown');
+  breakdown.innerHTML = '';
+  for (const row of [
+    { lbl: '2xx', n: s2, c: 'var(--green)' },
+    { lbl: '3xx', n: s3, c: 'var(--blue)' },
+    { lbl: '4xx', n: s4, c: 'var(--amber)' },
+    { lbl: '5xx', n: s5, c: 'var(--red)' },
+  ]) {
+    const pct = (row.n / total) * 100;
+    breakdown.insertAdjacentHTML('beforeend', `
+      <div class="hbar-row">
+        <span class="lbl" style="color:${row.c}">${row.lbl}</span>
+        <span class="val">${fmtInt(row.n)} · ${pct.toFixed(1)}%</span>
+      </div>
+      <div class="hbar-track"><div class="hbar-fill" style="background:${row.c}; width:${pct}%"></div></div>
+    `);
+  }
+
+  // === Latency timeline ===
+  const tealC = getComputedStyle(document.documentElement).getPropertyValue('--teal').trim();
+  const blueC = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+  const amberC = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
+  const redC = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+  const greenC = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  const violetC = getComputedStyle(document.documentElement).getPropertyValue('--violet').trim();
+  const pinkC = getComputedStyle(document.documentElement).getPropertyValue('--pink').trim();
+
+  drawLines(document.getElementById('c-lat'), [
+    { data: state.history.p50, color: tealC, fill: false },
+    { data: state.history.p95, color: amberC, fill: false },
+    { data: state.history.p99, color: redC, fill: false },
+  ], { height: 160 });
+  document.getElementById('s-lat-legend').innerHTML =
+    `<span class="c-teal">● p50</span>  <span class="c-amber">● p95</span>  <span class="c-red">● p99</span>`;
+
+  // === Routes ===
+  const tbody = document.querySelector('#t-routes tbody');
+  tbody.innerHTML = '';
+  if (!d.requests.by_route_60s.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-4);padding:18px;">no traffic in the last minute</td></tr>';
+  } else {
+    for (const r of d.requests.by_route_60s) {
+      tbody.insertAdjacentHTML('beforeend', `
+        <tr>
+          <td class="hl" title="${r.route}" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.route}</td>
+          <td>${r.count}</td>
+          <td style="color:${r.errors > 0 ? 'var(--red)' : 'var(--text-4)'}">${r.errors}</td>
+          <td>${r.avg_ms.toFixed(1)}</td>
+        </tr>
+      `);
+    }
+  }
+  document.getElementById('s-routes-count').textContent = d.requests.by_route_60s.length + ' routes';
+
+  // Recent requests tail
+  const log = document.getElementById('l-tail');
+  log.innerHTML = '';
+  document.getElementById('s-tail-count').textContent = d.requests.recent.length + ' latest';
+  for (const r of d.requests.recent) {
+    const color = r.status >= 500 ? 'var(--red)' : r.status >= 400 ? 'var(--amber)' : r.status >= 300 ? 'var(--blue)' : 'var(--green)';
+    log.insertAdjacentHTML('beforeend', `
+      <div class="log-row">
+        <span class="t">${relTime(r.timestamp)}</span>
+        <span class="st" style="color:${color}">${r.status}</span>
+        <span class="p"><span class="m">${r.method}</span>${r.path}</span>
+        <span class="d">${r.duration_ms}ms</span>
+      </div>
+    `);
+  }
+  if (!d.requests.recent.length) {
+    log.innerHTML = '<div style="padding:18px;text-align:center;color:var(--text-4);">no requests yet</div>';
+  }
+
+  // === Process ===
+  const mem = d.process.memory;
+  document.getElementById('s-heap').innerHTML = mem.heap_used_mb.toFixed(1) + '<span class="big-unit">MB</span>';
+  document.getElementById('s-heap-total').textContent = 'of ' + mem.heap_total_mb.toFixed(1) + ' MB · ' + Math.round(mem.heap_used_mb / mem.heap_total_mb * 100) + '%';
+  drawLines(document.getElementById('c-heap'), [{ data: state.history.heap_mb, color: tealC, fill: true }], { height: 48 });
+
+  document.getElementById('s-rss').innerHTML = mem.rss_mb.toFixed(1) + '<span class="big-unit">MB</span>';
+  drawLines(document.getElementById('c-rss'), [{ data: state.history.rss_mb, color: blueC, fill: true }], { height: 48 });
+
+  const cpu = d.process.cpu;
+  const cpuEl = document.getElementById('s-cpu');
+  cpuEl.textContent = cpu.load_1m.toFixed(2);
+  cpuEl.className = 'big ' + (cpu.load_1m > cpu.cores ? 'c-red' : cpu.load_1m > cpu.cores * 0.7 ? 'c-amber' : 'c-green');
+  document.getElementById('s-cpu-cores').textContent = cpu.cores + ' cores · 5m ' + cpu.load_5m.toFixed(2) + ' · 15m ' + cpu.load_15m.toFixed(2);
+  drawLines(document.getElementById('c-cpu'), [{ data: state.history.cpu_1m, color: amberC, fill: true }], { height: 48 });
+
+  document.getElementById('s-pid-val').textContent = d.process.pid;
+  document.getElementById('s-plat').textContent = d.process.platform;
+  document.getElementById('s-node-val').textContent = d.process.node_version;
+  document.getElementById('s-ext').textContent = mem.external_mb.toFixed(2) + ' MB';
+
+  // === Sui ===
+  document.getElementById('s-package').textContent = shortId(d.sui.package_id);
+  document.getElementById('s-env').textContent = d.sui.network + ' · ' + (d.sui.active_env ?? 'unknown');
+  drawLines(document.getElementById('c-package'), [{ data: state.history.chain_latency, color: tealC, fill: false }], { height: 40 });
+
+  const ep = d.sui.status === 'ok' ? 100 : 0;
+  document.getElementById('s-env-bar').style.width = ep + '%';
+  document.getElementById('s-env-pct').textContent = d.sui.status;
+  document.getElementById('s-env-text').textContent = d.sui.status === 'ok'
+    ? 'Sui package and local signer reachable'
+    : (d.sui.error ?? 'Sui status probe failed');
+
+  document.getElementById('s-vault').innerHTML = programHTML({
+    deployed: d.sui.status === 'ok' && !!d.sui.package_id,
+    program_id: d.sui.package_id,
+    detail: d.sui.mock_usdc_type,
+    network: d.sui.network,
+  });
+  document.getElementById('s-ppn').innerHTML = programHTML({
+    deployed: d.sui.status === 'ok' && !!d.sui.market_admin_cap_id,
+    program_id: d.sui.market_admin_cap_id,
+    detail: d.sui.market_module,
+    network: d.sui.network,
+  });
+  document.getElementById('s-vault-lat').textContent = d.sui.latency_ms + 'ms';
+  document.getElementById('s-ppn-lat').textContent = d.sui.active_env ?? '';
+
+  // === External ===
+  document.getElementById('s-sb').innerHTML = serviceHTML(d.db.supabase.status, d.db.supabase.latency_ms, d.db.supabase.error, 'configured: ' + (d.db.configured ? 'yes' : 'no (mock)'));
+  document.getElementById('s-pm').innerHTML = serviceHTML(d.polymarket.status, d.polymarket.latency_ms, d.polymarket.error, d.polymarket.http ? 'HTTP ' + d.polymarket.http : '');
+  document.getElementById('s-rpc').innerHTML = serviceHTML(d.sui.status, d.sui.latency_ms, d.sui.error, d.meta.rpc_url);
+
+  document.getElementById('s-sb-lat').textContent = d.db.supabase.latency_ms + 'ms';
+  document.getElementById('s-pm-lat').textContent = d.polymarket.latency_ms + 'ms';
+  document.getElementById('s-rpc-host').textContent = d.sui.network ?? '';
+
+  // === Protocol ===
+  document.getElementById('s-bun').textContent = fmtInt(d.db.counts.bundles);
+  document.getElementById('s-bun-sub').textContent = d.db.counts.active_bundles + ' active · ' + d.db.counts.resolved_bundles + ' resolved';
+  document.getElementById('s-leg').textContent = fmtInt(d.db.counts.legs);
+  document.getElementById('s-pos').textContent = fmtInt(d.db.counts.positions);
+  document.getElementById('s-txn').textContent = fmtInt(d.db.counts.transactions);
+
+  document.getElementById('s-dep').textContent = fmtUsd(d.db.flows.total_deposited_usdc);
+  document.getElementById('s-red').textContent = fmtUsd(d.db.flows.total_redeemed_usdc);
+  document.getElementById('s-tvl').textContent = fmtUsd(d.db.flows.net_usdc);
+  document.getElementById('s-fee').textContent = fmtUsd(d.db.flows.total_fees_usdc);
+
+  // === Cron ===
+  const lastCron = d.cron.recent[0];
+  const cronLast = document.getElementById('s-cron-last');
+  cronLast.textContent = lastCron ? (lastCron.ok ? 'ok' : 'fail') : 'never';
+  cronLast.className = 'big ' + (lastCron ? (lastCron.ok ? 'c-green' : 'c-red') : 'c-muted');
+  document.getElementById('s-cron-sub').textContent = lastCron
+    ? (lastCron.duration_ms + 'ms · ' + lastCron.bundles_refreshed + ' bundles · ' + lastCron.legs_updated + ' legs · ' + relTime(lastCron.timestamp) + ' ago')
+    : 'fires every 2 minutes';
+  document.getElementById('s-cron-next').textContent = d.cron.recent.length + ' runs since boot';
+  document.getElementById('s-cron-count').textContent = d.cron.recent.length + ' runs';
+  const cronLog = document.getElementById('l-cron');
+  cronLog.innerHTML = '';
+  if (!d.cron.recent.length) {
+    cronLog.innerHTML = '<div style="padding:18px;text-align:center;color:var(--text-4);">cron has not fired yet</div>';
+  } else {
+    for (const r of d.cron.recent) {
+      cronLog.insertAdjacentHTML('beforeend', `
+        <div class="log-row" style="grid-template-columns: 60px 40px 1fr 60px">
+          <span class="t">${relTime(r.timestamp)}</span>
+          <span class="st" style="color:${r.ok ? 'var(--green)' : 'var(--red)'}">${r.ok ? 'ok' : 'fail'}</span>
+          <span class="p">${r.bundles_refreshed} bundles · ${r.legs_updated} legs · ${r.newly_resolved} resolved</span>
+          <span class="d">${r.duration_ms}ms</span>
+        </div>
+      `);
+    }
+  }
+
+  // === ML ===
+  if (d.ml) {
+    const aud = document.getElementById('s-ml-aud');
+    aud.textContent = d.ml.all_checks_passed ? 'passed' : 'failed';
+    aud.className = 'big ' + (d.ml.all_checks_passed ? 'c-green' : 'c-red');
+    document.getElementById('s-ml-exec').textContent = 'execution_status = ' + d.ml.execution_status;
+    document.getElementById('s-ml-p').textContent = (d.ml.classifier_precision * 100).toFixed(2) + '%';
+    document.getElementById('s-ml-pv').textContent = 'walk-forward p=' + d.ml.walkforward_p_value.toExponential(2);
+    document.getElementById('s-ml-wf').textContent = '+' + (d.ml.walkforward_mean_improvement * 100).toFixed(2) + '%';
+    document.getElementById('s-ml-v95').textContent = d.ml.var_95.toFixed(4);
+    document.getElementById('s-ml-v99').textContent = d.ml.var_99.toFixed(4);
+    document.getElementById('s-ml-c95').textContent = d.ml.cvar_95.toFixed(4);
+    document.getElementById('s-ml-c99').textContent = d.ml.cvar_99.toFixed(4);
+  }
+
+  // === Model usage ===
+  if (d.model_usage) {
+    const mu = d.model_usage;
+    document.getElementById('s-mu-scored').textContent = fmtInt(mu.counters.bundles_scored);
+    document.getElementById('s-mu-ok').textContent = fmtInt(mu.counters.bundles_accepted);
+    document.getElementById('s-mu-bad').textContent = fmtInt(mu.counters.bundles_rejected);
+    document.getElementById('s-mu-ver').textContent =
+      mu.counters.last_version ? mu.counters.last_version.replace(/\..+$/, '') : (mu.manifest?.version || '').replace(/\..+$/, '');
+    document.getElementById('s-mu-last').textContent =
+      mu.counters.last_internal_corr != null
+        ? 'last internal ρ = ' + mu.counters.last_internal_corr.toFixed(4)
+        : 'no bundles scored yet';
+    document.getElementById('s-mu-strat').textContent = mu.manifest?.runtime?.strategy || 'n/a';
+    document.getElementById('s-mu-tol').textContent = mu.manifest?.runtime?.guardrail_tolerance
+      ? '+' + Math.round((mu.manifest.runtime.guardrail_tolerance - 1) * 100) + '% vs audited CVaR_99'
+      : 'n/a';
+    document.getElementById('s-mu-tsize').textContent = mu.manifest?.optimization?.target_basket_size ?? 'n/a';
+
+    const muLog = document.getElementById('l-mu');
+    document.getElementById('s-mu-events-count').textContent = (mu.recent_events?.length || 0) + ' events';
+    muLog.innerHTML = '';
+    if (!mu.recent_events?.length) {
+      muLog.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-4);">no bundle creation attempts yet</div>';
+    } else {
+      for (const ev of mu.recent_events) {
+        muLog.insertAdjacentHTML('beforeend', `
+          <div class="log-row" style="grid-template-columns:60px 60px 1fr 80px 80px">
+            <span class="t">${relTime(ev.timestamp)}</span>
+            <span class="st" style="color:${ev.accepted ? 'var(--green)' : 'var(--red)'}">${ev.accepted ? 'accept' : 'reject'}</span>
+            <span class="p">${ev.bundle_name} · ${ev.leg_count} legs · ρ=${ev.internal_corr.toFixed(4)}${ev.reason ? ' · ' + ev.reason : ''}</span>
+            <span class="d">CVaR ${ev.cvar_99_projected.toFixed(4)}</span>
+            <span class="d">${ev.model_version.slice(0, 22)}…</span>
+          </div>
+        `);
+      }
+    }
+  }
+
+  // === Market filter ===
+  if (d.market_filter) {
+    const mf = d.market_filter;
+    document.getElementById('s-mf-seen').textContent = fmtInt(mf.counters.markets_seen);
+    document.getElementById('s-mf-kept').textContent = fmtInt(mf.counters.markets_kept);
+    document.getElementById('s-mf-rej').textContent = fmtInt(mf.counters.markets_rejected);
+    document.getElementById('s-mf-runs').textContent = mf.counters.runs_total + ' runs since boot';
+    document.getElementById('s-mf-keptpct').textContent =
+      'keep rate ' + (mf.counters.kept_rate * 100).toFixed(1) + '%';
+    document.getElementById('s-mf-sr-liq').textContent = fmtInt(mf.counters.per_stage_rejected.liquidity_floor);
+    document.getElementById('s-mf-sr-nlp').textContent = fmtInt(mf.counters.per_stage_rejected.quality_nlp);
+    document.getElementById('s-mf-sr-tw').textContent = fmtInt(mf.counters.per_stage_rejected.time_window);
+    document.getElementById('s-mf-sr-cat').textContent = fmtInt(mf.counters.per_stage_rejected.category_classify);
+    document.getElementById('s-mf-sr-div').textContent = fmtInt(mf.counters.per_stage_rejected.diversity_prefilter);
+
+    const mfLog = document.getElementById('l-mf');
+    document.getElementById('s-mf-runs-count').textContent = (mf.recent_runs?.length || 0) + ' runs';
+    mfLog.innerHTML = '';
+    if (!mf.recent_runs?.length) {
+      mfLog.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-4);">no filter runs yet</div>';
+    } else {
+      for (const run of mf.recent_runs) {
+        const ps = run.per_stage;
+        const stageStr =
+          'L:' + ps.liquidity_floor.rejected +
+          ' / Q:' + ps.quality_nlp.rejected +
+          ' / T:' + ps.time_window.rejected +
+          ' / C:' + ps.category_classify.rejected +
+          ' / D:' + ps.diversity_prefilter.rejected;
+        mfLog.insertAdjacentHTML('beforeend', `
+          <div class="log-row" style="grid-template-columns:60px 80px 1fr 100px 100px">
+            <span class="t">${relTime(run.timestamp)}</span>
+            <span class="st" style="color:var(--blue)">${run.source}</span>
+            <span class="p">in ${run.input_count} · kept ${run.kept_count} · dropped by stage ${stageStr}</span>
+            <span class="d">${run.rejected_count} rejected</span>
+            <span class="d">${(run.input_count > 0 ? (run.kept_count / run.input_count * 100).toFixed(1) : '0.0')}% kept</span>
+          </div>
+        `);
+      }
+    }
+  }
+
+  // Footer
+  document.getElementById('footer').textContent = '/data · ' + d.meta.timestamp + ' · ' + HISTORY_MAX + ' sample buffer';
+}
+
+function programHTML(p) {
+  const c = p.deployed ? 'var(--green)' : 'var(--red)';
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="dot" style="background:${c}"></span>
+      <span class="big sm" style="color:${c}">${p.deployed ? 'deployed' : 'missing'}</span>
+    </div>
+    <div class="mono" style="font-size:10px;color:var(--text-4);word-break:break-all;margin-bottom:4px;">${p.program_id ?? ''}</div>
+    ${p.detail ? `<div style="font-size:11px;color:var(--text-3);" class="mono">${p.detail}</div>` : ''}
+    ${p.program_id ? `<a href="https://suiexplorer.com/object/${p.program_id}?network=${p.network ?? 'testnet'}" target="_blank" style="color:var(--teal);text-decoration:none;font-size:11px;">Explorer ↗</a>` : ''}
+  `;
+}
+
+function serviceHTML(status, lat, err, extra) {
+  const c = statusColor(status);
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="dot pulse" style="color:${c};background:${c}"></span>
+      <span class="big sm" style="color:${c}">${status}</span>
+      ${lat ? `<span class="panel-sub">${lat}ms</span>` : ''}
+    </div>
+    ${err ? `<div class="mono" style="font-size:11px;color:var(--red);word-break:break-word;">${err}</div>` : ''}
+    ${extra ? `<div class="mono" style="font-size:10px;color:var(--text-4);word-break:break-all;">${extra}</div>` : ''}
+  `;
+}
+
+// Kick it off
+fetchOnce();
+startTimer();
+window.addEventListener('resize', () => { if (state.lastData) render(state.lastData); });
+</script>
+</body>
+</html>

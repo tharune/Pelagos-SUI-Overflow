@@ -256,8 +256,15 @@ export default function PpnPage() {
     fetchPpnPortfolio(address)
       .then((portfolio) => {
         if (cancelled) return;
-        dispatch({ type: "ppn/hydrate", vaults: mergePpnVaults(portfolio) });
-        dispatch({ type: "tranche/hydrate", positions: mergeTranches(portfolio) });
+        const vaults = mergePpnVaults(portfolio);
+        const tranches = mergeTranches(portfolio);
+        // `ppn/hydrate` is a full replace. Only overwrite when the backend
+        // actually returns rows — otherwise an empty result (the indexer has
+        // no row yet for a note just opened this session) would wipe the
+        // optimistic note that reflects a real on-chain deposit. A genuine
+        // close still removes the note via the `ppn/close` reducer action.
+        if (vaults.length > 0) dispatch({ type: "ppn/hydrate", vaults });
+        if (tranches.length > 0) dispatch({ type: "tranche/hydrate", positions: tranches });
       })
       .catch(() => {
         // Keep whatever optimistic state we already have on a fetch miss.

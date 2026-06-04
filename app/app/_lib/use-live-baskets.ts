@@ -82,6 +82,16 @@ function ensurePollTimer(): void {
   }, CACHE_TTL_MS);
 }
 
+// Stop the background poll once no component is subscribed, so the timer
+// doesn't keep hitting the network for the life of the tab after every
+// live-basket view has unmounted.
+function maybeStopPollTimer(): void {
+  if (pollTimer && listeners.size === 0) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
 /**
  * Subscribe to the shared cache. Every component that calls this gets the
  * same result without triggering a new fetch; the first caller on a fresh
@@ -98,6 +108,7 @@ export function useLiveBaskets(): LiveBasketState {
     return () => {
       window.clearTimeout(id);
       listeners.delete(setState);
+      maybeStopPollTimer();
     };
   }, []);
 

@@ -276,10 +276,33 @@ function useGlobalScrollFade() {
     update();
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll);
+
+    // Robustness net: guarantee the one-shot draw-in (`is-drawn`) fires the
+    // moment a block is even slightly visible, independent of the scroll-scrub
+    // opacity threshold above. Without this, a chart/waterfall that is on a
+    // tall viewport (or never scrolled into the reveal band) could stay stuck
+    // in its hidden base state (stroke-dashoffset / scaleY(0)).
+    let io: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-drawn");
+              io?.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.08 },
+      );
+      document.querySelectorAll<HTMLElement>(".scroll-fade").forEach((el) => io?.observe(el));
+    }
+
     return () => {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
       if (raf) cancelAnimationFrame(raf);
+      io?.disconnect();
     };
   }, []);
 }

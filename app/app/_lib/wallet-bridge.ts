@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SUI_ACTIVE_ADDRESS, suiExplorerTxUrl } from "./chain";
 import { fetchSuiStatus, sumSuiCoinBalance } from "./sui-client";
 
@@ -18,7 +18,14 @@ export function useUsdcBalance() {
     error: null as string | null,
   });
 
+  // Guards against overlapping refreshes — the 15s poll and any post-write
+  // refresh() share this flag so a slow status call can't stack requests
+  // against the backend / testnet RPC.
+  const inFlight = useRef(false);
+
   const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const status = await fetchSuiStatus();
@@ -30,6 +37,8 @@ export function useUsdcBalance() {
         loading: false,
         error: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      inFlight.current = false;
     }
   }, []);
 

@@ -23,7 +23,7 @@ Express API :13101 -------- Polymarket Gamma/CLOB
 The active chain path is Sui:
 
 - Move package: `pelagos_sui/`
-- Testnet package ID: `0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd`
+- Testnet package ID: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af`
 - Modules: `mock_usdc`, `prediction_market`
 - Backend route prefix: `/api/sui`
 - Frontend mode: `NEXT_PUBLIC_CHAIN=sui`

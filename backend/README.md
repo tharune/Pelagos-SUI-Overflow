@@ -33,9 +33,9 @@ Important values:
 - `SUI_CLI=sui`
 - `SUI_KEYSTORE_PATH=/path/to/.sui/sui_config`
 - `SUI_ACTIVE_ADDRESS=<local testnet address>`
-- `SUI_PACKAGE_ID=0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd`
-- `SUI_MARKET_ADMIN_CAP_ID=0x54fcbdf626ff5474298e0b5f9859a9e6259f27ef63d248487a2db42e3cc88ec3`
-- `MOCK_USDC_TREASURY_CAP_ID=0x190323bf43fb743f3ccf153ebbb978acfb3a86b5c60643228a1a2f4d0445b5c7`
+- `SUI_PACKAGE_ID=0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af`
+- `SUI_MARKET_ADMIN_CAP_ID=0x450d3450381a1f0fcbfbc0c354b8af4e7d0e7f732591bd6db57d5c14bf01105d`
+- `MOCK_USDC_TREASURY_CAP_ID=0x16b34adda0f968ab481449d55f445d3598e0a617f2d6a83d62e84907be534aa1`
 
 Supabase can be left unset for local Sui mode. The health endpoint reports
 Supabase as `not_configured` while keeping the overall status `ok`.

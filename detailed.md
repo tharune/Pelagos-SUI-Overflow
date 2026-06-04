@@ -43,23 +43,23 @@ Key product pages:
 
 Package:
 
-- Package ID: `0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd`
+- Package ID: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af`
 - Modules: `mock_usdc`, `prediction_market`
 - Publish transaction: `89uojuuT4nCiewG2ezJhKtQihr4AMmfPMUkPxftVLEJN`
-- Deployer: `0xee770af6c184b101aa91fab0fffdee62c1fecc86fd3e681d978336bf70eead79`
-- UpgradeCap: `0x85b7060ba87fd629493ba7ce657eea265f6270f795b4d8a7170613ac6f6a4aa3`
+- Deployer: `0x78f0be0d03f277c11d696436a3dd2f02c02f9cce118f6c0286fbc701a29ec411`
+- UpgradeCap: `0x56ffa7d79baedb7d3ed9b668b04e202fd6a4de258f9e4ee6cf23747a119c4c6c`
 
 Mock USDC:
 
-- Coin type: `0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd::mock_usdc::MOCK_USDC`
+- Coin type: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af::mock_usdc::MOCK_USDC`
 - Symbol: `mUSDC`
 - Decimals: `6`
-- TreasuryCap: `0x190323bf43fb743f3ccf153ebbb978acfb3a86b5c60643228a1a2f4d0445b5c7`
-- Metadata object: `0x11c140299db5f040b3dc3ea5d65d58ae145c51f445c71274a9f7172c0274d4ee`
+- TreasuryCap: `0x16b34adda0f968ab481449d55f445d3598e0a617f2d6a83d62e84907be534aa1`
+- Metadata object: `0x952435fcae9412796ddf2a9f0e173c9a2caba7b2f26079714a9e1a3bfd33a287`
 
 Market admin:
 
-- AdminCap: `0x54fcbdf626ff5474298e0b5f9859a9e6259f27ef63d248487a2db42e3cc88ec3`
+- AdminCap: `0x450d3450381a1f0fcbfbc0c354b8af4e7d0e7f732591bd6db57d5c14bf01105d`
 
 Configuration examples:
 

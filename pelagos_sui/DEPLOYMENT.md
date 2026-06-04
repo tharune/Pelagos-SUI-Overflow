@@ -1,42 +1,41 @@
-# Pelagos Sui v2 Testnet Deployment
+# Pelagos Sui Testnet Deployment
 
-This is the active Sui deployment for local Pelagos-on-Sui work. It includes a
-testnet-only Mock USDC coin and a USDC-collateral binary prediction market.
+This is the active Sui deployment for Pelagos-on-Sui. It includes a testnet-only
+Mock USDC coin and a USDC-collateral binary prediction market.
+
+Deployed from a wallet dedicated solely to Pelagos. It is deliberately separate
+from every other project's wallet (no shared deployer, treasury caps, or test
+funds), so there is no cross-contamination between deployments.
 
 ## Package
 
-- Package ID: `0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd`
+- Package ID: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af`
 - Modules: `mock_usdc`, `prediction_market`
-- Publish transaction: `EbK3ZAQfLqcwVg9euXFHF6uACptHXKF4s1YHLXnB56VW`
-- Deployer: `0xee770af6c184b101aa91fab0fffdee62c1fecc86fd3e681d978336bf70eead79`
-- UpgradeCap: `0x85b7060ba87fd629493ba7ce657eea265f6270f795b4d8a7170613ac6f6a4aa3`
+- Publish transaction: `AuA2G2Qtet7LrSTgrcPGPLZAojHiXVSLXgDyb9SSGaC6`
+- Deployer / admin wallet: `0x78f0be0d03f277c11d696436a3dd2f02c02f9cce118f6c0286fbc701a29ec411` (alias `pelagos-deployer`)
+- UpgradeCap: `0x56ffa7d79baedb7d3ed9b668b04e202fd6a4de258f9e4ee6cf23747a119c4c6c`
+- Market AdminCap: `0x450d3450381a1f0fcbfbc0c354b8af4e7d0e7f732591bd6db57d5c14bf01105d`
 
 ## Mock USDC
 
-- Coin type: `0xd97616b19d16c944cb5f5f4d22c471df3d4ea1640764b46a2be2587a4be890cd::mock_usdc::MOCK_USDC`
+- Coin type: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af::mock_usdc::MOCK_USDC`
 - Symbol: `mUSDC`
 - Decimals: `6`
-- Metadata object: `0x11c140299db5f040b3dc3ea5d65d58ae145c51f445c71274a9f7172c0274d4ee`
-- TreasuryCap: `0x190323bf43fb743f3ccf153ebbb978acfb3a86b5c60643228a1a2f4d0445b5c7`
-- Initial mint transaction: `NT3dCkpAZsNRLPD53KKsc6m9cwVJ26Km8rLgqjQQns8`
-- Initial minted coin: `0x6b811574ea87a94881207a2cde4aaabb58bf9eacb98fc8516fc9a9c1d116fe9f`
+- Metadata object (frozen): `0x952435fcae9412796ddf2a9f0e173c9a2caba7b2f26079714a9e1a3bfd33a287`
+- TreasuryCap: `0x16b34adda0f968ab481449d55f445d3598e0a617f2d6a83d62e84907be534aa1`
+- Initial mint: 100,000 mUSDC to the deployer wallet.
 
-Mint authority is the owner of the TreasuryCap above. Local credentials are
-referenced in `backend/.env.sui.local` via `SUI_KEYSTORE_PATH` and
-`SUI_ACTIVE_ADDRESS`.
+Mint authority is the owner of the TreasuryCap above (the deployer wallet).
+Local credentials are referenced in `backend/.env.sui.local` via
+`SUI_KEYSTORE_PATH` and `SUI_ACTIVE_ADDRESS`; never commit private keys.
 
-## Backend Smoke Test
+## Smoke Test (this deployment, live on testnet)
 
-The local backend is wired to this deployment through `backend/.env.sui.local`
-and should report the package, AdminCap, TreasuryCap, and Pelagos mUSDC balance
-from `http://localhost:13101/api/sui/status`.
+A full mint → create market → buy round-trip was executed against the package:
 
-Small backend write smoke test executed through
-`POST http://localhost:13101/api/sui/local/basket/deposit`.
+- Market: `0xbfc6fec61ac51ff0282b6e9009ca9730f17ac79689fc7f9a4e12fa1065b49765`
+- Position: `0xfb1580f4f0230bdb69823d7b8e75c2b06bf9cc46bf8eeb82e09aea2fb02b1cc5`
+- Buy (YES, 10 mUSDC) transaction: `6uBojdRKv4shZgSWvvU5Q2KYvk5h1hTpkcXJj4jaE2Zv`
+- Result: `yes_stake = 10000000`, `no_stake = 0`, `resolved = false`.
 
-- Bundle: `smoke-pelagos-redeploy`
-- Market: `0x7963cd9cbc758f6f9368757c7c8740734cc9456f6fae26a569d0860e89c6c245`
-- Position: `0xc703cd54877471d85474bdad73c103a313078a5d0277aebd81e596f8399f962d`
-- Mint transaction: `EjuUPuexE6wZbzB7t66fuoQdzeicdQLdo7FD8JqKTFzS`
-- Create market transaction: `ADoLxCVYDnWJUb384YYQKTN9DbNffieayRhEdFbTzv8i`
-- Buy transaction: `CBWjnvuLo7BndFXF1HP8xarof97tnSBMupucFA55nKAx`
+The Move unit suite passes (`sui move test --path pelagos_sui`, 2/2).

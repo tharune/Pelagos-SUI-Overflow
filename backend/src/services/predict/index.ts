@@ -24,7 +24,7 @@ export * from './server';
 // a known testnet address so read-only previews work with no key configured.
 const FALLBACK_SENDER =
   process.env.SUI_ACTIVE_ADDRESS ??
-  '0xee770af6c184b101aa91fab0fffdee62c1fecc86fd3e681d978336bf70eead79';
+  '0x78f0be0d03f277c11d696436a3dd2f02c02f9cce118f6c0286fbc701a29ec411';
 
 export interface ExecResult {
   digest: string;

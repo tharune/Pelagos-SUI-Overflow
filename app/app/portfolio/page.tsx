@@ -23,49 +23,79 @@ import { History } from "./_history";
 
 type View = "positions" | "personalization" | "history";
 
+// Catmull-Rom → cubic-bezier smoothing for a clean institutional curve.
+function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
+  if (pts.length < 2) return "";
+  const d = [`M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] ?? p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) * tension;
+    const c1y = p1[1] + (p2[1] - p0[1]) * tension;
+    const c2x = p2[0] - (p3[0] - p1[0]) * tension;
+    const c2y = p2[1] - (p3[1] - p1[1]) * tension;
+    d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`);
+  }
+  return d.join(" ");
+}
+
 function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
   const width = 520;
   const height = 128;
-  const padX = 10;
-  const padY = 12;
-  const base = Math.max(value - pnl, value, 1);
-  const drift = Math.max(Math.abs(pnl), base * 0.008);
-  const values = value <= 0.01 || Math.abs(pnl) < 0.01
-    ? [value, value, value, value, value, value]
-    : [
-        Math.max(0, base - drift * 0.9),
-        Math.max(0, base - drift * 0.45),
-        Math.max(0, base - drift * 0.18),
-        Math.max(0, base + pnl * 0.28),
-        Math.max(0, base + pnl * 0.62),
-        Math.max(0, value),
-      ];
+  const padX = 6;
+  const padY = 18;
+  // A funded account with movement gets a real curve; a flat / empty account
+  // gets a calm baseline that reads as "no activity yet" — not a broken line.
+  const hasMotion = value > 0.01 && Math.abs(pnl) >= 0.01;
+  const base = Math.max(value - pnl, 1);
+  const drift = Math.max(Math.abs(pnl), base * 0.012);
+  const values = hasMotion
+    ? [
+        base - drift * 0.85,
+        base - drift * 0.32,
+        base - drift * 0.5,
+        base + pnl * 0.22,
+        base + pnl * 0.5,
+        base + pnl * 0.82,
+        value,
+      ].map((v) => Math.max(0, v))
+    : [value, value, value, value, value, value, value];
   const min = Math.min(...values);
   const max = Math.max(...values);
   const isFlat = Math.abs(max - min) < 0.0001;
   const range = Math.max(1, max - min);
-  const x = (index: number) => padX + (index / Math.max(1, values.length - 1)) * (width - padX * 2);
-  const y = (point: number) => isFlat ? height / 2 : padY + (1 - (point - min) / range) * (height - padY * 2);
-  const line = values.map((point, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${y(point)}`).join(" ");
-  const area = `${line} L ${x(values.length - 1)} ${height - padY} L ${x(0)} ${height - padY} Z`;
+  const x = (index: number) => padX + (index / (values.length - 1)) * (width - padX * 2);
+  // Flat → seat the baseline ~62% down so the gradient reads as a quiet floor.
+  const y = (point: number) => (isFlat ? height * 0.62 : padY + (1 - (point - min) / range) * (height - padY * 2));
+  const pts = values.map((point, index): [number, number] => [x(index), y(point)]);
+  const line = smoothLine(pts);
+  const area = `${line} L ${x(values.length - 1).toFixed(1)} ${height} L ${x(0).toFixed(1)} ${height} Z`;
   const stroke = pnl >= 0 ? C.tealLight : C.coral;
+  const end = pts[pts.length - 1];
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="128" aria-label="Account value trend">
       <defs>
         <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
+          <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.12" : "0.22"} />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
         </linearGradient>
       </defs>
-      {[0.25, 0.5, 0.75].map((tick) => (
-        <line key={tick} x1={padX} x2={width - padX} y1={padY + tick * (height - padY * 2)} y2={padY + tick * (height - padY * 2)} stroke={C.border} strokeWidth="1" opacity="0.45" />
-      ))}
       <path d={area} fill="url(#portfolioValueFill)" />
-      <path d={line} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      {values.map((point, index) => (
-        <circle key={index} cx={x(index)} cy={y(point)} r={index === values.length - 1 ? 4.2 : 2.8} fill={stroke} opacity={index === values.length - 1 ? 1 : 0.55} />
-      ))}
+      <path
+        d={line}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeOpacity={isFlat ? 0.7 : 1}
+        style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
+      />
+      <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
+      <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
     </svg>
   );
 }

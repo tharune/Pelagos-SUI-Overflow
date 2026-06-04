@@ -65,21 +65,59 @@ export function Sparkline({
       x: pad + (i / (data.length - 1)) * (renderWidth - pad * 2),
       y: pad + (1 - (v - min) / range) * (height - pad * 2),
     }));
+    // Larger charts (e.g. the basket-detail hero) get the premium treatment —
+    // a thicker glowing line and an endpoint marker. Tiny card sparklines stay
+    // minimal so they don't pick up clutter.
+    const big = height >= 80;
+    const last = pts[pts.length - 1];
+
+    // Smoothed area fill with a vertical gradient fade (replaces the old flat
+    // single-alpha fill, so every sparkline reads with more depth).
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) {
       const m = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
       ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, m.x, m.y);
     }
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.lineTo(pts[pts.length - 1].x, height);
+    ctx.lineTo(last.x, last.y);
+    ctx.lineTo(last.x, height);
     ctx.lineTo(pts[0].x, height);
     ctx.closePath();
-    ctx.fillStyle = color + "18";
+    const grad = ctx.createLinearGradient(0, pad, 0, height);
+    grad.addColorStop(0, color + (big ? "30" : "20"));
+    grad.addColorStop(1, color + "00");
+    ctx.fillStyle = grad;
     ctx.fill();
+
+    // Stroke the line on top of the fill.
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      const m = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
+      ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, m.x, m.y);
+    }
+    ctx.lineTo(last.x, last.y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = big ? 2 : 1.5;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    if (big) {
+      ctx.shadowColor = color + "66";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 1;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = "transparent";
+    ctx.shadowOffsetY = 0;
+
+    // Endpoint marker for the large variant.
+    if (big) {
+      ctx.beginPath();
+      ctx.arc(last.x, last.y, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
   }, [data, color, height, renderWidth]);
 
   // Wrapper div is what ResizeObserver watches — it always fills the parent

@@ -251,12 +251,13 @@ function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
 const RISK_CSS = `
   .risk-shell { max-width: 1280px; margin: 0 auto; display: grid; gap: 14px; }
   .risk-hero { display: grid; gap: 8px; padding: 6px 0 8px; }
-  .risk-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 560; }
+  .risk-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.05; letter-spacing: -0.03em; font-weight: 600; }
   .risk-hero p { margin: 8px 0 0; color: ${C.textSecondary}; font-family: ${FS}; font-size: 13px; line-height: 1.55; }
   .risk-tier-head span { color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
-  .risk-stack { display: grid; gap: 14px; }
-  .risk-tier { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 8px; padding: 14px; }
-  .risk-tier-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 12px; }
+  .risk-stack { display: grid; gap: 26px; }
+  .risk-tier { border-top: 0.5px solid ${C.border}; padding-top: 22px; }
+  .risk-tier:first-child { border-top: 0; padding-top: 4px; }
+  .risk-tier-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 14px; }
   .risk-tier-head p { margin: 5px 0 0; color: ${C.textMuted}; font-family: ${FS}; font-size: 12px; line-height: 1.45; }
   .risk-tier-head strong { color: ${C.textSecondary}; font-family: ${FM}; font-size: 10px; font-weight: 520; white-space: nowrap; }
   .risk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

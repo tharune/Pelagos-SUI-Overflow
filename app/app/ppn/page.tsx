@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, fmtUsd, BACKEND_URL } from "../_lib/tokens";
-import { IS_SUI } from "../_lib/chain";
+import { IS_SUI, SUI_ACTIVE_ADDRESS } from "../_lib/chain";
 import { BUNDLES, bundleById } from "../_lib/bundles";
 import { useSandbox } from "../_lib/demo-state";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
@@ -242,9 +242,29 @@ export default function PpnPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Index the wallet's open notes from the Sui-backed backend so the Positions
+  // panel reflects real on-chain protected notes (and tranche legs), matching
+  // the Portfolio page's hydrate. Falls back to empty when no signer is active.
   useEffect(() => {
-    dispatch({ type: "ppn/hydrate", vaults: [] });
-    dispatch({ type: "tranche/hydrate", positions: [] });
+    let cancelled = false;
+    const address = SUI_ACTIVE_ADDRESS;
+    if (!address) {
+      dispatch({ type: "ppn/hydrate", vaults: [] });
+      dispatch({ type: "tranche/hydrate", positions: [] });
+      return;
+    }
+    fetchPpnPortfolio(address)
+      .then((portfolio) => {
+        if (cancelled) return;
+        dispatch({ type: "ppn/hydrate", vaults: mergePpnVaults(portfolio) });
+        dispatch({ type: "tranche/hydrate", positions: mergeTranches(portfolio) });
+      })
+      .catch(() => {
+        // Keep whatever optimistic state we already have on a fetch miss.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [dispatch]);
 
   useEffect(() => {
@@ -567,9 +587,7 @@ export default function PpnPage() {
             </div>
           </section>
 
-          <section className="ppn-main-grid">
-            <div className="ppn-left-stack">
-              <div className="ppn-panel">
+          <div className="ppn-panel ppn-selected">
                 <div className="ppn-panel-head">
                   <div>
                     <span>Selected strategy</span>
@@ -603,8 +621,10 @@ export default function PpnPage() {
                   <i style={{ width: `${vaultPct * 100}%` }} />
                   <b style={{ width: `${basketPct * 100}%` }} />
                 </div>
-              </div>
+          </div>
 
+          <section className="ppn-main-grid">
+            <div className="ppn-left-stack">
               <div className="ppn-panel ppn-data-panel">
                 <div className="ppn-panel-head">
                   <div>
@@ -645,7 +665,7 @@ export default function PpnPage() {
                 </div>
               </div>
 
-              <div className="ppn-panel">
+              <div className="ppn-panel ppn-positions">
                 <div className="ppn-panel-head">
                   <div>
                     <span>Open notes</span>
@@ -773,7 +793,7 @@ export default function PpnPage() {
 const PPN_CSS = `
   .ppn-shell { max-width: 1280px; margin: 0 auto; display: grid; gap: 12px; }
   .ppn-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: end; padding: 0 0 8px; }
-  .ppn-hero h1 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.05; letter-spacing: 0; font-weight: 560; margin: 0; }
+  .ppn-hero h1 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.05; letter-spacing: -0.03em; font-weight: 600; margin: 0; }
   .ppn-hero p { color: ${C.textSecondary}; font-family: ${FS}; font-size: 13px; line-height: 1.55; margin: 8px 0 0; max-width: 560px; }
   .ppn-panel, .ppn-ticket { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 8px; }
   .ppn-panel-head span, .ppn-ticket-head span, .ppn-route-grid span, .ppn-amount span, .ppn-chain-box span { display: block; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
@@ -781,11 +801,11 @@ const PPN_CSS = `
   .ppn-panel-head { display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 12px; }
   .ppn-panel-head h2 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 17px; font-weight: 580; letter-spacing: -0.02em; margin: 4px 0 0; }
   .ppn-panel-head > strong { color: ${C.textSecondary}; font-family: ${FM}; font-size: 10px; font-weight: 520; text-align: right; }
-  .ppn-strategy-panel { padding-bottom: 8px; }
+  .ppn-strategy-panel { border: 0; background: transparent; padding: 0; }
   .ppn-filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 12px; }
   .ppn-filter-row button { height: 30px; border-radius: 999px; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textSecondary}; padding: 0 13px; font-family: ${FD}; font-size: 12px; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}, border-color 0.14s ${EASE}; }
   .ppn-filter-row button:hover, .ppn-filter-row button.is-active { color: ${C.textPrimary}; border-color: ${C.borderHover}; background: ${C.cardHover}; }
-  .ppn-strategy-table { display: grid; gap: 0; overflow: auto; max-height: 430px; border: 0.5px solid ${C.border}; border-radius: 8px; background: ${C.surface}; }
+  .ppn-strategy-table { display: grid; gap: 0; border: 0.5px solid ${C.border}; border-radius: 8px; background: ${C.surface}; }
   .ppn-strategy-header, .ppn-strategy-row { display: grid; grid-template-columns: minmax(230px, 1.25fr) 150px 110px 76px minmax(170px, 1fr) 86px; gap: 16px; align-items: center; }
   .ppn-strategy-header { padding: 9px 12px; border-bottom: 0.5px solid ${C.border}; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
   .ppn-strategy-row { width: 100%; appearance: none; border: 0; border-bottom: 0.5px solid ${C.border}; background: transparent; padding: 11px 12px; text-align: left; cursor: pointer; color: ${C.textSecondary}; transition: background 0.14s ${EASE}; }
@@ -798,8 +818,11 @@ const PPN_CSS = `
   .ppn-strategy-row em { display: block; color: ${C.textMuted}; font-family: ${FS}; font-size: 11.5px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ppn-strategy-row .ppn-action-chip { justify-self: end; min-width: 76px; height: 30px; border-radius: 999px; border: 0.5px solid ${C.border}; display: inline-flex; align-items: center; justify-content: center; color: ${C.textPrimary}; font-family: ${FD}; font-size: 12px; background: ${C.surface}; }
   .ppn-strategy-row.is-active .ppn-action-chip { border-color: ${C.tealLight}; background: ${C.tealLight}; color: #06131f; font-weight: 680; }
-  .ppn-main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
-  .ppn-left-stack { display: grid; gap: 12px; min-width: 0; }
+  .ppn-main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
+  .ppn-left-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .ppn-positions { display: flex; flex-direction: column; flex: 1; }
+  .ppn-positions .ppn-empty { flex: 1; display: grid; place-items: center; }
+  .ppn-positions .ppn-position-list { flex: 1; align-content: start; }
   .ppn-route-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; overflow: hidden; }
   .ppn-route-grid > div { border-right: 0.5px solid ${C.border}; background: transparent; padding: 11px 12px; min-width: 0; }
   .ppn-route-grid > div:last-child { border-right: 0; }

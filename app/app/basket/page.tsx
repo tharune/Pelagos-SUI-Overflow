@@ -473,7 +473,7 @@ function BasketEmpty({ onReset }: { onReset: () => void }) {
 const BASKET_CSS = `
   .basket-shell { max-width: 1320px; margin: 0 auto; display: grid; gap: 14px; min-width: 0; }
   .basket-hero { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 8px; padding: 0 0 4px; }
-  .basket-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.08; letter-spacing: 0; font-weight: 560; }
+  .basket-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.08; letter-spacing: -0.025em; font-weight: 600; }
   .basket-hero p { max-width: 620px; margin: 8px 0 0; color: ${C.textSecondary}; font-family: ${FS}; font-size: 13px; line-height: 1.55; }
   .basket-selector-head span, .basket-section-head span, .basket-metric-cell span { color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
   .basket-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -482,19 +482,19 @@ const BASKET_CSS = `
   .basket-segmented button:hover { color: ${C.textPrimary}; }
   .basket-segmented button.is-active { background: ${C.card}; color: ${C.textPrimary}; }
   .basket-warning { border: 0.5px solid rgba(217, 119, 6, 0.24); background: rgba(217, 119, 6, 0.06); color: #fbbf24; border-radius: 8px; padding: 10px 12px; font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.03em; }
-  .basket-workspace { display: grid; grid-template-columns: minmax(520px, 0.86fr) minmax(420px, 1.14fr); gap: 14px; align-items: start; min-width: 0; }
+  .basket-workspace { display: grid; grid-template-columns: minmax(520px, 0.86fr) minmax(420px, 1.14fr); gap: 14px; align-items: stretch; min-width: 0; }
   .basket-selector, .basket-detail { min-width: 0; border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 8px; }
-  .basket-selector { overflow: hidden; }
+  .basket-selector { overflow: hidden; display: flex; flex-direction: column; }
   .basket-selector-head { display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 14px 14px 12px; border-bottom: 0.5px solid ${C.border}; }
   .basket-selector-head div { display: grid; gap: 5px; }
   .basket-selector-head strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; font-weight: 620; }
   .basket-selector-head em { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; white-space: nowrap; }
-  .basket-selector-table { display: grid; min-width: 0; overflow: hidden; }
-  .basket-selector-row { width: 100%; display: grid; grid-template-columns: minmax(190px, 1.55fr) 76px 86px 92px 74px; gap: 12px; align-items: center; border: 0; border-bottom: 0.5px solid ${C.border}; background: transparent; color: ${C.textSecondary}; padding: 12px 14px; text-align: left; font-family: ${FD}; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}; }
+  .basket-selector-table { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+  .basket-selector-row { width: 100%; flex: 1 1 0; min-height: 64px; display: grid; grid-template-columns: minmax(190px, 1.55fr) 76px 86px 92px 74px; gap: 12px; align-items: center; border: 0; border-bottom: 0.5px solid ${C.border}; background: transparent; color: ${C.textSecondary}; padding: 12px 14px; text-align: left; font-family: ${FD}; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}; }
   .basket-selector-row:last-child { border-bottom: 0; }
   .basket-selector-row:hover, .basket-selector-row.is-active { background: ${C.surface}; color: ${C.textPrimary}; }
   .basket-selector-row.is-active { box-shadow: inset 2px 0 0 ${C.tealLight}; }
-  .basket-selector-labels { cursor: default; background: ${C.surface}; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; padding-top: 9px; padding-bottom: 9px; }
+  .basket-selector-labels { flex: 0 0 auto; min-height: 0; cursor: default; background: ${C.surface}; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; padding-top: 9px; padding-bottom: 9px; }
   .basket-selector-labels:hover { background: ${C.surface}; color: ${C.textMuted}; }
   .basket-selector-row > span:not(.basket-row-name) { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .basket-row-name { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
@@ -505,7 +505,7 @@ const BASKET_CSS = `
   .basket-detail { padding: 16px; display: grid; gap: 14px; }
   .basket-detail-head { display: flex; justify-content: space-between; align-items: start; gap: 18px; }
   .basket-detail-head span { display: block; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; margin-bottom: 7px; }
-  .basket-detail-head h2 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 24px; line-height: 1.1; letter-spacing: 0; font-weight: 620; }
+  .basket-detail-head h2 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 24px; line-height: 1.1; letter-spacing: -0.02em; font-weight: 620; }
   .basket-nav { text-align: right; display: grid; gap: 3px; }
   .basket-nav strong { font-family: ${FD}; font-size: 30px; line-height: 1; font-weight: 520; font-variant-numeric: tabular-nums; }
   .basket-nav em { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; }

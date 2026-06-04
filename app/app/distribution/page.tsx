@@ -129,16 +129,28 @@ function Metric({
   );
 }
 
-function MiniCurve({ values }: { values: number[] }) {
-  const width = 62;
-  const height = 28;
+// Full-bleed sparkline band that fills its container (width + flexible height)
+// so a candidate card reads cleanly however tall it grows. preserveAspectRatio
+// "none" stretches the path to the box; vector-effect keeps the stroke uniform.
+function CurveBand({ values }: { values: number[] }) {
+  const width = 100;
+  const height = 40;
   const max = Math.max(...values, 0.01);
   const x = (index: number) => (index / Math.max(1, values.length - 1)) * width;
-  const y = (value: number) => height - (value / max) * height;
-  const points = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
+  const y = (value: number) => height - 3 - (value / max) * (height - 6);
+  const pts = values.map((value, index) => ({ x: x(index), y: y(value) }));
+  const line = smoothPath(pts);
+  const area = `${line} L ${width} ${height} L 0 ${height} Z`;
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} aria-hidden="true">
-      <polyline points={points} fill="none" stroke={C.tealLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%" preserveAspectRatio="none" style={{ display: "block" }} aria-hidden="true">
+      <defs>
+        <linearGradient id="distCandFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.16" />
+          <stop offset="100%" stopColor={C.tealLight} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#distCandFill)" />
+      <path d={line} fill="none" stroke={C.tealLight} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
     </svg>
   );
 }
@@ -146,7 +158,22 @@ function MiniCurve({ values }: { values: number[] }) {
 function smoothPath(points: Array<{ x: number; y: number }>): string {
   if (points.length === 0) return "";
   if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  // Catmull-Rom → cubic bezier for a clean institutional curve instead of
+  // angular straight segments.
+  const t = 0.18;
+  const d = [`M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] ?? p2;
+    const c1x = p1.x + (p2.x - p0.x) * t;
+    const c1y = p1.y + (p2.y - p0.y) * t;
+    const c2x = p2.x - (p3.x - p1.x) * t;
+    const c2y = p2.y - (p3.y - p1.y) * t;
+    d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+  }
+  return d.join(" ");
 }
 
 function CurveSvg({
@@ -234,7 +261,7 @@ function CurveSvg({
 
       <path d={targetArea} fill="url(#distTargetFill)" />
       <path d={referenceLine} fill="none" stroke={C.textMuted} strokeWidth="2" strokeDasharray="5 7" opacity="0.58" strokeLinecap="round" />
-      <path d={targetLine} fill="none" stroke={C.tealLight} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={targetLine} fill="none" stroke={C.tealLight} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 1px 6px ${C.tealLight}3a)` }} />
       {targetPoints.map((point, index) => {
         const originalIndex = displayOrder[index];
         const selected = originalIndex === selectedBandIndex;
@@ -309,18 +336,18 @@ function CandidateRow({
         transition: `all 0.16s ${EASE}`,
       }}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "start" }}>
-        <div>
-          <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 13, fontWeight: 500, letterSpacing: "-0.005em", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {candidate.title}
-          </div>
-          <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.04em", marginTop: 6 }}>
-            {outcomeLabel(candidate.outcome_type)} · {candidate.band_count} ranges · {candidate.days_to_resolution ?? "-"}d
-          </div>
+      <div className="dist-cand-head">
+        <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 13, fontWeight: 500, letterSpacing: "-0.005em", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {candidate.title}
         </div>
-        <MiniCurve values={candidate.reference_curve} />
+        <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.04em", marginTop: 6 }}>
+          {outcomeLabel(candidate.outcome_type)} · {candidate.band_count} ranges · {candidate.days_to_resolution ?? "-"}d
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "54px 1fr 1fr", gap: 8, marginTop: 11 }}>
+      <div className="dist-cand-spark">
+        <CurveBand values={candidate.reference_curve} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "54px 1fr 1fr", gap: 8 }}>
         <Metric label="Score" value={candidate.launch_score.toFixed(1)} color={scoreColor(candidate.launch_score)} />
         <Metric label="Volume" value={usd(candidate.aggregate_volume_usd)} />
         <Metric label="Depth" value={usd(candidate.aggregate_depth_usd)} />
@@ -629,11 +656,15 @@ export default function DistributionMarketsPage() {
           .dist-shell { width: 100%; max-width: 1500px; margin: 0 auto; }
           .dist-workspace {
             display: grid; grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); gap: 16px;
-            align-items: start;
+            align-items: stretch;
           }
           .dist-list {
-            display: grid; gap: 7px; align-content: start;
+            display: flex; flex-direction: column; gap: 7px;
           }
+          .dist-candidate { flex: 1 1 0; display: flex; flex-direction: column; gap: 10px; min-height: 104px; }
+          .dist-cand-head { flex: 0 0 auto; }
+          .dist-cand-spark { flex: 1 1 auto; min-height: 28px; overflow: hidden; border-radius: 6px; }
+          .dist-rail-toggle { flex: 0 0 auto; }
           .dist-main {
             display: grid; gap: 14px; min-width: 0; align-content: start;
           }
@@ -754,7 +785,9 @@ export default function DistributionMarketsPage() {
           @media (max-width: 1180px) {
             .dist-workspace { grid-template-columns: 1fr !important; }
             .dist-loading-grid { grid-template-columns: 1fr !important; }
-            .dist-list { grid-template-columns: repeat(2, minmax(0, 1fr)); order: 2; }
+            .dist-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); order: 2; position: static; }
+            .dist-candidate { flex: none; min-height: 0; }
+            .dist-cand-spark { min-height: 34px; }
             .dist-main { order: 1; }
           }
           @media (max-width: 860px) {
@@ -775,7 +808,7 @@ export default function DistributionMarketsPage() {
         <div className="dist-shell">
           <div style={{ marginBottom: 18 }}>
             <div>
-              <h1 style={{ fontFamily: FD, fontSize: "clamp(28px, 3vw, 40px)", lineHeight: 1.05, margin: 0, color: C.textPrimary, letterSpacing: "-0.024em", fontWeight: 400 }}>
+              <h1 style={{ fontFamily: FD, fontSize: "clamp(28px, 3vw, 40px)", lineHeight: 1.05, margin: 0, color: C.textPrimary, letterSpacing: "-0.03em", fontWeight: 600 }}>
                 Distribution Markets
               </h1>
             </div>

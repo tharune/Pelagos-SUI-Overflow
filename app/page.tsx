@@ -4,6 +4,7 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "./app/_components/Header";
 import { C, FD, FM, FS, BACKEND_URL, EASE, fmtUsd } from "./app/_lib/tokens";
+import { monotonePath } from "./app/_lib/curve";
 import {
   DistributionCandidate,
   fetchDistributionCandidates,
@@ -111,22 +112,9 @@ function shortUsd(value: number): string {
   return fmtUsd(value, 0);
 }
 
-/* Catmull-Rom → cubic bezier smoothing for an honest-but-clean curve. */
-function smoothPath(pts: Array<[number, number]>, tension = 0.16): string {
-  if (pts.length < 2) return "";
-  const d = [`M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[i + 2] ?? p2;
-    const c1x = p1[0] + (p2[0] - p0[0]) * tension;
-    const c1y = p1[1] + (p2[1] - p0[1]) * tension;
-    const c2x = p2[0] - (p3[0] - p1[0]) * tension;
-    const c2y = p2[1] - (p3[1] - p1[1]) * tension;
-    d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`);
-  }
-  return d.join(" ");
+/* Clean, non-overshooting curve shared with every chart in the app. */
+function smoothPath(pts: Array<[number, number]>): string {
+  return monotonePath(pts);
 }
 
 /* ------------------------------------------------------------------ */

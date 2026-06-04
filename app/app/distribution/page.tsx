@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE, fmtUsd } from "../_lib/tokens";
+import { monotonePath as smoothPath } from "../_lib/curve";
 import {
   DistributionBand,
   DistributionCandidate,
@@ -145,35 +146,15 @@ function CurveBand({ values }: { values: number[] }) {
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%" preserveAspectRatio="none" style={{ display: "block" }} aria-hidden="true">
       <defs>
         <linearGradient id="distCandFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.16" />
+          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.2" />
+          <stop offset="60%" stopColor={C.tealLight} stopOpacity="0.05" />
           <stop offset="100%" stopColor={C.tealLight} stopOpacity="0" />
         </linearGradient>
       </defs>
       <path d={area} fill="url(#distCandFill)" />
-      <path d={line} fill="none" stroke={C.tealLight} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+      <path d={line} fill="none" stroke={C.tealLight} strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity="0.95" />
     </svg>
   );
-}
-
-function smoothPath(points: Array<{ x: number; y: number }>): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  // Catmull-Rom → cubic bezier for a clean institutional curve instead of
-  // angular straight segments.
-  const t = 0.18;
-  const d = [`M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`];
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[i - 1] ?? points[i];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[i + 2] ?? p2;
-    const c1x = p1.x + (p2.x - p0.x) * t;
-    const c1y = p1.y + (p2.y - p0.y) * t;
-    const c2x = p2.x - (p3.x - p1.x) * t;
-    const c2y = p2.y - (p3.y - p1.y) * t;
-    d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
-  }
-  return d.join(" ");
 }
 
 function CurveSvg({
@@ -221,18 +202,28 @@ function CurveSvg({
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" className="dist-curve" role="img" aria-label="Reference and target distribution curves">
       <defs>
         <linearGradient id="distTargetFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.18" />
+          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.22" />
+          <stop offset="55%" stopColor={C.tealLight} stopOpacity="0.06" />
           <stop offset="100%" stopColor={C.tealLight} stopOpacity="0" />
         </linearGradient>
       </defs>
 
-      <rect x={padX} y={padY} width={plotW} height={plotH} rx="8" fill={C.surface} opacity="0.26" />
       {gridTicks.map((t) => {
         const yPos = padY + t * plotH;
         const labelValue = t === 1 ? 0 : max * (1 - t);
+        const isBase = t === 1;
         return (
           <g key={t}>
-            <line x1={padX} x2={padX + plotW} y1={yPos} y2={yPos} stroke={C.border} strokeWidth="1" opacity={t === 1 ? "0.72" : "0.44"} />
+            <line
+              x1={padX}
+              x2={padX + plotW}
+              y1={yPos}
+              y2={yPos}
+              stroke={C.border}
+              strokeWidth="1"
+              strokeDasharray={isBase ? undefined : "1 7"}
+              opacity={isBase ? "0.45" : "0.28"}
+            />
             <text x={padX - 10} y={yPos + 4} fill={C.textMuted} fontFamily={FM} fontSize="10" textAnchor="end">
               {pct(labelValue, 0)}
             </text>
@@ -240,35 +231,17 @@ function CurveSvg({
         );
       })}
 
-      {referenceSeries.map((value, index) => {
-        const originalIndex = displayOrder[index];
-        const barW = Math.max(7, Math.min(16, plotW / Math.max(22, displayOrder.length * 2.7)));
-        const barH = Math.max(2, baseline - y(value));
-        return (
-          <g key={candidate.bands[originalIndex]?.id ?? index}>
-            <rect
-              x={x(index) - barW / 2}
-              y={baseline - barH}
-              width={barW}
-              height={barH}
-              rx="2.5"
-              fill={originalIndex === selectedBandIndex ? C.tealLight : C.textMuted}
-              opacity={originalIndex === selectedBandIndex ? "0.34" : "0.18"}
-            />
-          </g>
-        );
-      })}
-
       <path d={targetArea} fill="url(#distTargetFill)" />
-      <path d={referenceLine} fill="none" stroke={C.textMuted} strokeWidth="2" strokeDasharray="5 7" opacity="0.58" strokeLinecap="round" />
-      <path d={targetLine} fill="none" stroke={C.tealLight} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 1px 6px ${C.tealLight}3a)` }} />
+      <path d={referenceLine} fill="none" stroke={C.textMuted} strokeWidth="1.6" strokeDasharray="2 7" opacity="0.5" strokeLinecap="round" />
+      <path d={targetLine} fill="none" stroke={C.tealLight} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 2px 9px ${C.tealLight}45)` }} />
       {targetPoints.map((point, index) => {
         const originalIndex = displayOrder[index];
         const selected = originalIndex === selectedBandIndex;
         if (!showAllPointLabels && !selected) return null;
         return (
           <g key={`target-label-${candidate.bands[originalIndex]?.id ?? index}`}>
-            <circle cx={point.x} cy={point.y} r={selected ? "4.5" : "3"} fill={C.tealLight} stroke={C.bg} strokeWidth="1.6" opacity={selected ? "1" : "0.78"} />
+            {selected && <circle cx={point.x} cy={point.y} r="8" fill={C.tealLight} opacity="0.16" />}
+            <circle cx={point.x} cy={point.y} r={selected ? "5" : "2.6"} fill={selected ? C.tealLight : C.bg} stroke={C.tealLight} strokeWidth={selected ? "1.8" : "1.5"} opacity={selected ? "1" : "0.7"} />
             <text
               x={point.x}
               y={Math.max(12, point.y - 9)}

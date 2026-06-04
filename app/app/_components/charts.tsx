@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { C, FM, FS, FD, EASE, lightenColor, darkenColor, tc } from "../_lib/tokens";
+import { traceMonotone } from "../_lib/curve";
 
 export function Sparkline({
   data,
@@ -71,15 +72,10 @@ export function Sparkline({
     const big = height >= 80;
     const last = pts[pts.length - 1];
 
-    // Smoothed area fill with a vertical gradient fade (replaces the old flat
-    // single-alpha fill, so every sparkline reads with more depth).
+    // Smoothed area fill with a vertical gradient fade. Uses the same monotone
+    // curve as every other chart so the line reads identically app-wide.
     ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      const m = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
-      ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, m.x, m.y);
-    }
-    ctx.lineTo(last.x, last.y);
+    traceMonotone(ctx, pts);
     ctx.lineTo(last.x, height);
     ctx.lineTo(pts[0].x, height);
     ctx.closePath();
@@ -91,12 +87,7 @@ export function Sparkline({
 
     // Stroke the line on top of the fill.
     ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      const m = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
-      ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, m.x, m.y);
-    }
-    ctx.lineTo(last.x, last.y);
+    traceMonotone(ctx, pts);
     ctx.strokeStyle = color;
     ctx.lineWidth = big ? 2 : 1.5;
     ctx.lineJoin = "round";

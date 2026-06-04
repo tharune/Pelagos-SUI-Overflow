@@ -78,8 +78,12 @@ export function tc(tier: number): string {
   return tier === 90 ? C.teal : tier === 70 ? C.amber : C.coral;
 }
 
+// Tranches share one blue family, separated by value (light → deep) rather than
+// hue, so the seniority ranking reads at a glance while every slice stays
+// clearly visible on the dark plot: senior = lightest sky, mezzanine = brand
+// cyan-blue, junior = deep azure.
 export function trancheColor(kind: "senior" | "mezzanine" | "junior"): string {
-  return kind === "senior" ? C.teal : kind === "mezzanine" ? C.amber : C.coral;
+  return kind === "senior" ? "#7dd3fc" : kind === "mezzanine" ? "#38bdf8" : "#2563eb";
 }
 
 export function tl(daysLeft: number): "This week" | "This month" | "Long term" {

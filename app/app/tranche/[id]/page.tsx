@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Header, PageFrame } from "../../_components/Header";
 import { MetricTile } from "../../_components/charts";
-import { C, FS, FD, FM, EASE, trancheColor, tc, fmtUsd } from "../../_lib/tokens";
+import { C, FS, FD, FM, EASE, trancheColor, tc, fmtUsd, lightenColor } from "../../_lib/tokens";
 import { IS_SUI } from "../../_lib/chain";
 import { bundleById, type Bundle } from "../../_lib/bundles";
 import type { LiveBasket, LiveMarket } from "../../_lib/live-baskets";
@@ -632,6 +632,27 @@ function DistributionChart({
             height: "100%",
           }}
         >
+        {/* Soft vertical gradients per tranche — brightest just under the
+            curve, fading to nothing at the baseline so the fills read as a
+            calm wash instead of a flat, glaring block. */}
+        <defs>
+          {(["senior", "mezzanine", "junior"] as const).map((kind) => (
+            <linearGradient
+              key={`tr-grad-${kind}`}
+              id={`tr-grad-${kind}`}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={padT}
+              x2="0"
+              y2={padT + plotH}
+            >
+              <stop offset="0%" stopColor={trancheColor(kind)} stopOpacity="0.62" />
+              <stop offset="55%" stopColor={trancheColor(kind)} stopOpacity="0.2" />
+              <stop offset="100%" stopColor={trancheColor(kind)} stopOpacity="0.02" />
+            </linearGradient>
+          ))}
+        </defs>
+
         {/* Tranche slice fills */}
         {quotes.map((q) => {
           const active = q.kind === selectedKind;
@@ -639,8 +660,8 @@ function DistributionChart({
             <path
               key={q.kind}
               d={areaPath(q.attach, q.detach)}
-              fill={trancheColor(q.kind)}
-              opacity={active ? 0.42 : 0.14}
+              fill={`url(#tr-grad-${q.kind})`}
+              opacity={active ? 0.95 : 0.5}
               stroke="none"
             />
           );
@@ -917,18 +938,21 @@ function SegmentedSelectorBar({
             style={{
               height: 44,
               borderRadius: 8,
-              background: active ? color : `${color}1c`,
-              border: `0.5px solid ${active ? color : `${color}40`}`,
+              background: active
+                ? `linear-gradient(180deg, ${color}3d 0%, ${color}14 100%)`
+                : `${color}12`,
+              border: `0.5px solid ${active ? color : `${color}33`}`,
+              boxShadow: active ? `0 0 14px ${color}22, inset 0 1px 0 ${color}2e` : "none",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               fontFamily: FD,
               fontSize: 11,
-              fontWeight: 600,
+              fontWeight: active ? 700 : 600,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
-              color: active ? "#001814" : color,
+              color: active ? lightenColor(color, 0.4) : color,
               transition: `background 0.15s ${EASE}, color 0.15s ${EASE}, border-color 0.15s ${EASE}`,
               minWidth: 0,
               overflow: "hidden",

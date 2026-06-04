@@ -39,10 +39,25 @@ const app = express();
 // FRONTEND_URL may be a single origin ("http://localhost:13100") or a
 // comma-separated list ("http://localhost:13100,http://localhost:3003").
 // An unset value falls back to "*" so standalone API testing still works.
-const frontendOrigins = (process.env.FRONTEND_URL ?? '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// Treat localhost and 127.0.0.1 as the same dev host. Next serves the dev
+// frontend on 127.0.0.1, but FRONTEND_URL is usually written as localhost (or
+// vice versa); without this, the browser's Origin wouldn't match the allowlist
+// and every cross-origin fetch fails with "Failed to fetch".
+const expandLoopback = (origins: string[]): string[] => {
+  const out = new Set<string>();
+  for (const o of origins) {
+    out.add(o);
+    if (o.includes('//localhost')) out.add(o.replace('//localhost', '//127.0.0.1'));
+    else if (o.includes('//127.0.0.1')) out.add(o.replace('//127.0.0.1', '//localhost'));
+  }
+  return [...out];
+};
+const frontendOrigins = expandLoopback(
+  (process.env.FRONTEND_URL ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 const corsOrigin: cors.CorsOptions['origin'] =
   frontendOrigins.length === 0
     ? '*'

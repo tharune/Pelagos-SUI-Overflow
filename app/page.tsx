@@ -957,9 +957,14 @@ export default function HomePage() {
                 <div className="lp-eyebrow">Execution rails</div>
                 <h3>The plumbing stays out of your way</h3>
                 <p>Pelagos folds live order books and yields into one quote, then writes the position to Sui.</p>
-                <Link className="lp-close-cta" href="/app/portfolio">
-                  View a portfolio <span className="lp-ar"><IconArrow /></span>
-                </Link>
+                <div className="lp-actions">
+                  <Link className="lp-btn lp-btn-primary" href="/app">
+                    Enter app <span className="lp-ar"><IconArrow /></span>
+                  </Link>
+                  <Link className="lp-close-cta" href="/app/portfolio">
+                    View a portfolio <span className="lp-ar"><IconArrow /></span>
+                  </Link>
+                </div>
               </div>
               <div className="lp-spec">
                 {[

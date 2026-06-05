@@ -45,15 +45,18 @@ export const createBundleSchema = z.object({
   { message: 'Leg weights must sum to approximately 1.0' }
 );
 
+// bundle_id is a product/basket tag (uuid in DB mode, or a slug like
+// "PBU-HIGH-SHORT" when running against on-chain state without Supabase).
+// wallet_address must accept a full 66-char Sui address (0x + 64 hex).
 export const depositSchema = z.object({
-  bundle_id: z.string().uuid(),
-  wallet_address: z.string().min(32).max(64),
+  bundle_id: z.string().min(1).max(128),
+  wallet_address: z.string().min(32).max(66),
   amount_usdc: z.number().positive().max(1_000_000),
 });
 
 export const redeemSchema = z.object({
-  bundle_id: z.string().uuid(),
-  wallet_address: z.string().min(32).max(64),
+  bundle_id: z.string().min(1).max(128),
+  wallet_address: z.string().min(32).max(66),
   amount_tokens: z.number().positive().optional(),
 });
 

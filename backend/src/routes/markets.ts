@@ -50,16 +50,19 @@ async function fetchBook(tokenId: string): Promise<CachedBook | null> {
       bids?: Array<{ price: string; size: string }>;
       asks?: Array<{ price: string; size: string }>;
     };
-    // Trim to top 25 levels per side so payloads stay small even if
-    // the CLOB returns a very deep book.
-    const trim = (arr: Array<{ price: string; size: string }> = []): BookLevel[] =>
-      arr.slice(0, 25).map((lvl) => ({
-        price: Number(lvl.price),
-        size: Number(lvl.size),
-      }));
+    // Sort best-first (bids high→low, asks low→high) BEFORE trimming so the
+    // top 25 levels are the executable top-of-book — not 25 arbitrary levels.
+    const trim = (
+      arr: Array<{ price: string; size: string }> = [],
+      side: 'bid' | 'ask',
+    ): BookLevel[] =>
+      arr
+        .map((lvl) => ({ price: Number(lvl.price), size: Number(lvl.size) }))
+        .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price))
+        .slice(0, 25);
     const book: CachedBook = {
-      bids: trim(raw.bids),
-      asks: trim(raw.asks),
+      bids: trim(raw.bids, 'bid'),
+      asks: trim(raw.asks, 'ask'),
       fetched_at: Date.now(),
     };
     setCached(tokenId, book);

@@ -295,6 +295,39 @@ async function getSnapshot(force = false): Promise<CachedYields> {
  *   "sources": [ { name, project, apy, tvlUsd, pool, live }, ... ]
  * }
  */
+/**
+ * GET /api/vaults
+ *
+ * Live summary of the on-chain Pelagos vault (assets, shares, share price,
+ * fees) plus the best external yield venue. Previously unmounted (only
+ * `/yields` existed), so any consumer hitting `/api/vaults` 404'd.
+ */
+router.get('/', async (_req: Request, res: Response) => {
+  try {
+    const { readVaultState, vaultConfigured, VAULT } = await import('../services/vault');
+    let vault: Record<string, unknown> | null = null;
+    if (vaultConfigured()) {
+      const s = await readVaultState();
+      vault = {
+        vault_id: VAULT.vaultObjectId,
+        package_id: VAULT.packageId,
+        coin_type: VAULT.usdcType,
+        share_price: s.share_price,
+        total_assets_usdc: Number(s.total_assets_raw) / 10 ** VAULT.usdcDecimals,
+        total_shares: Number(s.total_shares) / 10 ** VAULT.usdcDecimals,
+        accrued_fees_usdc: Number(s.accrued_fees_raw) / 10 ** VAULT.usdcDecimals,
+        deposit_fee_bps: s.deposit_fee_bps,
+        redeem_fee_bps: s.redeem_fee_bps,
+      };
+    }
+    const snap = await getSnapshot();
+    res.json({ vault, best_yield: snap.sources[0] ?? null, yield_sources: snap.source_count });
+  } catch (err) {
+    console.error('GET /api/vaults error:', err);
+    res.status(500).json({ error: `Failed to fetch vault summary: ${(err as Error).message}` });
+  }
+});
+
 router.get('/yields', async (_req: Request, res: Response) => {
   try {
     const snap = await getSnapshot();

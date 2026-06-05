@@ -3,68 +3,70 @@ import {
   getBundleById,
   createPosition,
   createTransaction,
-  getPositionsByWallet,
-  getPositionsByWalletAndBundle,
   getTransactionsByWallet,
-  updatePositionHoldings,
 } from '../db/queries';
-import { getIssuePriceForBundle, getLiveNAV, getVaultPrice } from '../services/pricing';
-import { getPolymarketBasketNAVs } from '../services/polymarket';
 import { supabase } from '../db/supabase';
 import {
-  confirmSuiDigest,
-  derivedObjectsForBundle,
-  estimateDeposit,
-  estimateRedeem,
-  getProductState,
-  getUserUsdcDeltaFromDigest,
-} from '../services/pelagos-chain';
-import { DepositRequest, DepositResponse } from '../types';
+  prepareDeposit,
+  prepareRedeem,
+  confirmDigest,
+  readVaultState,
+  listShares,
+  vaultConfigured,
+  VAULT,
+} from '../services/vault';
 import { validate, depositSchema, redeemSchema } from '../utils/validation';
 
 const router = Router();
 
-async function issuePriceFor(bundleId: string): Promise<number> {
-  const bundle = await getBundleById(bundleId);
-  const polyNAVs = await getPolymarketBasketNAVs();
-  const polyData = bundle?.name ? polyNAVs.get(bundle.name) : undefined;
-  return polyData?.nav ?? await getIssuePriceForBundle(bundleId) ?? bundle?.issue_price ?? 0;
+function notConfigured(res: Response) {
+  return res
+    .status(503)
+    .json({ error: 'On-chain vault not configured (set VAULT_PACKAGE_ID + VAULT_OBJECT_ID).' });
 }
 
+/**
+ * Build a REAL, signable deposit transaction against the on-chain vault. The
+ * wallet signs `tx_bytes`; the backend never custodies funds. Works without
+ * Supabase — the bundle id is just a label on the share receipt.
+ */
 async function prepareDepositHandler(req: Request, res: Response) {
   try {
-    const { bundle_id, wallet_address, amount_usdc } = req.body as DepositRequest;
-    const bundle = await getBundleById(bundle_id);
-    if (!bundle) return res.status(404).json({ error: `Bundle not found: ${bundle_id}` });
-    if (bundle.status !== 'active') {
-      return res.status(400).json({ error: `Bundle is not active (status: ${bundle.status})` });
-    }
+    if (!vaultConfigured()) return notConfigured(res);
+    const { bundle_id, wallet_address, amount_usdc } = req.body as {
+      bundle_id: string;
+      wallet_address: string;
+      amount_usdc: number;
+    };
 
-    const issuePrice = await issuePriceFor(bundle_id);
-    if (!issuePrice || issuePrice <= 0) {
-      return res.status(500).json({ error: 'Unable to determine issue price' });
-    }
+    const prep = await prepareDeposit({
+      owner: wallet_address,
+      amount_usdc,
+      label: bundle_id,
+    });
 
-    const estimate = estimateDeposit(amount_usdc, issuePrice);
-    const objects = derivedObjectsForBundle(bundle_id);
     res.status(200).json({
       kind: 'prepared',
       bundle_id,
       wallet_address,
       amount_usdc,
-      fee_usdc: estimate.feeUsdc,
-      net_usdc: estimate.netUsdc,
-      issue_price: issuePrice,
-      tokens_minted: estimate.expectedTokens,
-      expected_tokens: estimate.expectedTokens,
-      sui_market_id: objects.suiMarketId,
-      sui_pool_id: objects.suiPoolId,
-      sui_receipt_type: objects.suiReceiptType,
+      fee_usdc: prep.economics.fee_usdc,
+      net_usdc: prep.economics.net_usdc,
+      issue_price: prep.economics.share_price,
+      tokens_minted: prep.economics.expected_shares,
+      expected_tokens: prep.economics.expected_shares,
+      deposit_fee_bps: prep.economics.deposit_fee_bps,
+      sui_market_id: prep.vault_id,
+      sui_pool_id: prep.vault_id,
+      sui_receipt_type: prep.share_type,
+      // The actual on-chain transaction for the wallet to sign + execute:
+      tx_bytes: prep.tx_bytes,
+      sender: prep.sender,
+      dry_run: prep.dry_run,
     });
   } catch (err) {
     console.error('POST /api/deposit/prepare error:', err);
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: `Failed to prepare deposit: ${detail}` });
+    res.status(500).json({ error: `Failed to prepare deposit: ${(err as Error).message}` });
   }
 }
 
@@ -73,283 +75,254 @@ router.post('/', validate(depositSchema), prepareDepositHandler);
 
 router.get('/vault-price/:bundleId', async (req: Request, res: Response) => {
   try {
-    const { bundleId } = req.params;
-    const product = await getProductState(bundleId);
-    if (!product) {
-      return res.status(404).json({ error: 'Product state not found for this bundle.' });
-    }
+    if (!vaultConfigured()) return notConfigured(res);
+    const state = await readVaultState();
     res.json({
-      bundle_id: bundleId,
-      issue_price: product.issuePriceBps / 10_000,
-      fee_bps: product.feeBps,
-      vault_state: product.state,
+      bundle_id: req.params.bundleId,
+      vault_id: VAULT.vaultObjectId,
+      issue_price: state.share_price,
+      fee_bps: state.deposit_fee_bps,
+      redeem_fee_bps: state.redeem_fee_bps,
+      total_assets_usdc: Number(state.total_assets_raw) / 10 ** VAULT.usdcDecimals,
+      total_shares: Number(state.total_shares) / 10 ** VAULT.usdcDecimals,
+      vault_state: 'active',
     });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: `Failed to fetch product price: ${detail}` });
+    res.status(500).json({ error: `Failed to fetch vault price: ${(err as Error).message}` });
   }
 });
 
 router.get('/vault-prices', async (_req: Request, res: Response) => {
   try {
-    const { getAllBundles } = await import('../db/queries');
-    const bundles = await getAllBundles();
-    const results = await Promise.allSettled(
-      bundles.map(async (b) => {
-        const product = await getProductState(b.id);
-        return {
-          bundle_id: b.id,
-          bundle_name: b.name,
-          issue_price: product ? product.issuePriceBps / 10_000 : null,
-          fee_bps: product ? product.feeBps : null,
-        };
-      }),
-    );
-    const prices = results
-      .map((r) => r.status === 'fulfilled' ? r.value : null)
-      .filter(Boolean);
-    res.json({ count: prices.length, prices });
+    if (!vaultConfigured()) return res.json({ count: 0, prices: [] });
+    const state = await readVaultState();
+    res.json({
+      count: 1,
+      prices: [
+        {
+          bundle_id: 'pelagos-vault',
+          bundle_name: 'Pelagos Vault (MOCK_USDC)',
+          vault_id: VAULT.vaultObjectId,
+          issue_price: state.share_price,
+          fee_bps: state.deposit_fee_bps,
+          total_assets_usdc: Number(state.total_assets_raw) / 10 ** VAULT.usdcDecimals,
+        },
+      ],
+    });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: `Failed to fetch product prices: ${detail}` });
+    res.status(500).json({ error: `Failed to fetch vault prices: ${(err as Error).message}` });
   }
 });
 
 router.post('/confirm', async (req: Request, res: Response) => {
   try {
-    const {
-      bundle_id,
-      wallet_address,
-      amount_usdc,
-      signature,
-      tokens_minted,
-      issue_price,
-      fee_usdc,
-    } = req.body as {
-      bundle_id: string;
-      wallet_address: string;
-      amount_usdc: number;
-      signature: string;
-      tokens_minted: number;
-      issue_price: number;
-      fee_usdc: number;
-    };
+    const { bundle_id, wallet_address, amount_usdc, signature, tokens_minted, issue_price, fee_usdc } =
+      req.body as {
+        bundle_id: string;
+        wallet_address: string;
+        amount_usdc: number;
+        signature: string;
+        tokens_minted?: number;
+        issue_price?: number;
+        fee_usdc?: number;
+      };
+    if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
 
-    if (!signature) return res.status(400).json({ error: 'signature required' });
-    const confirmed = await confirmSuiDigest(signature);
-    if (!confirmed) return res.status(400).json({ error: 'Sui transaction has not confirmed yet' });
+    const c = await confirmDigest(signature, wallet_address);
+    if (!c.ok) {
+      return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}`, ...c });
+    }
 
-    const position = await createPosition({
+    // Best-effort off-chain indexing (no-op if Supabase is unconfigured).
+    let transactionId: string | null = null;
+    try {
+      const position = await createPosition({
+        bundle_id,
+        wallet_address,
+        tokens_held: tokens_minted ?? 0,
+        entry_price: issue_price ?? 1,
+        deposited_usdc: amount_usdc,
+      });
+      const transaction = await createTransaction({
+        bundle_id,
+        wallet_address,
+        type: 'deposit',
+        amount_usdc,
+        tokens: tokens_minted ?? 0,
+        fee_usdc: fee_usdc ?? 0,
+        tx_signature: signature,
+      });
+      transactionId = transaction?.id ?? null;
+      if (transaction) {
+        await supabase
+          .from('transactions')
+          .update({ onchain_tx_signature: signature })
+          .eq('id', transaction.id);
+      }
+      void position;
+    } catch {
+      /* indexing optional */
+    }
+
+    res.status(201).json({
+      confirmed: true,
+      digest: signature,
+      explorer_url: c.explorer_url,
+      event: c.event,
+      transaction_id: transactionId,
       bundle_id,
-      wallet_address,
-      tokens_held: tokens_minted,
-      entry_price: issue_price,
-      deposited_usdc: amount_usdc,
+      tokens_minted: tokens_minted ?? null,
+      issue_price: issue_price ?? null,
+      fee_usdc: fee_usdc ?? null,
     });
-    if (!position) return res.status(500).json({ error: 'Failed to create position' });
-
-    const transaction = await createTransaction({
-      bundle_id,
-      wallet_address,
-      type: 'deposit',
-      amount_usdc,
-      tokens: tokens_minted,
-      fee_usdc,
-      tx_signature: signature,
-    });
-    if (!transaction) return res.status(500).json({ error: 'Failed to create transaction' });
-
-    await supabase
-      .from('transactions')
-      .update({ onchain_tx_signature: signature })
-      .eq('id', transaction.id);
-
-    const result: DepositResponse = {
-      transaction_id: transaction.id,
-      bundle_id,
-      tokens_minted,
-      issue_price,
-      fee_usdc,
-      net_usdc: amount_usdc - fee_usdc,
-    };
-    res.status(201).json(result);
   } catch (err) {
     console.error('POST /api/deposit/confirm error:', err);
-    res.status(500).json({ error: 'Failed to confirm deposit' });
+    res.status(500).json({ error: `Failed to confirm deposit: ${(err as Error).message}` });
   }
 });
 
 router.post('/redeem/prepare', validate(redeemSchema), async (req: Request, res: Response) => {
   try {
-    const { bundle_id, wallet_address, amount_tokens: amountTokensOverride } = req.body as {
-      bundle_id: string;
-      wallet_address: string;
-      amount_tokens?: number;
-    };
-    const bundle = await getBundleById(bundle_id);
-    if (!bundle) return res.status(404).json({ error: `Bundle not found: ${bundle_id}` });
-
-    const product = await getProductState(bundle_id);
-    if (!product || product.state === 'closed') {
-      return res.status(400).json({ error: 'Sui product is not redeemable.' });
-    }
-
-    const positions = await getPositionsByWalletAndBundle(wallet_address, bundle_id);
-    const totalTokens = positions.reduce((s, p) => s + p.tokens_held, 0);
-    if (totalTokens <= 0) return res.status(400).json({ error: 'No tokens to redeem' });
-
-    const redeemTokens =
-      amountTokensOverride != null && amountTokensOverride > 0 && amountTokensOverride <= totalTokens
-        ? amountTokensOverride
-        : totalTokens;
-    const estimate = estimateRedeem(redeemTokens, product.issuePriceBps / 10_000, product.state === 'active');
-    const objects = derivedObjectsForBundle(bundle_id);
-
+    if (!vaultConfigured()) return notConfigured(res);
+    const { bundle_id, wallet_address } = req.body as { bundle_id: string; wallet_address: string };
+    const prep = await prepareRedeem({ owner: wallet_address, label: bundle_id });
     res.status(200).json({
       kind: 'prepared',
       bundle_id,
       wallet_address,
-      total_tokens: redeemTokens,
-      expected_usdc: estimate.expectedUsdc,
-      redeem_kind: estimate.redeemKind,
-      exit_fee_usdc: estimate.exitFeeUsdc,
-      sui_market_id: objects.suiMarketId,
-      sui_pool_id: objects.suiPoolId,
+      share_id: prep.share_id,
+      total_tokens: prep.economics.shares,
+      expected_usdc: prep.economics.net_usdc,
+      gross_usdc: prep.economics.gross_usdc,
+      exit_fee_usdc: prep.economics.fee_usdc,
+      redeem_kind: 'active_early',
+      sui_market_id: prep.vault_id,
+      sui_pool_id: prep.vault_id,
+      tx_bytes: prep.tx_bytes,
+      sender: prep.sender,
+      dry_run: prep.dry_run,
     });
   } catch (err) {
     console.error('POST /api/deposit/redeem/prepare error:', err);
-    res.status(500).json({ error: 'Failed to prepare redeem' });
+    res.status(500).json({ error: `Failed to prepare redeem: ${(err as Error).message}` });
   }
 });
 
 router.post('/redeem/confirm', async (req: Request, res: Response) => {
   try {
-    const { bundle_id, wallet_address, signature, expected_usdc, tokens_redeemed } = req.body as {
+    const { bundle_id, wallet_address, signature } = req.body as {
       bundle_id: string;
       wallet_address: string;
       signature: string;
-      expected_usdc: number;
-      tokens_redeemed?: number;
     };
+    if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
 
-    const confirmed = await confirmSuiDigest(signature);
-    if (!confirmed) return res.status(400).json({ error: 'Sui transaction has not confirmed yet' });
-
-    const positions = await getPositionsByWalletAndBundle(wallet_address, bundle_id);
-    const totalTokens = positions.reduce((s, p) => s + p.tokens_held, 0);
-    const toDeduct =
-      tokens_redeemed != null && tokens_redeemed > 0 && tokens_redeemed <= totalTokens
-        ? tokens_redeemed
-        : totalTokens;
-
-    let remaining = toDeduct;
-    for (const p of positions) {
-      if (remaining <= 0) break;
-      const deduct = Math.min(p.tokens_held, remaining);
-      const frac = p.tokens_held > 0 ? deduct / p.tokens_held : 0;
-      await updatePositionHoldings(p.id, {
-        tokens_held: p.tokens_held - deduct,
-        deposited_usdc: Math.max(0, p.deposited_usdc - p.deposited_usdc * frac),
-      });
-      remaining -= deduct;
+    const c = await confirmDigest(signature, wallet_address);
+    if (!c.ok) {
+      return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}`, ...c });
     }
 
-    const ownerDelta = await getUserUsdcDeltaFromDigest();
-    const netReceived = ownerDelta != null && ownerDelta > 0 ? ownerDelta : expected_usdc;
-    const tx = await createTransaction({
-      bundle_id,
-      wallet_address,
-      type: 'redemption',
-      amount_usdc: netReceived,
-      tokens: toDeduct,
-      fee_usdc: Math.max(0, expected_usdc - netReceived),
-      tx_signature: signature,
-    });
-
-    if (tx) {
-      await supabase
-        .from('transactions')
-        .update({ onchain_tx_signature: signature })
-        .eq('id', tx.id);
+    let transactionId: string | null = null;
+    try {
+      const tx = await createTransaction({
+        bundle_id,
+        wallet_address,
+        type: 'redemption',
+        amount_usdc: c.usdc_delta ?? 0,
+        tokens: 0,
+        fee_usdc: 0,
+        tx_signature: signature,
+      });
+      transactionId = tx?.id ?? null;
+    } catch {
+      /* indexing optional */
     }
 
     res.status(200).json({
-      wallet_address,
+      confirmed: true,
+      digest: signature,
+      explorer_url: c.explorer_url,
       bundle_id,
-      total_tokens: toDeduct,
-      payout_usdc: expected_usdc,
-      transaction_id: tx?.id,
+      wallet_address,
+      payout_usdc: c.usdc_delta ?? null,
+      event: c.event,
+      transaction_id: transactionId,
     });
   } catch (err) {
     console.error('POST /api/deposit/redeem/confirm error:', err);
-    res.status(500).json({ error: 'Failed to confirm redeem' });
+    res.status(500).json({ error: `Failed to confirm redeem: ${(err as Error).message}` });
   }
 });
 
-router.post('/redeem', validate(redeemSchema), (req: Request, res: Response) => {
-  req.url = '/redeem/prepare';
-  (router as any).handle(req, res);
+router.post('/redeem', validate(redeemSchema), async (req: Request, res: Response) => {
+  // Alias: redeem == redeem/prepare (build the signable tx).
+  try {
+    if (!vaultConfigured()) return notConfigured(res);
+    const { bundle_id, wallet_address } = req.body as { bundle_id: string; wallet_address: string };
+    const prep = await prepareRedeem({ owner: wallet_address, label: bundle_id });
+    res.status(200).json({
+      kind: 'prepared',
+      bundle_id,
+      wallet_address,
+      share_id: prep.share_id,
+      total_tokens: prep.economics.shares,
+      expected_usdc: prep.economics.net_usdc,
+      exit_fee_usdc: prep.economics.fee_usdc,
+      tx_bytes: prep.tx_bytes,
+      sender: prep.sender,
+      dry_run: prep.dry_run,
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to prepare redeem: ${(err as Error).message}` });
+  }
 });
 
+/** Live on-chain portfolio: the wallet's real VaultShare receipts, valued at the
+ *  live share price. */
 router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    const positions = await getPositionsByWallet(walletAddress);
-
-    if (positions.length === 0) {
+    if (!vaultConfigured()) {
       return res.json({ wallet_address: walletAddress, positions: [], total_value: 0, total_pnl: 0 });
     }
+    const [state, shares] = await Promise.all([readVaultState(), listShares(walletAddress)]);
 
-    const enriched = await Promise.all(
-      positions.map(async (pos) => {
-        const bundle = await getBundleById(pos.bundle_id);
-        let currentNav: number;
-        if (bundle?.status === 'active') {
-          const navResult = await getLiveNAV(pos.bundle_id);
-          const polyNAVs = await getPolymarketBasketNAVs();
-          const polyData = bundle ? polyNAVs.get(bundle.name) : undefined;
-          currentNav = polyData?.nav ?? navResult?.nav ?? pos.entry_price;
-        } else {
-          currentNav = pos.entry_price;
-        }
-        const currentValue = pos.tokens_held * currentNav;
-        const costBasis = pos.deposited_usdc;
-        const unrealizedPnl = currentValue - costBasis;
+    const positions = shares.map((s) => {
+      const currentValue = s.shares * state.share_price;
+      const costBasis = s.principal_usdc;
+      const unrealizedPnl = currentValue - costBasis;
+      return {
+        position_id: s.share_id,
+        share_id: s.share_id,
+        bundle_id: s.label || 'pelagos-vault',
+        bundle_name: s.label || 'Pelagos Vault',
+        bundle_status: 'active',
+        tokens_held: s.shares,
+        entry_price: costBasis > 0 && s.shares > 0 ? costBasis / s.shares : 1,
+        deposited_usdc: costBasis,
+        current_nav: state.share_price,
+        current_value: currentValue,
+        unrealized_pnl: unrealizedPnl,
+        pnl_percent: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : 0,
+      };
+    });
 
-        return {
-          position_id: pos.id,
-          bundle_id: pos.bundle_id,
-          bundle_name: bundle?.name ?? 'Unknown',
-          bundle_status: bundle?.status ?? 'unknown',
-          risk_tier: bundle?.risk_tier ?? 0,
-          resolution_date: bundle?.resolution_date ?? null,
-          tokens_held: pos.tokens_held,
-          entry_price: pos.entry_price,
-          deposited_usdc: pos.deposited_usdc,
-          current_nav: currentNav,
-          current_value: currentValue,
-          unrealized_pnl: unrealizedPnl,
-          pnl_percent: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : 0,
-          created_at: pos.created_at,
-        };
-      }),
-    );
-
-    const totalValue = enriched.reduce((s, p) => s + p.current_value, 0);
-    const totalPnl = enriched.reduce((s, p) => s + p.unrealized_pnl, 0);
-    const totalDeposited = enriched.reduce((s, p) => s + p.deposited_usdc, 0);
-
+    const totalValue = positions.reduce((s, p) => s + p.current_value, 0);
+    const totalDeposited = positions.reduce((s, p) => s + p.deposited_usdc, 0);
+    const totalPnl = totalValue - totalDeposited;
     res.json({
       wallet_address: walletAddress,
-      positions: enriched,
+      vault_id: VAULT.vaultObjectId,
+      share_price: state.share_price,
+      positions,
       total_value: totalValue,
       total_deposited: totalDeposited,
       total_pnl: totalPnl,
       total_pnl_percent: totalDeposited > 0 ? (totalPnl / totalDeposited) * 100 : 0,
     });
   } catch (err) {
-    console.error('GET /api/deposit/portfolio/:walletAddress error:', err);
-    res.status(500).json({ error: 'Failed to fetch portfolio' });
+    console.error('GET /api/deposit/portfolio error:', err);
+    res.status(500).json({ error: `Failed to fetch portfolio: ${(err as Error).message}` });
   }
 });
 
@@ -357,61 +330,26 @@ router.get('/transactions/:walletAddress', async (req: Request, res: Response) =
   try {
     const { walletAddress } = req.params;
     const transactions = await getTransactionsByWallet(walletAddress);
-    const { data: vaultRows } = await supabase
-      .from('ppn_vaults')
-      .select('id, bundle_id, principal_usdc, created_at, tranche_kind, price_per_token')
-      .eq('wallet_address', walletAddress);
-
-    function findVaultForTx(tx: { bundle_id: string; created_at: string }) {
-      if (!vaultRows || vaultRows.length === 0) return null;
-      const txTs = new Date(tx.created_at).getTime();
-      let best: (typeof vaultRows)[number] | null = null;
-      let bestDelta = Infinity;
-      for (const v of vaultRows) {
-        if (v.bundle_id !== tx.bundle_id) continue;
-        const d = Math.abs(new Date(v.created_at).getTime() - txTs);
-        if (d < bestDelta && d < 120_000) {
-          bestDelta = d;
-          best = v;
-        }
-      }
-      return best;
-    }
-
     const enriched = await Promise.all(
       transactions.map(async (tx) => {
-        const bundle = await getBundleById(tx.bundle_id);
-        const vaultMatch = findVaultForTx(tx);
-        const notionalTokens =
-          vaultMatch?.price_per_token && vaultMatch.price_per_token > 0
-            ? (vaultMatch.principal_usdc ?? tx.amount_usdc) / vaultMatch.price_per_token
-            : null;
+        const bundle = await getBundleById(tx.bundle_id).catch(() => null);
         return {
           id: tx.id,
           bundle_id: tx.bundle_id,
-          bundle_name: bundle?.name ?? 'Unknown',
+          bundle_name: bundle?.name ?? 'Pelagos Vault',
           type: tx.type,
           amount_usdc: tx.amount_usdc,
           tokens: tx.tokens,
           fee_usdc: tx.fee_usdc,
           tx_signature: tx.tx_signature,
           created_at: tx.created_at,
-          tranche_kind: vaultMatch?.tranche_kind ?? null,
-          price_per_token: vaultMatch?.price_per_token ?? null,
-          notional_tokens: notionalTokens,
-          principal_usdc: vaultMatch?.principal_usdc ?? null,
         };
       }),
     );
-
-    res.json({
-      wallet_address: walletAddress,
-      count: enriched.length,
-      transactions: enriched,
-    });
+    res.json({ wallet_address: walletAddress, count: enriched.length, transactions: enriched });
   } catch (err) {
-    console.error('GET /api/deposit/transactions/:walletAddress error:', err);
-    res.status(500).json({ error: 'Failed to fetch transactions' });
+    console.error('GET /api/deposit/transactions error:', err);
+    res.status(500).json({ error: `Failed to fetch transactions: ${(err as Error).message}` });
   }
 });
 

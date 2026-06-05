@@ -103,6 +103,8 @@ const PROTOCOL_FEE_BPS: Record<TrancheKind, number> = {
 };
 
 const DISCOUNT_FLOOR = 0.15;
+/** Display ceiling for annualised tranche yield (stops 5-digit APYs). */
+const MAX_EXPECTED_YIELD_PCT = 999;
 const DURATION_REF_DAYS = 90;
 const DURATION_SCALE_FLOOR = 0.30;
 
@@ -339,9 +341,14 @@ export function quoteTranches(opts: QuoteTranchesInputs): TrancheQuote[] {
       Math.min(0.9999, Math.max(0, rawAsk)),
     );
 
-    // Yield-to-maturity at face (with 30-day annualisation floor).
+    // Yield-to-maturity at face (with 30-day annualisation floor), clamped to a
+    // sane display ceiling — a deep-junior price annualised over a short horizon
+    // can otherwise produce nonsensical 5-digit APYs.
     const periodReturn = 1 / pricePerToken - 1;
-    const expectedYieldPct = (periodReturn / annualizationYears) * 100;
+    const expectedYieldPct = Math.min(
+      MAX_EXPECTED_YIELD_PCT,
+      Math.max(0, (periodReturn / annualizationYears) * 100),
+    );
 
     const maxOrderUsdc = dynamicOrderCapUsdc(
       kind,

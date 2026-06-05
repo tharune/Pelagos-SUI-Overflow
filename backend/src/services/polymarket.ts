@@ -200,16 +200,19 @@ export async function fetchMarkets(params: {
 export async function fetchMarketByConditionId(
   conditionId: string
 ): Promise<PolymarketMarket | null> {
-  // Gamma API: numeric IDs work in path, conditionIds need slug lookup
-  // Try numeric ID path first (most reliable)
-  const url = `${GAMMA_API}/markets/${conditionId}`;
+  // 0x… condition ids must use the `condition_ids` query (returns an array);
+  // the numeric `/markets/{id}` path 422s on them. Numeric ids use the path.
+  const is0x = conditionId.startsWith('0x');
+  const url = is0x
+    ? `${GAMMA_API}/markets?condition_ids=${encodeURIComponent(conditionId)}&limit=1`
+    : `${GAMMA_API}/markets/${conditionId}`;
   const res = await fetchWithRetry(url);
   if (!res) return null;
 
-  const data = (await res.json()) as GammaMarketResponse;
-  // Path returns single object, not array
-  if (data && data.question) {
-    return toPolymarketMarket(data);
+  const data = (await res.json()) as GammaMarketResponse | GammaMarketResponse[];
+  const market = Array.isArray(data) ? data[0] : data;
+  if (market && market.question) {
+    return toPolymarketMarket(market);
   }
   return null;
 }
@@ -270,19 +273,29 @@ export async function searchMarkets(
   query: string,
   limit: number = 20
 ): Promise<PolymarketMarket[]> {
-  // Try text_query param first (Gamma API search)
+  const q = query.trim().toLowerCase();
+  // Overfetch the active feed (Gamma's `text_query` is unreliable on the
+  // markets endpoint) and filter client-side by question text so the query
+  // genuinely narrows results instead of returning the same default feed.
   const searchParams = new URLSearchParams();
-  searchParams.set('limit', String(limit));
+  searchParams.set('limit', String(Math.max(limit * 6, 60)));
   searchParams.set('active', 'true');
   searchParams.set('closed', 'false');
-  searchParams.set('text_query', query);
+  searchParams.set('order', 'volume24hr');
+  searchParams.set('ascending', 'false');
+  if (q) searchParams.set('text_query', query);
 
   const url = `${GAMMA_API}/markets?${searchParams.toString()}`;
   const res = await fetchWithRetry(url);
   if (!res) return [];
 
   const data = (await res.json()) as GammaMarketResponse[];
-  return data.map(toPolymarketMarket);
+  let markets = data.map(toPolymarketMarket);
+  if (q) {
+    const filtered = markets.filter((m) => m.question?.toLowerCase().includes(q));
+    if (filtered.length > 0) markets = filtered; // only narrow when we actually matched
+  }
+  return markets.slice(0, limit);
 }
 
 export async function getHighLiquidityMarkets(

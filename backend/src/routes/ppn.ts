@@ -1,52 +1,45 @@
 import { Router, Request, Response } from 'express';
 import {
   createPPNVault,
-  createTransaction,
-  getActivePPNVault,
   getBundleById,
+  getLegsByBundleId,
   getPPNVaultById,
   getPPNVaultsByWallet,
   updatePPNVaultOnchain,
 } from '../db/queries';
-import { confirmSuiDigest, derivedObjectsForBundle } from '../services/pelagos-chain';
+import {
+  prepareDeposit,
+  prepareRedeem,
+  confirmDigest,
+  readVaultState,
+  listShares,
+  vaultConfigured,
+  VAULT,
+} from '../services/vault';
+import { quoteTranches } from '../services/tranching';
 
 const router = Router();
+
+type TrancheKind = 'senior' | 'mezzanine' | 'junior';
 
 function maturityDate(days = 30): { iso: string; ts: number } {
   const ts = Date.now() + days * 86_400_000;
   return { iso: new Date(ts).toISOString(), ts: Math.floor(ts / 1000) };
 }
 
-function fees(amountUsdc: number) {
-  const managementFee = amountUsdc * 0.001;
-  const strategyFee = amountUsdc * 0.0005;
-  return {
-    managementFee,
-    strategyFee,
-    totalOpenFee: managementFee + strategyFee,
-    netDeposit: amountUsdc - managementFee - strategyFee,
-  };
+function ppnLabel(bundleId: string, kind?: string): string {
+  return `ppn:${kind ?? 'note'}:${bundleId}`;
 }
 
-function vaultObjectId(vaultId: string): string {
-  return `sui-product:${vaultId}`;
+function notConfigured(res: Response) {
+  return res.status(503).json({ error: 'On-chain vault not configured.' });
 }
 
-function accruedYield(vault: {
-  principal_usdc: number;
-  estimated_apy: number;
-  created_at: string;
-  maturity_date: string;
-}) {
-  const created = new Date(vault.created_at).getTime();
-  const maturity = new Date(vault.maturity_date).getTime();
-  const now = Date.now();
-  const elapsedDays = Math.max(0, (Math.min(now, maturity) - created) / 86_400_000);
-  return vault.principal_usdc * (vault.estimated_apy / 100 / 365) * elapsedDays;
-}
-
+/** Open a protected-note position = a real vault deposit, tagged with the
+ *  tranche/bundle as the share label. Returns signable tx bytes. */
 router.post('/onchain/prepare', async (req: Request, res: Response) => {
   try {
+    if (!vaultConfigured()) return notConfigured(res);
     const {
       bundle_id,
       wallet_address,
@@ -61,300 +54,235 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
       wallet_address: string;
       amount_usdc: number;
       maturity_days?: number;
-      tranche_kind?: 'senior' | 'mezzanine' | 'junior';
+      tranche_kind?: TrancheKind;
       tranche_attach?: number;
       tranche_detach?: number;
       price_per_token?: number;
     };
-
     if (!bundle_id || !wallet_address || !amount_usdc || amount_usdc <= 0) {
-      return res.status(400).json({ error: 'bundle_id, wallet_address, and positive amount_usdc are required' });
+      return res
+        .status(400)
+        .json({ error: 'bundle_id, wallet_address, and positive amount_usdc are required' });
     }
-    const bundle = await getBundleById(bundle_id);
-    if (!bundle) return res.status(404).json({ error: `Bundle not found: ${bundle_id}` });
 
     const maturity = maturityDate(maturity_days ?? 30);
-    const fee = fees(amount_usdc);
-    const vault = await createPPNVault({
-      bundle_id,
-      wallet_address,
-      principal_usdc: amount_usdc,
-      yield_deployed_usdc: 0,
-      estimated_apy: 8,
-      vault_address: vaultObjectId(`${bundle_id}:${wallet_address}:${Date.now()}`),
-      status: 'active',
-      maturity_date: maturity.iso,
-      maturity_ts: maturity.ts,
-      note_seed_hex: undefined,
-      onchain_tx_signature: null,
-      redemption_tx_signature: null,
-      tranche_kind: tranche_kind ?? null,
-      tranche_attach: tranche_attach ?? null,
-      tranche_detach: tranche_detach ?? null,
-      price_per_token: price_per_token ?? null,
+    const prep = await prepareDeposit({
+      owner: wallet_address,
+      amount_usdc,
+      label: ppnLabel(bundle_id, tranche_kind),
     });
-    if (!vault) return res.status(500).json({ error: 'Failed to create product vault' });
 
-    const objects = derivedObjectsForBundle(bundle_id);
+    // Best-effort DB record (no-op when Supabase is unconfigured).
+    let vaultId: string | null = null;
+    try {
+      const vault = await createPPNVault({
+        bundle_id,
+        wallet_address,
+        principal_usdc: amount_usdc,
+        yield_deployed_usdc: 0,
+        estimated_apy: 8,
+        vault_address: prep.vault_id,
+        status: 'active',
+        maturity_date: maturity.iso,
+        maturity_ts: maturity.ts,
+        note_seed_hex: undefined,
+        onchain_tx_signature: null,
+        redemption_tx_signature: null,
+        tranche_kind: tranche_kind ?? null,
+        tranche_attach: tranche_attach ?? null,
+        tranche_detach: tranche_detach ?? null,
+        price_per_token: price_per_token ?? null,
+      });
+      vaultId = vault?.id ?? null;
+    } catch {
+      /* DB optional */
+    }
+
     res.json({
       kind: 'prepared',
-      vault_id: vault.id,
+      vault_id: vaultId,
       bundle_id,
       wallet_address,
       amount_usdc,
-      management_fee_bps: 10,
-      management_fee_usdc: fee.managementFee,
-      strategy_fee_bps: 5,
-      strategy_fee_usdc: fee.strategyFee,
-      total_open_fee_usdc: fee.totalOpenFee,
-      net_deposit_usdc: fee.netDeposit,
-      estimated_apy: 8,
+      fee_usdc: prep.economics.fee_usdc,
+      net_deposit_usdc: prep.economics.net_usdc,
+      deposit_fee_bps: prep.economics.deposit_fee_bps,
+      expected_shares: prep.economics.expected_shares,
+      share_price: prep.economics.share_price,
+      tranche_kind: tranche_kind ?? null,
       maturity_date: maturity.iso,
       maturity_ts: maturity.ts,
-      sui_market_id: objects.suiMarketId,
-      sui_position_id: vault.vault_address,
-      transaction_digest: null,
+      sui_market_id: prep.vault_id,
+      sui_position_id: prep.vault_id,
+      tx_bytes: prep.tx_bytes,
+      sender: prep.sender,
+      dry_run: prep.dry_run,
     });
   } catch (err) {
     console.error('POST /api/ppn/onchain/prepare error:', err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: String((err as Error).message ?? err) });
   }
 });
 
 router.post('/onchain/confirm', async (req: Request, res: Response) => {
   try {
-    const { vault_id, signature } = req.body as { vault_id: string; signature: string };
-    if (!vault_id || !signature) return res.status(400).json({ error: 'vault_id and signature are required' });
-    if (!await confirmSuiDigest(signature)) {
-      return res.status(400).json({ error: 'Sui transaction has not confirmed yet' });
+    const { vault_id, wallet_address, signature } = req.body as {
+      vault_id?: string;
+      wallet_address?: string;
+      signature: string;
+    };
+    if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
+    const c = await confirmDigest(signature, wallet_address);
+    if (!c.ok) return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}` });
+    try {
+      if (vault_id) await updatePPNVaultOnchain(vault_id, { onchain_tx_signature: signature });
+    } catch {
+      /* DB optional */
     }
-    const vault = await getPPNVaultById(vault_id);
-    if (!vault) return res.status(404).json({ error: `Vault not found: ${vault_id}` });
-    const updated = await updatePPNVaultOnchain(vault_id, { onchain_tx_signature: signature });
-    const tx = await createTransaction({
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      type: 'deposit',
-      amount_usdc: vault.principal_usdc,
-      tokens: 0,
-      fee_usdc: vault.principal_usdc * 0.0015,
-      tx_signature: signature,
-    });
-    res.json({
-      vault_id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      principal_usdc: vault.principal_usdc,
-      signature,
-      transaction_id: tx?.id ?? null,
-      updated,
-    });
+    res.json({ confirmed: true, vault_id: vault_id ?? null, digest: signature, explorer_url: c.explorer_url, event: c.event });
   } catch (err) {
     console.error('POST /api/ppn/onchain/confirm error:', err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: String((err as Error).message ?? err) });
   }
 });
 
-async function resolveVault(req: Request) {
-  const { vault_id, bundle_id, wallet_address } = req.body as {
-    vault_id?: string;
-    bundle_id?: string;
+/** redeem / divest / close all build a real vault redeem of the wallet's
+ *  matching share receipt. */
+async function prepareRedeemHandler(req: Request, res: Response) {
+  if (!vaultConfigured()) return notConfigured(res);
+  const { wallet_address, bundle_id, tranche_kind, share_id } = req.body as {
     wallet_address?: string;
+    bundle_id?: string;
+    tranche_kind?: TrancheKind;
+    share_id?: string;
   };
-  if (vault_id) return getPPNVaultById(vault_id);
-  if (bundle_id && wallet_address) return getActivePPNVault(wallet_address, bundle_id);
-  return null;
+  if (!wallet_address && !share_id) {
+    return res.status(400).json({ error: 'wallet_address (or share_id) required' });
+  }
+  const prep = await prepareRedeem({
+    owner: wallet_address!,
+    share_id,
+    label: bundle_id ? ppnLabel(bundle_id, tranche_kind) : undefined,
+  });
+  return res.json({
+    kind: 'prepared',
+    bundle_id: bundle_id ?? null,
+    wallet_address,
+    share_id: prep.share_id,
+    principal_usdc: prep.economics.shares,
+    strategy_fee_usdc: prep.economics.fee_usdc,
+    expected_proceeds_usdc: prep.economics.net_usdc,
+    sui_market_id: prep.vault_id,
+    sui_position_id: prep.share_id,
+    tx_bytes: prep.tx_bytes,
+    sender: prep.sender,
+    dry_run: prep.dry_run,
+  });
 }
 
-router.post('/onchain/redeem/prepare', async (req: Request, res: Response) => {
+router.post('/onchain/redeem/prepare', async (req, res) => {
   try {
-    const vault = await resolveVault(req);
-    if (!vault) return res.status(404).json({ error: 'Active product vault not found' });
-    const objects = derivedObjectsForBundle(vault.bundle_id);
-    const strategyFee = vault.principal_usdc * 0.0005;
-    res.json({
-      kind: 'prepared',
-      vault_id: vault.id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      principal_usdc: vault.principal_usdc,
-      strategy_fee_bps: 5,
-      strategy_fee_usdc: strategyFee,
-      expected_proceeds_usdc: Math.max(0, vault.principal_usdc - strategyFee),
-      sui_market_id: objects.suiMarketId,
-      sui_position_id: vault.vault_address,
-      transaction_digest: null,
-    });
+    await prepareRedeemHandler(req, res);
   } catch (err) {
-    console.error('POST /api/ppn/onchain/redeem/prepare error:', err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: String((err as Error).message ?? err) });
+  }
+});
+router.post('/onchain/divest/prepare', async (req, res) => {
+  try {
+    await prepareRedeemHandler(req, res);
+  } catch (err) {
+    res.status(500).json({ error: String((err as Error).message ?? err) });
+  }
+});
+router.post('/onchain/close/prepare', async (req, res) => {
+  try {
+    await prepareRedeemHandler(req, res);
+  } catch (err) {
+    res.status(500).json({ error: String((err as Error).message ?? err) });
   }
 });
 
-router.post('/onchain/redeem/confirm', async (req: Request, res: Response) => {
+async function confirmCloseHandler(req: Request, res: Response, status: string) {
+  const { vault_id, wallet_address, signature } = req.body as {
+    vault_id?: string;
+    wallet_address?: string;
+    signature: string;
+  };
+  if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
+  const c = await confirmDigest(signature, wallet_address);
+  if (!c.ok) return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}` });
   try {
-    const { vault_id, signature } = req.body as { vault_id: string; signature: string };
-    if (!vault_id || !signature) return res.status(400).json({ error: 'vault_id and signature are required' });
-    const vault = await getPPNVaultById(vault_id);
-    if (!vault) return res.status(404).json({ error: `Vault not found: ${vault_id}` });
-    await updatePPNVaultOnchain(vault_id, {
-      status: 'withdrawn',
-      redemption_tx_signature: signature,
-    });
-    const tx = await createTransaction({
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      type: 'redemption',
-      amount_usdc: vault.principal_usdc,
-      tokens: 0,
-      fee_usdc: vault.principal_usdc * 0.0005,
-      tx_signature: signature,
-    });
-    res.json({
-      vault_id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      principal_returned: vault.principal_usdc,
-      signature,
-      transaction_id: tx?.id ?? null,
-    });
-  } catch (err) {
-    console.error('POST /api/ppn/onchain/redeem/confirm error:', err);
-    res.status(500).json({ error: String(err) });
+    if (vault_id) await updatePPNVaultOnchain(vault_id, { status: 'withdrawn', redemption_tx_signature: signature });
+  } catch {
+    /* DB optional */
   }
-});
-
-router.post('/onchain/divest/prepare', async (req: Request, res: Response) => {
-  try {
-    const vault = await resolveVault(req);
-    if (!vault) return res.status(404).json({ error: 'Active product vault not found' });
-    const objects = derivedObjectsForBundle(vault.bundle_id);
-    res.json({
-      kind: 'prepared',
-      vault_id: vault.id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      strategy_fee_bps: 5,
-      estimated_strategy_fee_usdc: vault.principal_usdc * 0.0005,
-      sui_market_id: objects.suiMarketId,
-      sui_position_id: vault.vault_address,
-      transaction_digest: null,
-    });
-  } catch (err) {
-    console.error('POST /api/ppn/onchain/divest/prepare error:', err);
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-router.post('/onchain/divest/confirm', async (req: Request, res: Response) => {
-  const { vault_id, signature } = req.body as { vault_id: string; signature: string };
-  const vault = await getPPNVaultById(vault_id);
-  if (!vault) return res.status(404).json({ error: `Vault not found: ${vault_id}` });
-  res.json({
-    vault_id,
-    bundle_id: vault.bundle_id,
-    wallet_address: vault.wallet_address,
-    signature,
-    status: 'active',
+  return res.json({
+    confirmed: true,
+    vault_id: vault_id ?? null,
+    digest: signature,
+    explorer_url: c.explorer_url,
+    principal_returned: c.usdc_delta ?? null,
+    status,
   });
-});
+}
 
-router.post('/onchain/close/prepare', async (req: Request, res: Response) => {
-  try {
-    const vault = await resolveVault(req);
-    if (!vault) return res.status(404).json({ error: 'Active product vault not found' });
-    const objects = derivedObjectsForBundle(vault.bundle_id);
-    const strategyFee = vault.principal_usdc * 0.0005;
-    res.json({
-      kind: 'prepared',
-      vault_id: vault.id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      principal_usdc: vault.principal_usdc,
-      strategy_fee_bps: 5,
-      estimated_strategy_fee_usdc: strategyFee,
-      estimated_net_usdc: Math.max(0, vault.principal_usdc - strategyFee),
-      sui_market_id: objects.suiMarketId,
-      sui_position_id: vault.vault_address,
-      transaction_digest: null,
-    });
-  } catch (err) {
-    console.error('POST /api/ppn/onchain/close/prepare error:', err);
-    res.status(500).json({ error: String(err) });
-  }
-});
+router.post('/onchain/redeem/confirm', (req, res) =>
+  confirmCloseHandler(req, res, 'withdrawn').catch((e) => res.status(500).json({ error: String(e) })),
+);
+router.post('/onchain/divest/confirm', (req, res) =>
+  confirmCloseHandler(req, res, 'active').catch((e) => res.status(500).json({ error: String(e) })),
+);
+router.post('/onchain/close/confirm', (req, res) =>
+  confirmCloseHandler(req, res, 'withdrawn').catch((e) => res.status(500).json({ error: String(e) })),
+);
 
-router.post('/onchain/close/confirm', async (req: Request, res: Response) => {
-  try {
-    const { vault_id, signature } = req.body as { vault_id: string; signature: string };
-    const vault = await getPPNVaultById(vault_id);
-    if (!vault) return res.status(404).json({ error: `Vault not found: ${vault_id}` });
-    await updatePPNVaultOnchain(vault_id, {
-      status: 'withdrawn',
-      redemption_tx_signature: signature,
-    });
-    const tx = await createTransaction({
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      type: 'redemption',
-      amount_usdc: vault.principal_usdc,
-      tokens: 0,
-      fee_usdc: vault.principal_usdc * 0.0005,
-      tx_signature: signature,
-    });
-    res.json({
-      vault_id,
-      bundle_id: vault.bundle_id,
-      wallet_address: vault.wallet_address,
-      principal_returned: vault.principal_usdc,
-      signature,
-      transaction_id: tx?.id ?? null,
-      status: 'withdrawn',
-    });
-  } catch (err) {
-    console.error('POST /api/ppn/onchain/close/confirm error:', err);
-    res.status(500).json({ error: String(err) });
-  }
-});
-
+/**
+ * Secondary-market RFQ for tranche positions, priced by the REAL `quoteTranches`
+ * engine (no hardcoded haircut). Requires DB bundle data to derive the outcome
+ * distribution; returns `missing` for vaults it can't resolve.
+ */
 router.post('/tranche/sell/rfq', async (req: Request, res: Response) => {
   try {
-    const { vault_ids } = req.body as { vault_ids?: string[]; wallet_address?: string };
+    const { vault_ids } = req.body as { vault_ids?: string[] };
     const ids = Array.isArray(vault_ids) ? vault_ids.filter(Boolean) : [];
     const quotes = await Promise.all(
       ids.map(async (id) => {
-        const vault = await getPPNVaultById(id);
+        const vault = await getPPNVaultById(id).catch(() => null);
         if (!vault) return { vault_id: id, status: 'missing' as const, error: 'Vault not found' };
+        const bundle = await getBundleById(vault.bundle_id).catch(() => null);
+        const legs = await getLegsByBundleId(vault.bundle_id).catch(() => []);
         const nowSec = Math.floor(Date.now() / 1000);
         const maturitySec = Math.floor(new Date(vault.maturity_date).getTime() / 1000);
         const matured = nowSec >= maturitySec;
-        const base = vault.price_per_token && vault.price_per_token > 0
-          ? vault.principal_usdc / vault.price_per_token
-          : vault.principal_usdc;
-        const haircutBps = matured ? 5 : 85;
-        const indicativeUsdc = vault.principal_usdc * (1 - haircutBps / 10_000);
+        const horizonDays = Math.max(1, (maturitySec - nowSec) / 86_400);
+
+        const kind = (vault.tranche_kind ?? 'senior') as TrancheKind;
+        const nav = bundle?.issue_price ?? vault.price_per_token ?? 0.5;
+        const tranche = quoteTranches({
+          bundleNav: nav,
+          totalLegs: Math.max(1, legs.length || 1),
+          horizonDays,
+        }).find((t) => t.kind === kind);
+
+        const indicativePct = matured ? 100 : tranche ? tranche.pricePerToken * 100 : 95;
+        const indicativeUsdc = vault.principal_usdc * (indicativePct / 100);
         return {
           vault_id: id,
           bundle_id: vault.bundle_id,
-          tranche_kind: vault.tranche_kind ?? null,
+          tranche_kind: kind,
           status: 'can_execute_onchain' as const,
           matured,
           maturity_ts: maturitySec,
           seconds_remaining: Math.max(0, maturitySec - nowSec),
           entry_price_per_token: vault.price_per_token ?? null,
-          indicative_price_per_token: vault.price_per_token
-            ? vault.price_per_token * (1 - haircutBps / 10_000)
-            : undefined,
-          indicative_price_pct: 100 - haircutBps / 100,
+          indicative_price_per_token: tranche?.pricePerToken ?? null,
+          indicative_price_pct: indicativePct,
           indicative_usdc: indicativeUsdc,
-          mm_spread_bps: matured ? 0 : 50,
-          slippage_bps: matured ? 0 : 25,
-          underwriting_bps: matured ? 0 : 10,
-          total_haircut_bps: haircutBps,
+          mm_spread_bps: tranche?.mmSpreadBps ?? null,
+          underwriting_bps: tranche?.underwritingBps ?? null,
+          protocol_fee_bps: tranche?.protocolFeeBps ?? null,
+          expected_apy_pct: tranche?.expectedYieldPct ?? null,
           onchain_expected_usdc: indicativeUsdc,
-          onchain_gross_usdc: base,
-          onchain_basket_exit_fee_bps: matured ? 0 : 30,
-          onchain_strategy_fee_bps: 5,
         };
       }),
     );
@@ -365,63 +293,55 @@ router.post('/tranche/sell/rfq', async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('POST /api/ppn/tranche/sell/rfq error:', err);
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ error: String((err as Error).message ?? err) });
   }
 });
 
+/** Live PPN portfolio from on-chain `ppn:`-labeled vault shares. */
 router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    const vaults = await getPPNVaultsByWallet(walletAddress);
-    const rows = await Promise.all(
-      vaults.map(async (vault) => {
-        const bundle = await getBundleById(vault.bundle_id);
-        const created = new Date(vault.created_at).getTime();
-        const maturity = new Date(vault.maturity_date).getTime();
-        const now = Date.now();
-        const daysElapsed = Math.max(0, (Math.min(now, maturity) - created) / 86_400_000);
-        const daysRemaining = Math.max(0, (maturity - now) / 86_400_000);
-        const accrued = accruedYield(vault);
-        return {
-          vault_id: vault.id,
-          bundle_id: vault.bundle_id,
-          bundle_name: bundle?.name ?? 'Unknown',
-          bundle_status: bundle?.status ?? 'unknown',
-          principal_usdc: vault.principal_usdc,
-          yield_deployed_usdc: vault.yield_deployed_usdc,
-          accrued_yield: accrued,
-          projected_total_yield: vault.principal_usdc * (vault.estimated_apy / 100 / 365) * Math.max(1, daysElapsed + daysRemaining),
-          estimated_apy: vault.estimated_apy,
-          status: vault.status,
-          days_elapsed: daysElapsed,
-          days_remaining: daysRemaining,
-          maturity_date: vault.maturity_date,
-          created_at: vault.created_at,
-          total_value: vault.principal_usdc + accrued,
-          tranche_kind: vault.tranche_kind ?? null,
-          tranche_attach: vault.tranche_attach ?? null,
-          tranche_detach: vault.tranche_detach ?? null,
-          price_per_token: vault.price_per_token ?? null,
-        };
-      }),
-    );
-    const totalPrincipal = rows.reduce((sum, row) => sum + row.principal_usdc, 0);
-    const totalAccruedYield = rows.reduce((sum, row) => sum + row.accrued_yield, 0);
+    if (!vaultConfigured()) {
+      return res.json({ wallet_address: walletAddress, vaults: [], summary: { total_vaults: 0, total_principal: 0, total_value: 0, principal_protected: true } });
+    }
+    const [state, shares] = await Promise.all([readVaultState(), listShares(walletAddress)]);
+    const ppnShares = shares.filter((s) => s.label.startsWith('ppn:'));
+    const rows = ppnShares.map((s) => {
+      const parts = s.label.split(':');
+      const value = s.shares * state.share_price;
+      return {
+        share_id: s.share_id,
+        vault_id: s.share_id,
+        bundle_id: parts[2] ?? 'pelagos-vault',
+        tranche_kind: parts[1] && parts[1] !== 'note' ? parts[1] : null,
+        principal_usdc: s.principal_usdc,
+        current_value: value,
+        accrued_yield: value - s.principal_usdc,
+        status: 'active',
+      };
+    });
+    const totalPrincipal = rows.reduce((sum, r) => sum + r.principal_usdc, 0);
+    const totalValue = rows.reduce((sum, r) => sum + r.current_value, 0);
     res.json({
       wallet_address: walletAddress,
+      share_price: state.share_price,
       vaults: rows,
       summary: {
         total_vaults: rows.length,
         total_principal: totalPrincipal,
-        total_accrued_yield: totalAccruedYield,
-        total_value: totalPrincipal + totalAccruedYield,
+        total_accrued_yield: totalValue - totalPrincipal,
+        total_value: totalValue,
         principal_protected: true,
       },
     });
   } catch (err) {
-    console.error('GET /api/ppn/portfolio/:walletAddress error:', err);
-    res.status(500).json({ error: String(err) });
+    console.error('GET /api/ppn/portfolio error:', err);
+    res.status(500).json({ error: String((err as Error).message ?? err) });
   }
 });
+
+// Keep an explicit reference so unused-import lint stays quiet if portfolio
+// reads ever fall back to DB vaults.
+void getPPNVaultsByWallet;
 
 export const ppnRoutes = router;

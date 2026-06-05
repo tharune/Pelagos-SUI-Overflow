@@ -1,0 +1,8 @@
+[package]
+name = "pelagos_vault"
+edition = "2024"
+
+[dependencies]
+
+[addresses]
+pelagos_vault = "0x0"

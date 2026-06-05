@@ -885,7 +885,12 @@ function priceOneTranche(
   // number. This is the same number exposed via `expectedReturnApyPct`.
   const meanApyTrueTau = (expectedReturnRaw / horizonYears) * 100;
   const LOTTERY_UPSIDE_CAP = 5;
+  // Hard display ceiling kept in lockstep with the backend
+  // (services/tranching.ts MAX_EXPECTED_YIELD_PCT) so the buy panel and the
+  // composer never show divergent headline APYs.
+  const MAX_EXPECTED_YIELD_PCT = 300;
   const expectedApyPct = Math.min(
+    MAX_EXPECTED_YIELD_PCT,
     ytmApyPct,
     Math.max(meanApyTrueTau, LOTTERY_UPSIDE_CAP * meanApyTrueTau),
   );

@@ -19,6 +19,14 @@ function ownerMismatch(event: Record<string, unknown> | undefined, wallet: strin
   const owner = (event?.owner as string | undefined)?.toLowerCase();
   return Boolean(owner && wallet && owner !== wallet.toLowerCase());
 }
+
+/** Decode the on-chain VaultShare label (vector<u8>) the deposit was tagged with. */
+function eventLabel(event: Record<string, unknown> | undefined): string | null {
+  const raw = event?.label;
+  if (Array.isArray(raw)) return Buffer.from(raw as number[]).toString("utf8");
+  if (typeof raw === "string") return raw;
+  return null;
+}
 import { supabase } from '../db/supabase';
 import {
   prepareDeposit,
@@ -152,6 +160,14 @@ router.post('/confirm', async (req: Request, res: Response) => {
       return res
         .status(400)
         .json({ error: 'Digest owner does not match wallet_address', event_owner: c.event?.owner });
+    }
+    // Bundle-binding: the on-chain deposit label must match the claimed bundle
+    // so a digest can't be attributed to the wrong basket.
+    const label = eventLabel(c.event);
+    if (label && label !== bundle_id) {
+      return res
+        .status(400)
+        .json({ error: 'Digest bundle label does not match bundle_id', event_label: label });
     }
     // Idempotency: a digest already recorded returns the existing row unchanged.
     const existing = await getTransactionBySignature(signature).catch(() => null);

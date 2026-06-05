@@ -171,11 +171,11 @@ async function prepareRedeemHandler(req: Request, res: Response) {
     tranche_kind?: TrancheKind;
     share_id?: string;
   };
-  if (!wallet_address && !share_id) {
-    return res.status(400).json({ error: 'wallet_address (or share_id) required' });
+  if (!wallet_address) {
+    return res.status(400).json({ error: 'wallet_address is required' });
   }
   const prep = await prepareRedeem({
-    owner: wallet_address!,
+    owner: wallet_address,
     share_id,
     label: bundle_id ? ppnLabel(bundle_id, tranche_kind) : undefined,
   });

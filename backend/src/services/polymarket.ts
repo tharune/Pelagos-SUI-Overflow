@@ -475,73 +475,19 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
     }
   }
 
-  /** Deterministic jitter in [-amplitude, +amplitude] seeded by basketId string. */
-  function seededJitter(id: string, amplitude: number): number {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < id.length; i++) {
-      h ^= id.charCodeAt(i);
-      h = (h * 0x01000193) >>> 0;
-    }
-    // Map [0, 2^32) → [-amplitude, +amplitude]
-    return ((h / 0xffffffff) * 2 - 1) * amplitude;
-  }
-
-  // Tier NAV targets — mirrors TIER_TARGET_NAV from live-baskets.ts.
-  const TIER_TARGET: Record<string, number> = {
-    'PBU-HIGH-SHORT': 0.95, 'PBU-HIGH-MED': 0.95, 'PBU-HIGH-LONG': 0.95,
-    'PBU-MID-SHORT':  0.50, 'PBU-MID-MED':  0.50, 'PBU-MID-LONG':  0.50,
-    'PBU-LOW-SHORT':  0.05, 'PBU-LOW-MED':  0.05, 'PBU-LOW-LONG':  0.05,
-  };
-
-  /**
-   * Exponential tilting: find λ via binary search so that the
-   * volume-weighted average probability after applying exp(λ*(p-target))
-   * equals `target`. Mirrors the frontend applyTilt logic.
-   */
-  function tiltedNAV(
-    probs: number[],
-    baseWeights: number[],
-    target: number,
-  ): number {
-    const total = baseWeights.reduce((s, w) => s + w, 0);
-    if (total === 0) return probs.reduce((s, p) => s + p, 0) / probs.length;
-
-    // Check if tilting is even needed (target already achievable).
-    const rawNav = probs.reduce((s, p, i) => s + (baseWeights[i] / total) * p, 0);
-    if (Math.abs(rawNav - target) < 0.001) return rawNav;
-
-    // Binary search for λ.
-    let lo = -50, hi = 50;
-    for (let iter = 0; iter < 60; iter++) {
-      const mid = (lo + hi) / 2;
-      const tilted = baseWeights.map((w, i) => w * Math.exp(mid * (probs[i] - target)));
-      const tSum = tilted.reduce((s, w) => s + w, 0);
-      const nav = probs.reduce((s, p, i) => s + (tilted[i] / tSum) * p, 0);
-      if (nav < target) lo = mid; else hi = mid;
-    }
-    const lam = (lo + hi) / 2;
-    const finalW = baseWeights.map((w, i) => w * Math.exp(lam * (probs[i] - target)));
-    const fSum = finalW.reduce((s, w) => s + w, 0);
-    return probs.reduce((s, p, i) => s + (finalW[i] / fSum) * p, 0);
-  }
-
   const results = new Map<string, BasketNAVResult>();
   for (const [basketId, candidates] of buckets.entries()) {
     const legs = candidates.slice(0, MAX_LEGS_PER_BASKET);
     if (legs.length === 0) continue;
 
     const probs = legs.map((c) => c.probability);
-    // sqrt(volume) as base weights — matches frontend.
+    // sqrt(volume) base weights → honest volume-weighted average probability.
+    // No tilt toward a hardcoded tier target, no seeded jitter.
     const baseWeights = legs.map((c) => Math.sqrt(Math.max(1, c.volumeUsd)));
     const totalW = baseWeights.reduce((s, w) => s + w, 0);
+    const navRaw = probs.reduce((s, p, i) => s + (baseWeights[i] / totalW) * p, 0);
 
-    // Apply exponential tilt toward tier target, then add the same
-    // seeded ±2% jitter the frontend applies so values match the UI.
-    const target = TIER_TARGET[basketId] ?? 0.5;
-    const jitter = seededJitter(basketId, 0.02);
-    const navRaw = tiltedNAV(probs, baseWeights, target + jitter);
-
-    // Weighted daily change (no tilt applied — raw volume-weighted).
+    // Weighted daily change (raw volume-weighted).
     const dailyChange = legs.reduce((s, c, i) => s + (baseWeights[i] / totalW) * c.dailyChangePct, 0);
 
     results.set(basketId, {

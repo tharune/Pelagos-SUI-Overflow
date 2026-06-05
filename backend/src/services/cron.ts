@@ -37,13 +37,13 @@ async function refreshAllBundles(): Promise<void> {
         if (navResult) {
           totalLegsUpdated += navResult.legs.filter((l) => l.status === 'active').length;
 
-          // Record NAV snapshot using vault price so history charts reflect
-          // the same mint price shown in the UI. The polymarket_nav is
-          // logged for observability but not persisted (UI computes it live).
-          const snapshotNav = vaultPrice?.issue_price ?? navResult.nav;
+          // Record the real leg-weighted NAV so history charts match every
+          // other NAV surface (was persisting the flat vault par price 1.0).
+          const snapshotNav = navResult.nav;
           await createNAVSnapshot(bundle.id, snapshotNav, navResult.legs);
+          void vaultPrice;
           if (polyData) {
-            console.log(`[cron] ${bundle.name}: vault=$${snapshotNav.toFixed(3)} polymarket=${(polyData.nav * 100).toFixed(1)}% (${polyData.leg_count} legs)`);
+            console.log(`[cron] ${bundle.name}: nav=${(snapshotNav * 100).toFixed(1)}% polymarket=${(polyData.nav * 100).toFixed(1)}% (${polyData.leg_count} legs)`);
           }
         }
 

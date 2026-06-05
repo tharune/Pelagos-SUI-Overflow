@@ -103,8 +103,10 @@ const PROTOCOL_FEE_BPS: Record<TrancheKind, number> = {
 };
 
 const DISCOUNT_FLOOR = 0.15;
-/** Display ceiling for annualised tranche yield (stops 5-digit APYs). */
-const MAX_EXPECTED_YIELD_PCT = 999;
+/** Display ceiling for annualised tranche yield. Deep-junior lottery tranches
+ *  can still imply very high APYs, but we clamp to a believable ceiling so the
+ *  UI never advertises absurd 3-5 digit figures. */
+const MAX_EXPECTED_YIELD_PCT = 300;
 const DURATION_REF_DAYS = 90;
 const DURATION_SCALE_FLOOR = 0.30;
 

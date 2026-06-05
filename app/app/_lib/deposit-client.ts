@@ -7,8 +7,9 @@
  */
 
 import { BACKEND_URL } from "./tokens";
-import { SUI_ACTIVE_ADDRESS } from "./chain";
-import { openSuiBasketPosition, redeemSuiBasketPosition } from "./sui-client";
+import type { WalletSigner } from "./wallet-bridge";
+
+export type { WalletSigner };
 
 function normalizeName(name: string): string {
   return name;
@@ -96,8 +97,14 @@ export interface DepositPrepareResponse {
   tokens_minted: number;
   expected_tokens: number;
   sui_market_id?: string;
+  sui_pool_id?: string;
   sui_position_id?: string;
+  sui_receipt_type?: string;
   transaction_digest?: string;
+  /** base64 transaction bytes for the wallet to sign (non-custodial flow). */
+  tx_bytes?: string;
+  sender?: string;
+  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
 }
 
 export interface DepositConfirmResponse {
@@ -118,16 +125,22 @@ export interface RedeemPrepareResponse {
   redeem_kind?: "finalized" | "active_early";
   exit_fee_usdc?: number;
   sui_market_id?: string;
+  sui_pool_id?: string;
   sui_position_id?: string;
+  share_id?: string;
   transaction_digest?: string;
+  tx_bytes?: string;
+  sender?: string;
+  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
 }
 
 export interface RedeemConfirmResponse {
-  wallet_address: string;
-  bundle_id: string;
-  total_tokens: number;
-  payout_usdc: number;
-  transaction_id?: string;
+  wallet_address?: string;
+  bundle_id?: string;
+  total_tokens?: number;
+  payout_usdc?: number | null;
+  transaction_id?: string | null;
+  confirmed?: boolean;
 }
 
 export class DepositError extends Error {
@@ -227,16 +240,18 @@ export async function confirmRedeem(args: {
   });
 }
 
-export interface WalletSigner {
-  address: string | null;
+function requireWallet(wallet: WalletSigner): string {
+  if (!wallet.connected || !wallet.address) {
+    throw new DepositError("Connect a Sui wallet to continue.", 0);
+  }
+  return wallet.address;
 }
 
-function activeSuiAddress(wallet: WalletSigner): string {
-  const address = wallet.address || SUI_ACTIVE_ADDRESS;
-  if (!address) throw new DepositError("No Sui address configured.", 0);
-  return address;
-}
-
+/**
+ * Non-custodial deposit: backend builds the PTB (/prepare), the user's wallet
+ * signs + submits it, then we verify + persist (/confirm). The server never
+ * signs or holds funds.
+ */
 export async function depositIntoBundle(args: {
   wallet: WalletSigner;
   bundleId: string;
@@ -250,65 +265,55 @@ export async function depositIntoBundle(args: {
   confirm: DepositConfirmResponse;
 }> {
   const { wallet, bundleId, amountUsdc } = args;
-  args.onStage?.("preparing");
-  const owner = activeSuiAddress(wallet);
-  const tokensMinted = amountUsdc / Math.max(args.navAtDeposit ?? 1, 0.000001);
-  const opened = await openSuiBasketPosition({
-    bundleId,
-    amountUsdc,
-    recipient: owner,
-  });
-  const signature =
-    opened.digests.buy ?? opened.digests.create_market ?? opened.digests.mint ?? opened.market_id;
+  const owner = requireWallet(wallet);
 
+  args.onStage?.("preparing");
+  const prepare = await prepareDeposit({ bundleId, walletAddress: owner, amountUsdc });
+  if (!prepare.tx_bytes) {
+    throw new DepositError("Backend did not return a signable transaction.", 0, prepare);
+  }
+
+  args.onStage?.("signing");
+  const signature = await wallet.signAndExecute(prepare.tx_bytes);
+
+  args.onStage?.("confirming");
+  const confirm = await confirmDeposit({
+    bundleId,
+    walletAddress: owner,
+    amountUsdc,
+    signature,
+    tokensMinted: prepare.tokens_minted,
+    issuePrice: prepare.issue_price,
+    feeUsdc: prepare.fee_usdc,
+  });
+
+  args.onStage?.("persisting");
   try {
     const { recordVirtualPosition } = await import("./virtual-positions");
     recordVirtualPosition({
       wallet: owner,
-      uuid: opened.market_id,
+      uuid: prepare.sui_market_id ?? signature,
       uiBundleId: bundleId,
-      tokens: tokensMinted,
+      tokens: prepare.tokens_minted,
       depositedUsdc: amountUsdc,
-      navAtDeposit: args.navAtDeposit ?? 1,
+      navAtDeposit: args.navAtDeposit ?? prepare.issue_price ?? 1,
       signature,
       createdAt: Date.now(),
       chain: "sui",
-      marketId: opened.market_id,
-      positionId: opened.position_id,
+      marketId: prepare.sui_market_id ?? "",
+      positionId: prepare.sui_position_id ?? "",
     });
   } catch {
     // Browser-local position recording is only for UI continuity.
   }
 
-  args.onStage?.("confirming");
-  args.onStage?.("persisting");
-  return {
-    signature,
-    prepare: {
-      kind: "prepared",
-      bundle_id: opened.market_id,
-      wallet_address: owner,
-      amount_usdc: amountUsdc,
-      fee_usdc: 0,
-      net_usdc: amountUsdc,
-      issue_price: args.navAtDeposit ?? 1,
-      tokens_minted: tokensMinted,
-      expected_tokens: tokensMinted,
-      sui_market_id: opened.market_id,
-      sui_position_id: opened.position_id,
-      transaction_digest: signature,
-    },
-    confirm: {
-      transaction_id: signature,
-      bundle_id: opened.market_id,
-      tokens_minted: tokensMinted,
-      issue_price: args.navAtDeposit ?? 1,
-      fee_usdc: 0,
-      net_usdc: amountUsdc,
-    },
-  };
+  return { signature, prepare, confirm };
 }
 
+/**
+ * Non-custodial redeem: backend finds the wallet's on-chain VaultShare and
+ * builds the redeem PTB; the wallet signs it; we verify + persist.
+ */
 export async function redeemFromBundle(args: {
   wallet: WalletSigner;
   bundleId: string;
@@ -321,44 +326,39 @@ export async function redeemFromBundle(args: {
   confirm: RedeemConfirmResponse;
 }> {
   const { wallet, bundleId } = args;
-  const owner = activeSuiAddress(wallet);
+  const owner = requireWallet(wallet);
+
   args.onStage?.("preparing");
-  const { getVirtualPositions, clearVirtualPositionBySuiIds } = await import("./virtual-positions");
-  const candidate = getVirtualPositions(owner).find(
-    (p) => p.chain === "sui" && p.uiBundleId === bundleId && p.marketId && p.positionId,
-  );
-  if (!candidate?.marketId || !candidate.positionId) {
-    throw new DepositError("No local Sui position found for this basket.", 404);
+  const prepare = await prepareRedeem({ bundleId, walletAddress: owner, amountTokens: args.amountTokens });
+  if (!prepare.tx_bytes) {
+    throw new DepositError("No redeemable on-chain position for this wallet.", 404, prepare);
   }
-  const redeemed = await redeemSuiBasketPosition({
-    marketId: candidate.marketId,
-    positionId: candidate.positionId,
-  });
-  const signature = redeemed.digests.claim ?? redeemed.digests.resolve ?? candidate.marketId;
-  clearVirtualPositionBySuiIds(owner, candidate.marketId, candidate.positionId);
+
+  args.onStage?.("signing");
+  const signature = await wallet.signAndExecute(prepare.tx_bytes);
 
   args.onStage?.("confirming");
-  args.onStage?.("persisting");
-  return {
+  const confirm = await confirmRedeem({
+    bundleId,
+    walletAddress: owner,
     signature,
-    prepare: {
-      kind: "prepared",
-      bundle_id: candidate.marketId,
-      wallet_address: owner,
-      total_tokens: candidate.tokens,
-      expected_usdc: candidate.depositedUsdc,
-      redeem_kind: "finalized",
-      exit_fee_usdc: 0,
-      sui_market_id: candidate.marketId,
-      sui_position_id: candidate.positionId,
-      transaction_digest: signature,
-    },
-    confirm: {
-      wallet_address: owner,
-      bundle_id: candidate.marketId,
-      total_tokens: candidate.tokens,
-      payout_usdc: candidate.depositedUsdc,
-      transaction_id: signature,
-    },
-  };
+    expectedUsdc: prepare.expected_usdc,
+    tokensRedeemed: prepare.total_tokens,
+  });
+
+  args.onStage?.("persisting");
+  try {
+    const { clearVirtualPositionBySuiIds } = await import("./virtual-positions");
+    if (prepare.sui_market_id) {
+      clearVirtualPositionBySuiIds(
+        owner,
+        prepare.sui_market_id,
+        prepare.share_id ?? prepare.sui_position_id ?? "",
+      );
+    }
+  } catch {
+    // Browser-local position recording is only for UI continuity.
+  }
+
+  return { signature, prepare, confirm };
 }

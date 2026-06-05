@@ -995,13 +995,13 @@ function TrancheBuyPanel({
   markets: LiveMarket[];
   recommendedAmount?: number | null;
 }) {
-  const appConnected = true;
   const { state, dispatch } = useSandbox();
   // Wallet signer + live USDC balance. We read USDC straight from the
   // user's ATA so the "Insufficient USDC" gate reflects the real wallet
   // instead of the sandbox reducer counter.
   const wallet = useWalletSigner();
   const usdc = useUsdcBalance();
+  const appConnected = wallet.connected;
   // Seed the amount input from the AI-recommended deposit when a user
   // lands on this page via a `?amount=` deep link. Falls back to $100.
   const initialAmount =
@@ -1261,7 +1261,7 @@ function TrancheBuyPanel({
         kind: selected.kind,
         usdcAmount,
         pricePerToken: selected.marketPrice,
-        vaultId: result.prepare.vault_id,
+        vaultId: result.prepare.vault_id ?? result.signature,
         maturityDays: Math.max(1, Math.min(365, Math.round(stats.daysLeft || 30))),
         apy: selected.expectedApyPct,
         createdAt: Date.now(),

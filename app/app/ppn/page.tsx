@@ -220,7 +220,7 @@ export default function PpnPage() {
   const basketState = useLiveBaskets();
   const wallet = useWalletSigner();
   const usdc = useUsdcBalance();
-  const appConnected = true;
+  const appConnected = wallet.connected;
 
   const [selectedStrategyId, setSelectedStrategyId] = useState(STRATEGY_BLUEPRINTS[0].id);
   const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("all");
@@ -416,7 +416,7 @@ export default function PpnPage() {
       setTxSignature(result.signature);
       dispatch({
         type: "ppn/open",
-        id: result.prepare.vault_id,
+        id: result.prepare.vault_id ?? result.signature,
         bundleId: selectedBundle,
         usdcAmount: dep,
         apy: apy * 100,

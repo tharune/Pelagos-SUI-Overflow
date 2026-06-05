@@ -7,8 +7,9 @@
  */
 
 import { BACKEND_URL } from "./tokens";
-import { SUI_ACTIVE_ADDRESS } from "./chain";
-import { openSuiBasketPosition, redeemSuiBasketPosition } from "./sui-client";
+import type { WalletSigner } from "./wallet-bridge";
+
+export type { WalletSigner };
 
 function normalizeName(name: string): string {
   return name;
@@ -120,54 +121,71 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 export interface PpnPrepareResponse {
   kind: "prepared";
-  vault_id: string;
+  vault_id: string | null;
   bundle_id: string;
   wallet_address: string;
   amount_usdc: number;
-  management_fee_bps: number;
-  management_fee_usdc: number;
-  strategy_fee_bps: number;
-  strategy_fee_usdc: number;
-  total_open_fee_usdc: number;
-  net_deposit_usdc: number;
-  estimated_apy: number;
+  fee_usdc?: number;
+  net_deposit_usdc?: number;
+  deposit_fee_bps?: number;
+  expected_shares?: number;
+  share_price?: number;
+  management_fee_bps?: number;
+  management_fee_usdc?: number;
+  strategy_fee_bps?: number;
+  strategy_fee_usdc?: number;
+  total_open_fee_usdc?: number;
+  estimated_apy?: number;
   maturity_date: string;
   maturity_ts: number;
   sui_market_id: string;
   sui_position_id: string;
-  transaction_digest: string;
+  transaction_digest?: string;
+  tx_bytes?: string;
+  sender?: string;
+  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
 }
 
 export interface PpnConfirmResponse {
-  vault_id: string;
-  bundle_id: string;
-  wallet_address: string;
-  principal_usdc: number;
-  signature: string;
-  transaction_id: string | null;
+  confirmed?: boolean;
+  vault_id?: string | null;
+  bundle_id?: string;
+  wallet_address?: string;
+  principal_usdc?: number;
+  signature?: string;
+  digest?: string;
+  explorer_url?: string;
+  transaction_id?: string | null;
 }
 
 export interface PpnRedeemPrepareResponse {
   kind: "prepared";
-  vault_id: string;
-  bundle_id: string;
+  vault_id?: string | null;
+  bundle_id?: string | null;
   wallet_address: string;
   principal_usdc: number;
-  strategy_fee_bps: number;
-  strategy_fee_usdc: number;
+  strategy_fee_bps?: number;
+  strategy_fee_usdc?: number;
   expected_proceeds_usdc: number;
-  sui_market_id: string;
-  sui_position_id: string;
-  transaction_digest: string;
+  sui_market_id?: string;
+  sui_position_id?: string;
+  share_id?: string;
+  transaction_digest?: string;
+  tx_bytes?: string;
+  sender?: string;
+  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
 }
 
 export interface PpnRedeemConfirmResponse {
-  vault_id: string;
-  bundle_id: string;
-  wallet_address: string;
-  principal_returned: number;
-  signature: string;
-  transaction_id: string | null;
+  confirmed?: boolean;
+  vault_id?: string | null;
+  bundle_id?: string;
+  wallet_address?: string;
+  principal_returned?: number;
+  signature?: string;
+  digest?: string;
+  explorer_url?: string;
+  transaction_id?: string | null;
 }
 
 export interface PpnDivestPrepareResponse {
@@ -304,22 +322,17 @@ export async function fetchPpnPortfolio(walletAddress: string): Promise<PpnPortf
   return (await res.json()) as PpnPortfolio;
 }
 
-export interface WalletSigner {
-  address: string | null;
+function requireWallet(wallet: WalletSigner): string {
+  if (!wallet.connected || !wallet.address) {
+    throw new PpnError("Connect a Sui wallet to continue.", 0);
+  }
+  return wallet.address;
 }
 
-function activeSuiAddress(wallet: WalletSigner): string {
-  const address = wallet.address || SUI_ACTIVE_ADDRESS;
-  if (!address) throw new PpnError("No Sui address configured.", 0);
-  return address;
-}
-
-function splitVaultId(vaultId: string | undefined): { marketId: string; positionId: string } {
-  const [marketId, positionId] = String(vaultId ?? "").split("::");
-  if (!marketId || !positionId) throw new PpnError("Missing local Sui product position ids.", 404);
-  return { marketId, positionId };
-}
-
+/**
+ * Non-custodial protected-note / tranche open: backend builds the vault deposit
+ * PTB (tagged ppn:<kind>:<bundle>), the wallet signs it, then /confirm verifies.
+ */
 export async function ppnDeposit(args: {
   wallet: WalletSigner;
   bundleId: string;
@@ -332,46 +345,34 @@ export async function ppnDeposit(args: {
   prepare: PpnPrepareResponse;
   confirm: PpnConfirmResponse;
 }> {
-  const { wallet, bundleId, amountUsdc } = args;
-  const owner = activeSuiAddress(wallet);
-  const product = args.tranche ? `TRANCHE-${args.tranche.kind}` : "PPN";
-  const opened = await openSuiBasketPosition({
-    bundleId: `${product}-${bundleId}`,
-    amountUsdc,
-    recipient: owner,
+  const owner = requireWallet(args.wallet);
+  const bundleUuid = await resolveBundleUuidForPpn(args.bundleId).catch(() => args.bundleId);
+
+  const prepare = await postJson<PpnPrepareResponse>("/api/ppn/onchain/prepare", {
+    bundle_id: bundleUuid,
+    wallet_address: owner,
+    amount_usdc: args.amountUsdc,
+    maturity_days: args.maturityDays ?? 30,
+    ...(args.tranche
+      ? {
+          tranche_kind: args.tranche.kind,
+          tranche_attach: args.tranche.attach,
+          tranche_detach: args.tranche.detach,
+          price_per_token: args.tranche.pricePerToken,
+        }
+      : {}),
   });
-  const vaultId = `${opened.market_id}::${opened.position_id}`;
-  const signature =
-    opened.digests.buy ?? opened.digests.create_market ?? opened.digests.mint ?? opened.market_id;
-  const now = Date.now();
-  const maturityDays = args.maturityDays ?? 30;
-  const prepare: PpnPrepareResponse = {
-    kind: "prepared",
-    vault_id: vaultId,
-    bundle_id: await resolveBundleUuidForPpn(bundleId).catch(() => bundleId),
+  if (!prepare.tx_bytes) {
+    throw new PpnError("Backend did not return a signable transaction.", 0);
+  }
+
+  const signature = await args.wallet.signAndExecute(prepare.tx_bytes);
+
+  const confirm = await postJson<PpnConfirmResponse>("/api/ppn/onchain/confirm", {
+    vault_id: prepare.vault_id,
     wallet_address: owner,
-    amount_usdc: amountUsdc,
-    management_fee_bps: 10,
-    management_fee_usdc: amountUsdc * 0.001,
-    strategy_fee_bps: 5,
-    strategy_fee_usdc: amountUsdc * 0.0005,
-    total_open_fee_usdc: amountUsdc * 0.0015,
-    net_deposit_usdc: amountUsdc * 0.9985,
-    estimated_apy: 8,
-    maturity_date: new Date(now + maturityDays * 86_400_000).toISOString(),
-    maturity_ts: Math.floor((now + maturityDays * 86_400_000) / 1000),
-    sui_market_id: opened.market_id,
-    sui_position_id: opened.position_id,
-    transaction_digest: signature,
-  };
-  const confirm: PpnConfirmResponse = {
-    vault_id: vaultId,
-    bundle_id: prepare.bundle_id,
-    wallet_address: owner,
-    principal_usdc: amountUsdc,
     signature,
-    transaction_id: signature,
-  };
+  });
   return { signature, prepare, confirm };
 }
 
@@ -379,37 +380,32 @@ export async function ppnRedeem(args: {
   wallet: WalletSigner;
   vaultId?: string;
   bundleId?: string;
+  trancheKind?: "senior" | "mezzanine" | "junior";
   confirmationTimeoutMs?: number;
 }): Promise<{
   signature: string;
   prepare: PpnRedeemPrepareResponse;
   confirm: PpnRedeemConfirmResponse;
 }> {
-  const owner = activeSuiAddress(args.wallet);
-  const { marketId, positionId } = splitVaultId(args.vaultId);
-  const redeemed = await redeemSuiBasketPosition({ marketId, positionId });
-  const signature = redeemed.digests.claim ?? redeemed.digests.resolve ?? marketId;
-  const prepare: PpnRedeemPrepareResponse = {
-    kind: "prepared",
-    vault_id: args.vaultId!,
-    bundle_id: args.bundleId ?? marketId,
+  const owner = requireWallet(args.wallet);
+
+  const prepare = await postJson<PpnRedeemPrepareResponse>("/api/ppn/onchain/redeem/prepare", {
     wallet_address: owner,
-    principal_usdc: 0,
-    strategy_fee_bps: 5,
-    strategy_fee_usdc: 0,
-    expected_proceeds_usdc: 0,
-    sui_market_id: marketId,
-    sui_position_id: positionId,
-    transaction_digest: signature,
-  };
-  const confirm: PpnRedeemConfirmResponse = {
-    vault_id: args.vaultId!,
-    bundle_id: prepare.bundle_id,
+    ...(args.bundleId ? { bundle_id: args.bundleId } : {}),
+    ...(args.vaultId ? { vault_id: args.vaultId } : {}),
+    ...(args.trancheKind ? { tranche_kind: args.trancheKind } : {}),
+  });
+  if (!prepare.tx_bytes) {
+    throw new PpnError("No redeemable on-chain position for this wallet.", 404);
+  }
+
+  const signature = await args.wallet.signAndExecute(prepare.tx_bytes);
+
+  const confirm = await postJson<PpnRedeemConfirmResponse>("/api/ppn/onchain/redeem/confirm", {
+    vault_id: prepare.vault_id ?? args.vaultId,
     wallet_address: owner,
-    principal_returned: 0,
     signature,
-    transaction_id: signature,
-  };
+  });
   return { signature, prepare, confirm };
 }
 
@@ -428,18 +424,18 @@ export async function ppnDivest(args: {
     prepare: {
       kind: "prepared",
       vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id,
-      wallet_address: redeemed.prepare.wallet_address,
+      bundle_id: redeemed.prepare.bundle_id ?? "",
+      wallet_address: redeemed.prepare.wallet_address ?? "",
       strategy_fee_bps: 5,
       estimated_strategy_fee_usdc: 0,
-      sui_market_id: redeemed.prepare.sui_market_id,
-      sui_position_id: redeemed.prepare.sui_position_id,
+      sui_market_id: redeemed.prepare.sui_market_id ?? "",
+      sui_position_id: redeemed.prepare.sui_position_id ?? "",
       transaction_digest: redeemed.signature,
     },
     confirm: {
       vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id,
-      wallet_address: redeemed.prepare.wallet_address,
+      bundle_id: redeemed.prepare.bundle_id ?? "",
+      wallet_address: redeemed.prepare.wallet_address ?? "",
       signature: redeemed.signature,
       status: "active",
     },
@@ -462,20 +458,20 @@ export async function ppnCloseEarly(args: {
     prepare: {
       kind: "prepared",
       vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id,
-      wallet_address: redeemed.prepare.wallet_address,
+      bundle_id: redeemed.prepare.bundle_id ?? "",
+      wallet_address: redeemed.prepare.wallet_address ?? "",
       principal_usdc: 0,
       strategy_fee_bps: 5,
       estimated_strategy_fee_usdc: 0,
       estimated_net_usdc: 0,
-      sui_market_id: redeemed.prepare.sui_market_id,
-      sui_position_id: redeemed.prepare.sui_position_id,
+      sui_market_id: redeemed.prepare.sui_market_id ?? "",
+      sui_position_id: redeemed.prepare.sui_position_id ?? "",
       transaction_digest: redeemed.signature,
     },
     confirm: {
       vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id,
-      wallet_address: redeemed.prepare.wallet_address,
+      bundle_id: redeemed.prepare.bundle_id ?? "",
+      wallet_address: redeemed.prepare.wallet_address ?? "",
       principal_returned: 0,
       signature: redeemed.signature,
       transaction_id: redeemed.signature,

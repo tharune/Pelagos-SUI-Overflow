@@ -1,3 +1,4 @@
+import "@mysten/dapp-kit/dist/index.css";
 import { WalletProviders } from "./_providers/WalletProviders";
 import { ThemeProvider, THEME_BOOTSTRAP_SCRIPT } from "./app/_lib/theme";
 import Script from "next/script";

@@ -672,9 +672,9 @@ function BasketBuyPanel({
   accent: string;
   markets: LiveMarket[];
 }) {
-  const appConnected = true;
   const { state, dispatch } = useSandbox();
   const wallet = useWalletSigner();
+  const appConnected = wallet.connected;
   const usdc = useUsdcBalance();
   const [mode, setMode] = useState<TradeMode>("buy");
   const [amount, setAmount] = useState<string>("100");

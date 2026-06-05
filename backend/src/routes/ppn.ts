@@ -31,6 +31,17 @@ function ppnLabel(bundleId: string, kind?: string): string {
   return `ppn:${kind ?? 'note'}:${bundleId}`;
 }
 
+function statusForError(message: string): number {
+  if (/insufficient/i.test(message)) return 400;
+  if (/no vault positions|not found/i.test(message)) return 404;
+  return 500;
+}
+
+function ownerMismatch(event: Record<string, unknown> | undefined, wallet?: string): boolean {
+  const owner = (event?.owner as string | undefined)?.toLowerCase();
+  return Boolean(owner && wallet && owner !== wallet.toLowerCase());
+}
+
 function notConfigured(res: Response) {
   return res.status(503).json({ error: 'On-chain vault not configured.' });
 }
@@ -119,8 +130,9 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
       dry_run: prep.dry_run,
     });
   } catch (err) {
-    console.error('POST /api/ppn/onchain/prepare error:', err);
-    res.status(500).json({ error: String((err as Error).message ?? err) });
+    const msg = String((err as Error).message ?? err);
+    console.error('POST /api/ppn/onchain/prepare error:', msg);
+    res.status(statusForError(msg)).json({ error: msg });
   }
 });
 
@@ -134,6 +146,9 @@ router.post('/onchain/confirm', async (req: Request, res: Response) => {
     if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
     const c = await confirmDigest(signature, wallet_address);
     if (!c.ok) return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}` });
+    if (ownerMismatch(c.event, wallet_address)) {
+      return res.status(400).json({ error: 'Digest owner does not match wallet_address' });
+    }
     try {
       if (vault_id) await updatePPNVaultOnchain(vault_id, { onchain_tx_signature: signature });
     } catch {
@@ -184,21 +199,24 @@ router.post('/onchain/redeem/prepare', async (req, res) => {
   try {
     await prepareRedeemHandler(req, res);
   } catch (err) {
-    res.status(500).json({ error: String((err as Error).message ?? err) });
+    const msg = String((err as Error).message ?? err);
+    res.status(statusForError(msg)).json({ error: msg });
   }
 });
 router.post('/onchain/divest/prepare', async (req, res) => {
   try {
     await prepareRedeemHandler(req, res);
   } catch (err) {
-    res.status(500).json({ error: String((err as Error).message ?? err) });
+    const msg = String((err as Error).message ?? err);
+    res.status(statusForError(msg)).json({ error: msg });
   }
 });
 router.post('/onchain/close/prepare', async (req, res) => {
   try {
     await prepareRedeemHandler(req, res);
   } catch (err) {
-    res.status(500).json({ error: String((err as Error).message ?? err) });
+    const msg = String((err as Error).message ?? err);
+    res.status(statusForError(msg)).json({ error: msg });
   }
 });
 
@@ -211,6 +229,9 @@ async function confirmCloseHandler(req: Request, res: Response, status: string) 
   if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
   const c = await confirmDigest(signature, wallet_address);
   if (!c.ok) return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}` });
+  if (ownerMismatch(c.event, wallet_address)) {
+    return res.status(400).json({ error: 'Digest owner does not match wallet_address' });
+  }
   try {
     if (vault_id) await updatePPNVaultOnchain(vault_id, { status: 'withdrawn', redemption_tx_signature: signature });
   } catch {

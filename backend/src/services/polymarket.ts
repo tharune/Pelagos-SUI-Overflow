@@ -292,8 +292,10 @@ export async function searchMarkets(
   const data = (await res.json()) as GammaMarketResponse[];
   let markets = data.map(toPolymarketMarket);
   if (q) {
-    const filtered = markets.filter((m) => m.question?.toLowerCase().includes(q));
-    if (filtered.length > 0) markets = filtered; // only narrow when we actually matched
+    // Always narrow by the query — a no-match returns [] rather than silently
+    // falling back to the default high-volume feed (which reads as "search works"
+    // when it doesn't).
+    markets = markets.filter((m) => m.question?.toLowerCase().includes(q));
   }
   return markets.slice(0, limit);
 }

@@ -233,6 +233,21 @@ export async function createTransaction(
   return data;
 }
 
+/** Look up a transaction by its on-chain signature/digest (for idempotent confirms). */
+export async function getTransactionBySignature(signature: string): Promise<Transaction | null> {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('tx_signature', signature)
+    .limit(1);
+
+  if (error) {
+    console.error('getTransactionBySignature error:', error.message);
+    return null;
+  }
+  return (data ?? [])[0] ?? null;
+}
+
 export async function getTransactionsByWallet(walletAddress: string): Promise<Transaction[]> {
   const { data, error } = await supabase
     .from('transactions')

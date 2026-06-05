@@ -38,9 +38,9 @@ router.get('/:bundleId', async (req: Request, res: Response) => {
 
     res.json({
       ...navResult,
-      nav: polyData?.nav ?? navResult.nav,       // live Polymarket NAV (matches UI)
+      nav: navResult.nav,                           // real leg-weighted NAV (consistent everywhere)
       vault_price: vaultPrice?.issue_price ?? null, // on-chain mint price
-      polymarket_nav: polyData?.nav ?? null,
+      polymarket_nav: polyData?.nav ?? null,        // informational only
       polymarket_leg_count: polyData?.leg_count ?? null,
       polymarket_daily_change: polyData?.daily_change ?? null,
     });

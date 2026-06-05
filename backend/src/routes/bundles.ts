@@ -69,17 +69,18 @@ router.get('/', async (req: Request, res: Response) => {
         const legs = await getLegsByBundleId(bundle.id);
         const vaultPrice = await getVaultPrice(bundle.id);
         const polyData = polyNAVs.get(bundle.name);
-        // nav = live Polymarket NAV (matches UI display); vault_price = on-chain mint price
-        const nav = polyData?.nav ?? calculateNAV(legs, bundle.id).nav;
+        // nav = real leg-weighted NAV (consistent across every endpoint).
+        // polymarket_nav / vault_price are separate informational fields.
+        const nav = calculateNAV(legs, bundle.id).nav;
         return {
           ...bundle,
           legs,
-          nav,                                                    // live Polymarket NAV (UI price)
+          nav,
           vault_price: vaultPrice?.issue_price ?? null,           // on-chain mint price
           polymarket_nav: polyData?.nav ?? null,
           polymarket_leg_count: polyData?.leg_count ?? null,
           polymarket_daily_change: polyData?.daily_change ?? null,
-          num_legs: polyData?.leg_count ?? legs.length,
+          num_legs: legs.length,                                  // actual DB legs
           resolved_legs: legs.filter((l) => l.status !== 'active').length,
         };
       })
@@ -106,8 +107,7 @@ router.get('/name/:name', async (req: Request, res: Response) => {
     }
 
     const legs = await getLegsByBundleId(bundle.id);
-    const vaultPrice = await getVaultPrice(bundle.id);
-    const nav = vaultPrice ? vaultPrice.issue_price : calculateNAV(legs, bundle.id).nav;
+    const nav = calculateNAV(legs, bundle.id).nav; // real leg-weighted NAV (consistent)
 
     const result: BundleWithLegs = {
       ...bundle,
@@ -150,8 +150,9 @@ router.get('/compare', async (req: Request, res: Response) => {
         const bundleWithLegs = await getBundleWithLegs(id);
         if (!bundleWithLegs) return null;
 
-        const vaultPrice = await getVaultPrice(id);
-        const currentNav = vaultPrice?.issue_price ?? bundleWithLegs.nav;
+        // leg-weighted NAV — same basis as /performance and the list (not the
+        // on-chain vault mint price, which previously made P&L contradict).
+        const currentNav = bundleWithLegs.nav;
 
         const activeLegs = bundleWithLegs.legs.filter((l) => l.status === 'active');
         const avgProbability = activeLegs.length > 0
@@ -340,8 +341,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     }
 
     const vaultPrice = await getVaultPrice(id);
-    const nav = vaultPrice ? vaultPrice.issue_price : bundleWithLegs.nav;
-    res.json({ ...bundleWithLegs, nav });
+    // nav = leg-weighted NAV (consistent everywhere); vault_price kept separate.
+    res.json({ ...bundleWithLegs, nav: bundleWithLegs.nav, vault_price: vaultPrice?.issue_price ?? null });
   } catch (err) {
     console.error('GET /api/bundles/:id error:', err);
     res.status(500).json({ error: 'Failed to fetch bundle' });

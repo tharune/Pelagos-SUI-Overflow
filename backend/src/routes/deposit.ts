@@ -3,8 +3,22 @@ import {
   getBundleById,
   createPosition,
   createTransaction,
+  getTransactionBySignature,
   getTransactionsByWallet,
 } from '../db/queries';
+
+/** Classify a prepare/build error into the right HTTP status. */
+function statusForError(message: string): number {
+  if (/insufficient/i.test(message)) return 400;
+  if (/no vault positions|not found/i.test(message)) return 404;
+  return 500;
+}
+
+/** The on-chain event's owner must match the wallet claiming the deposit/redeem. */
+function ownerMismatch(event: Record<string, unknown> | undefined, wallet: string): boolean {
+  const owner = (event?.owner as string | undefined)?.toLowerCase();
+  return Boolean(owner && wallet && owner !== wallet.toLowerCase());
+}
 import { supabase } from '../db/supabase';
 import {
   prepareDeposit,
@@ -65,8 +79,9 @@ async function prepareDepositHandler(req: Request, res: Response) {
       dry_run: prep.dry_run,
     });
   } catch (err) {
-    console.error('POST /api/deposit/prepare error:', err);
-    res.status(500).json({ error: `Failed to prepare deposit: ${(err as Error).message}` });
+    const msg = (err as Error).message;
+    console.error('POST /api/deposit/prepare error:', msg);
+    res.status(statusForError(msg)).json({ error: `Failed to prepare deposit: ${msg}` });
   }
 }
 
@@ -131,6 +146,25 @@ router.post('/confirm', async (req: Request, res: Response) => {
     const c = await confirmDigest(signature, wallet_address);
     if (!c.ok) {
       return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}`, ...c });
+    }
+    // Owner-binding: reject a real digest claimed by the wrong wallet.
+    if (ownerMismatch(c.event, wallet_address)) {
+      return res
+        .status(400)
+        .json({ error: 'Digest owner does not match wallet_address', event_owner: c.event?.owner });
+    }
+    // Idempotency: a digest already recorded returns the existing row unchanged.
+    const existing = await getTransactionBySignature(signature).catch(() => null);
+    if (existing) {
+      return res.status(200).json({
+        confirmed: true,
+        idempotent: true,
+        digest: signature,
+        explorer_url: c.explorer_url,
+        event: c.event,
+        transaction_id: existing.id,
+        bundle_id,
+      });
     }
 
     // Best-effort off-chain indexing (no-op if Supabase is unconfigured).
@@ -203,8 +237,9 @@ router.post('/redeem/prepare', validate(redeemSchema), async (req: Request, res:
       dry_run: prep.dry_run,
     });
   } catch (err) {
-    console.error('POST /api/deposit/redeem/prepare error:', err);
-    res.status(500).json({ error: `Failed to prepare redeem: ${(err as Error).message}` });
+    const msg = (err as Error).message;
+    console.error('POST /api/deposit/redeem/prepare error:', msg);
+    res.status(statusForError(msg)).json({ error: `Failed to prepare redeem: ${msg}` });
   }
 });
 
@@ -220,6 +255,24 @@ router.post('/redeem/confirm', async (req: Request, res: Response) => {
     const c = await confirmDigest(signature, wallet_address);
     if (!c.ok) {
       return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}`, ...c });
+    }
+    if (ownerMismatch(c.event, wallet_address)) {
+      return res
+        .status(400)
+        .json({ error: 'Digest owner does not match wallet_address', event_owner: c.event?.owner });
+    }
+    const existingRedeem = await getTransactionBySignature(signature).catch(() => null);
+    if (existingRedeem) {
+      return res.status(200).json({
+        confirmed: true,
+        idempotent: true,
+        digest: signature,
+        explorer_url: c.explorer_url,
+        bundle_id,
+        wallet_address,
+        payout_usdc: c.usdc_delta ?? null,
+        transaction_id: existingRedeem.id,
+      });
     }
 
     let transactionId: string | null = null;

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromBase64 } from "@mysten/sui/utils";
-import { suiExplorerTxUrl } from "./chain";
+import { SUI_ACTIVE_ADDRESS, suiExplorerTxUrl } from "./chain";
 import { BACKEND_URL } from "./tokens";
 
 export interface WalletSigner {
@@ -37,6 +37,21 @@ export function useWalletSigner(): WalletSigner {
     address: account?.address ?? null,
     signAndExecute,
   };
+}
+
+/**
+ * The wallet address the read flows (portfolio, positions, tx history) should
+ * show. When a wallet is connected, that's the connected wallet; otherwise we
+ * fall back to the configured demo address (NEXT_PUBLIC_SUI_ACTIVE_ADDRESS) so
+ * an unconnected visitor still sees the seeded sample portfolio.
+ *
+ * Read flows MUST use this instead of SUI_ACTIVE_ADDRESS directly — otherwise a
+ * connected user would see the deployer's positions instead of their own (the
+ * write paths already key everything on the connected wallet).
+ */
+export function useActiveWalletAddress(): string {
+  const account = useCurrentAccount();
+  return account?.address ?? SUI_ACTIVE_ADDRESS;
 }
 
 export function useUsdcBalance() {

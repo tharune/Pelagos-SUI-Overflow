@@ -3,12 +3,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, fmtUsd, BACKEND_URL } from "../_lib/tokens";
-import { IS_SUI, SUI_ACTIVE_ADDRESS } from "../_lib/chain";
+import { IS_SUI } from "../_lib/chain";
 import { BUNDLES, bundleById } from "../_lib/bundles";
 import { useSandbox } from "../_lib/demo-state";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import type { LiveBasket } from "../_lib/live-baskets";
 import {
+  useActiveWalletAddress,
   useWalletSigner,
   useUsdcBalance,
   explorerTxUrl,
@@ -219,6 +220,7 @@ export default function PpnPage() {
   const { state, dispatch } = useSandbox();
   const basketState = useLiveBaskets();
   const wallet = useWalletSigner();
+  const activeAddress = useActiveWalletAddress();
   const usdc = useUsdcBalance();
   const appConnected = wallet.connected;
 
@@ -247,7 +249,7 @@ export default function PpnPage() {
   // the Portfolio page's hydrate. Falls back to empty when no signer is active.
   useEffect(() => {
     let cancelled = false;
-    const address = SUI_ACTIVE_ADDRESS;
+    const address = activeAddress;
     if (!address) {
       dispatch({ type: "ppn/hydrate", vaults: [] });
       dispatch({ type: "tranche/hydrate", positions: [] });
@@ -272,7 +274,7 @@ export default function PpnPage() {
     return () => {
       cancelled = true;
     };
-  }, [dispatch]);
+  }, [dispatch, activeAddress]);
 
   useEffect(() => {
     let cancelled = false;

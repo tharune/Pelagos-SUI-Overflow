@@ -18,11 +18,12 @@ import {
   type Orderbook,
 } from "../../_lib/orderbook";
 import {
+  useActiveWalletAddress,
   useWalletSigner,
   useUsdcBalance,
   explorerTxUrl,
 } from "../../_lib/wallet-bridge";
-import { IS_SUI, SUI_ACTIVE_ADDRESS } from "../../_lib/chain";
+import { IS_SUI } from "../../_lib/chain";
 import {
   depositIntoBundle,
   redeemFromBundle,
@@ -674,6 +675,7 @@ function BasketBuyPanel({
 }) {
   const { state, dispatch } = useSandbox();
   const wallet = useWalletSigner();
+  const activeAddress = useActiveWalletAddress();
   const appConnected = wallet.connected;
   const usdc = useUsdcBalance();
   const [mode, setMode] = useState<TradeMode>("buy");
@@ -861,7 +863,7 @@ function BasketBuyPanel({
       ? pbuBalances.balances.find((b) => b.bundleId === resolvedBundleUuid)
           ?.uiAmount ?? 0
       : 0;
-  const suiHeldQty = groupVirtualByUiBundle(SUI_ACTIVE_ADDRESS)
+  const suiHeldQty = groupVirtualByUiBundle(activeAddress)
     .filter((g) => g.uiBundleId === bundle.id)
     .reduce((sum, g) => sum + g.tokens, 0);
   const existingPosition = state.basketPositions.find(

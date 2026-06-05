@@ -612,7 +612,9 @@ function recenterWeightsToTarget(
  * Returns a flat list of sided candidates: each underlying market yields
  * both its YES and NO candidate legs.
  */
-export async function fetchLiveMarkets(limit = 20_000): Promise<LiveMarket[]> {
+export async function fetchLiveMarkets(limit = 1_500): Promise<LiveMarket[]> {
+  // 1.5k active markets is ample to build 9 baskets and loads in ~1s; the old
+  // 20k pull paginated Gamma ~40x and routinely timed out -> "seeded" fallback.
   const url = `${BACKEND_URL}/api/markets?limit=${limit}&active=true`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {

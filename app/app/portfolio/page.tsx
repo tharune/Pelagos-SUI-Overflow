@@ -7,8 +7,8 @@ import { C, FS, FD, FM, EASE, tc, trancheColor, fmtUsd } from "../_lib/tokens";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
 import { useSandbox, type BasketPosition } from "../_lib/demo-state";
-import { useUsdcBalance, useWalletSigner } from "../_lib/wallet-bridge";
-import { SUI_ACTIVE_ADDRESS, shortAddress } from "../_lib/chain";
+import { useActiveWalletAddress, useUsdcBalance, useWalletSigner } from "../_lib/wallet-bridge";
+import { shortAddress } from "../_lib/chain";
 import { fetchBasketPortfolio, usePbuBalances } from "../_lib/portfolio-client";
 import { fetchPpnPortfolio, ppnRedeem, PpnError } from "../_lib/ppn-client";
 import { mergePpnVaults, mergeTranches } from "../_lib/ppn-hydrate";
@@ -102,7 +102,7 @@ function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
 
 export default function PortfolioPage() {
   const { state, totals, dispatch } = useSandbox();
-  const appWalletAddress = SUI_ACTIVE_ADDRESS;
+  const appWalletAddress = useActiveWalletAddress();
   const usdc = useUsdcBalance();
   const walletSigner = useWalletSigner();
   const [redeemBusy, setRedeemBusy] = useState<string | null>(null);

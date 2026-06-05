@@ -37,7 +37,7 @@ import {
   type TransactionRow,
 } from "./portfolio-client";
 import { fetchPpnPortfolio, type PpnPortfolioEntry } from "./ppn-client";
-import { SUI_ACTIVE_ADDRESS } from "./chain";
+import { useActiveWalletAddress } from "./wallet-bridge";
 
 // ---------- Derived position types ----------
 
@@ -165,7 +165,7 @@ function buildAvgCostMap(rows: TransactionRow[]): Map<string, number> {
 
 export function useOnchainPortfolio(): OnchainPortfolio {
   const pbuBalances = usePbuBalances();
-  const walletAddress = SUI_ACTIVE_ADDRESS;
+  const walletAddress = useActiveWalletAddress();
 
   // --- Transaction history (for avg cost per basket) ----------------
   const [txRows, setTxRows] = useState<TransactionRow[]>([]);

@@ -10,13 +10,14 @@ import { prepareDeposit, prepareRedeem, confirmDigest, readVaultState, listShare
 
 async function main() {
   const owner = process.env.SUI_ACTIVE_ADDRESS!;
+  const amount = Number(process.argv[2] ?? process.env.SMOKE_AMOUNT ?? 5);
   const client = getSuiClient();
   const signer = getSigner();
 
   console.log('vault state before:', await readVaultState());
 
-  // --- deposit 5 mUSDC ---
-  const dep = await prepareDeposit({ owner, amount_usdc: 5, label: 'PBU-HIGH-SHORT' });
+  // --- deposit `amount` mUSDC (default 5; override via argv/SMOKE_AMOUNT) ---
+  const dep = await prepareDeposit({ owner, amount_usdc: amount, label: 'PBU-HIGH-SHORT' });
   console.log('deposit economics:', dep.economics, '| dry_run:', dep.dry_run);
   const depTx = Transaction.from(fromBase64(dep.tx_bytes));
   const depRes = await client.signAndExecuteTransaction({

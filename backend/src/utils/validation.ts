@@ -47,16 +47,22 @@ export const createBundleSchema = z.object({
 
 // bundle_id is a product/basket tag (uuid in DB mode, or a slug like
 // "PBU-HIGH-SHORT" when running against on-chain state without Supabase).
-// wallet_address must accept a full 66-char Sui address (0x + 64 hex).
+// wallet_address is a 0x-prefixed Sui address (1–64 hex chars after 0x; full
+// form is 66 chars). Hex-validated so malformed input is rejected up front
+// rather than failing deep in the Sui RPC.
+const suiAddress = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{1,64}$/, 'wallet_address must be a 0x-prefixed hex Sui address');
+
 export const depositSchema = z.object({
   bundle_id: z.string().min(1).max(128),
-  wallet_address: z.string().min(32).max(66),
+  wallet_address: suiAddress,
   amount_usdc: z.number().positive().max(1_000_000),
 });
 
 export const redeemSchema = z.object({
   bundle_id: z.string().min(1).max(128),
-  wallet_address: z.string().min(32).max(66),
+  wallet_address: suiAddress,
   amount_tokens: z.number().positive().optional(),
 });
 

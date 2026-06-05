@@ -1,9 +1,16 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+/**
+ * Sui admin + faucet calls, signed by the protocol signer (the Pelagos deployer
+ * that owns the mock-USDC TreasuryCap and the market AdminCap) via the TS SDK.
+ *
+ * Previously these shelled out to the `sui` CLI and signed with whatever key was
+ * active in the local CLI keystore — which only worked on the deployer's own
+ * machine. Signing through the committed SUI_PRIVATE_KEY (the same signer the
+ * predict + dev-faucet paths already use) makes mint/admin work on any clone,
+ * with no `sui` CLI install or keystore required.
+ */
+import { Transaction } from '@mysten/sui/transactions';
+import { getSuiClient, getSigner, signerAddress } from './predict/sui';
 
-const execFileAsync = promisify(execFile);
-
-const SUI_CLI = process.env.SUI_CLI ?? 'sui';
 const SUI_NETWORK = process.env.SUI_NETWORK ?? 'testnet';
 const PACKAGE_ID = process.env.SUI_PACKAGE_ID ?? '';
 const MARKET_MODULE = process.env.SUI_MARKET_MODULE ?? 'prediction_market';
@@ -20,26 +27,51 @@ type SuiObjectChange = {
   objectType?: string;
 };
 
+/** Normalized result of an executed admin/faucet transaction. */
+type TxResult = { digest: string; objectChanges: SuiObjectChange[] };
+
 function requireEnv(name: string, value: string): string {
   if (!value) throw new Error(`Missing required Sui env var: ${name}`);
   return value;
 }
 
-async function sui(args: string[]): Promise<SuiJson> {
-  const { stdout } = await execFileAsync(SUI_CLI, args, {
-    maxBuffer: 1024 * 1024 * 20,
+/**
+ * Sign + execute an admin/faucet PTB with the protocol signer (deployer).
+ * Returns the digest + objectChanges in the same shape the CLI path used, so
+ * findCreatedObject()/digest() and downstream callers are unchanged.
+ */
+async function runTx(tx: Transaction): Promise<TxResult> {
+  const client = getSuiClient();
+  const signer = getSigner();
+  const res = await client.signAndExecuteTransaction({
+    transaction: tx,
+    signer,
+    options: { showEffects: true, showObjectChanges: true },
   });
-  return JSON.parse(stdout) as SuiJson;
-}
-
-function clientArgs(args: string[]): string[] {
-  return ['client', '--client.env', SUI_NETWORK, ...args];
+  if (res.effects?.status.status !== 'success') {
+    throw new Error(
+      `Sui tx failed (${res.digest}): ${res.effects?.status.error ?? 'unknown error'}`,
+    );
+  }
+  // Best-effort: wait until the fullnode has indexed this tx so a follow-up admin
+  // call (e.g. the basket mint -> create -> buy chain, or rapid faucet hits) sees
+  // the updated gas-coin / object versions instead of racing on a stale one. The
+  // tx already succeeded above, so a wait hiccup must not surface as an error.
+  try {
+    await client.waitForTransaction({ digest: res.digest });
+  } catch {
+    /* indexing lag only — the transaction is already final */
+  }
+  return {
+    digest: res.digest,
+    objectChanges: (res.objectChanges ?? []) as unknown as SuiObjectChange[],
+  };
 }
 
 function objectChanges(json: SuiJson): SuiObjectChange[] {
   if (!json || Array.isArray(json)) return [];
   const changes = (json as { objectChanges?: unknown }).objectChanges;
-  return Array.isArray(changes) ? changes as SuiObjectChange[] : [];
+  return Array.isArray(changes) ? (changes as SuiObjectChange[]) : [];
 }
 
 function findCreatedObject(json: SuiJson, predicate: (objectType: string) => boolean): string {
@@ -59,76 +91,11 @@ function digest(json: SuiJson): string | null {
   return typeof raw === 'string' ? raw : null;
 }
 
-function normalizeMoveType(type: string): string {
-  return type.replace(/^0x([0-9a-fA-F]+)::/, (_match, address: string) =>
-    `0x${address.toLowerCase().padStart(64, '0')}::`,
-  );
-}
-
-function coinTypesMatch(left: string, right: string): boolean {
-  return normalizeMoveType(left) === normalizeMoveType(right);
-}
-
-function coinBalanceSummary(raw: SuiJson, coinType: string) {
-  const seenObjectIds = new Set<string>();
-  let balance = 0n;
-  let coinCount = 0;
-  let lockedBalance: unknown = {};
-
-  const visit = (entry: unknown) => {
-    if (Array.isArray(entry)) {
-      for (const child of entry) visit(child);
-      return;
-    }
-    if (!entry || typeof entry !== 'object') return;
-
-    const object = entry as Record<string, unknown>;
-    const entryType = object.coinType ?? object.coin_type;
-    const isRequestedCoin = typeof entryType === 'string' && coinTypesMatch(entryType, coinType);
-
-    if (isRequestedCoin) {
-      const rawObjectId = object.coinObjectId ?? object.coin_object_id;
-      const objectId = typeof rawObjectId === 'string' ? rawObjectId : null;
-      const alreadySeen = objectId ? seenObjectIds.has(objectId) : false;
-
-      const rawBalance = object.totalBalance ?? object.balance;
-      if (!alreadySeen && typeof rawBalance === 'string' && /^\d+$/.test(rawBalance)) {
-        balance += BigInt(rawBalance);
-      }
-      if (objectId) seenObjectIds.add(objectId);
-
-      const rawCount = object.coinObjectCount ?? object.coin_count;
-      if (typeof rawCount === 'number' && Number.isFinite(rawCount)) {
-        coinCount += rawCount;
-      } else if (typeof rawCount === 'string' && /^\d+$/.test(rawCount)) {
-        coinCount += Number(rawCount);
-      } else if (objectId && !alreadySeen) {
-        coinCount += 1;
-      }
-
-      if (object.lockedBalance !== undefined) {
-        lockedBalance = object.lockedBalance;
-      }
-    }
-
-    for (const child of Object.values(object)) visit(child);
-  };
-
-  visit(raw);
-
-  return {
-    coin_type: coinType,
-    balance: balance.toString(),
-    coin_count: coinCount,
-    locked_balance: lockedBalance,
-  };
-}
-
 export function suiConfig() {
   return {
     network: SUI_NETWORK,
     rpc_url: process.env.SUI_RPC_URL ?? 'https://fullnode.testnet.sui.io:443',
-    active_address: process.env.SUI_ACTIVE_ADDRESS ?? null,
+    active_address: signerAddress() ?? process.env.SUI_ACTIVE_ADDRESS ?? null,
     package_id: PACKAGE_ID,
     market_module: MARKET_MODULE,
     market_admin_cap_id: MARKET_ADMIN_CAP_ID,
@@ -139,44 +106,54 @@ export function suiConfig() {
   };
 }
 
+function summarizeBalance(
+  bal: { totalBalance?: string; coinObjectCount?: number; lockedBalance?: unknown } | null,
+  coinType: string,
+) {
+  return {
+    coin_type: coinType,
+    balance: bal?.totalBalance ?? '0',
+    coin_count: bal?.coinObjectCount ?? 0,
+    locked_balance: bal?.lockedBalance ?? {},
+  };
+}
+
 export async function suiStatus() {
-  const [env, address, suiBalance, usdcBalance] = await Promise.all([
-    execFileAsync(SUI_CLI, clientArgs(['active-env'])).then((r) => r.stdout.trim()),
-    execFileAsync(SUI_CLI, clientArgs(['active-address'])).then((r) => r.stdout.trim()),
-    sui(clientArgs(['balance', '--coin-type', SUI_COIN_TYPE, '--json'])),
-    MOCK_USDC_TYPE
-      ? sui(clientArgs(['balance', '--coin-type', MOCK_USDC_TYPE, '--json']))
-      : Promise.resolve([]),
+  // active_address is the protocol signer (the key that actually owns the caps
+  // and signs admin/faucet txns), resolved from SUI_PRIVATE_KEY — not a local
+  // `sui` CLI keystore. Falls back to SUI_ACTIVE_ADDRESS for display only.
+  const address = signerAddress() ?? process.env.SUI_ACTIVE_ADDRESS ?? null;
+  const client = getSuiClient();
+  const [suiBal, usdcBal] = await Promise.all([
+    address ? client.getBalance({ owner: address }).catch(() => null) : Promise.resolve(null),
+    address && MOCK_USDC_TYPE
+      ? client.getBalance({ owner: address, coinType: MOCK_USDC_TYPE }).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   return {
     ...suiConfig(),
-    active_env: env,
+    active_env: SUI_NETWORK,
     active_address: address,
     balances: {
-      sui: coinBalanceSummary(suiBalance, SUI_COIN_TYPE),
-      mock_usdc: MOCK_USDC_TYPE ? coinBalanceSummary(usdcBalance, MOCK_USDC_TYPE) : null,
+      sui: summarizeBalance(suiBal, SUI_COIN_TYPE),
+      mock_usdc: MOCK_USDC_TYPE ? summarizeBalance(usdcBal, MOCK_USDC_TYPE) : null,
     },
   };
 }
 
-export async function mintMockUsdc(recipient: string, amountRaw: string) {
-  return sui(clientArgs([
-    'call',
-    '--package',
-    requireEnv('SUI_PACKAGE_ID', PACKAGE_ID),
-    '--module',
-    'mock_usdc',
-    '--function',
-    'mint',
-    '--args',
-    requireEnv('MOCK_USDC_TREASURY_CAP_ID', MOCK_USDC_TREASURY_CAP_ID),
-    amountRaw,
-    recipient,
-    '--gas-budget',
-    '20000000',
-    '--json',
-  ]));
+export async function mintMockUsdc(recipient: string, amountRaw: string): Promise<TxResult> {
+  const usdcType = requireEnv('MOCK_USDC_TYPE', MOCK_USDC_TYPE);
+  const tx = new Transaction();
+  tx.moveCall({
+    target: `${usdcType.split('::')[0]}::mock_usdc::mint`,
+    arguments: [
+      tx.object(requireEnv('MOCK_USDC_TREASURY_CAP_ID', MOCK_USDC_TREASURY_CAP_ID)),
+      tx.pure.u64(BigInt(amountRaw)),
+      tx.pure.address(recipient),
+    ],
+  });
+  return runTx(tx);
 }
 
 export async function openSuiLocalBasketPosition(args: {
@@ -223,24 +200,18 @@ export async function openSuiLocalBasketPosition(args: {
   };
 }
 
-export async function createSuiMarket(question: string, closeMs: string) {
+export async function createSuiMarket(question: string, closeMs: string): Promise<TxResult> {
   const bytes = Array.from(Buffer.from(question, 'utf8'));
-  return sui(clientArgs([
-    'call',
-    '--package',
-    requireEnv('SUI_PACKAGE_ID', PACKAGE_ID),
-    '--module',
-    MARKET_MODULE,
-    '--function',
-    'create_market',
-    '--args',
-    requireEnv('SUI_MARKET_ADMIN_CAP_ID', MARKET_ADMIN_CAP_ID),
-    `[${bytes.join(',')}]`,
-    closeMs,
-    '--gas-budget',
-    '20000000',
-    '--json',
-  ]));
+  const tx = new Transaction();
+  tx.moveCall({
+    target: `${requireEnv('SUI_PACKAGE_ID', PACKAGE_ID)}::${MARKET_MODULE}::create_market`,
+    arguments: [
+      tx.object(requireEnv('SUI_MARKET_ADMIN_CAP_ID', MARKET_ADMIN_CAP_ID)),
+      tx.pure.vector('u8', bytes),
+      tx.pure.u64(BigInt(closeMs || '0')),
+    ],
+  });
+  return runTx(tx);
 }
 
 export async function buySuiMarketSide(
@@ -248,58 +219,35 @@ export async function buySuiMarketSide(
   coinId: string,
   amountRaw: string,
   side: 'yes' | 'no',
-) {
-  return sui(clientArgs([
-    'ptb',
-    '--split-coins',
-    `@${coinId}`,
-    `[${amountRaw}]`,
-    '--assign',
-    'payment',
-    '--move-call',
-    `${requireEnv('SUI_PACKAGE_ID', PACKAGE_ID)}::${MARKET_MODULE}::buy_${side}`,
-    `@${marketId}`,
-    'payment.0',
-    '--gas-budget',
-    '30000000',
-    '--json',
-  ]));
+): Promise<TxResult> {
+  const tx = new Transaction();
+  const [payment] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(BigInt(amountRaw))]);
+  tx.moveCall({
+    target: `${requireEnv('SUI_PACKAGE_ID', PACKAGE_ID)}::${MARKET_MODULE}::buy_${side}`,
+    arguments: [tx.object(marketId), payment],
+  });
+  return runTx(tx);
 }
 
-export async function resolveSuiMarket(marketId: string, side: 'yes' | 'no') {
-  return sui(clientArgs([
-    'call',
-    '--package',
-    requireEnv('SUI_PACKAGE_ID', PACKAGE_ID),
-    '--module',
-    MARKET_MODULE,
-    '--function',
-    `resolve_${side}`,
-    '--args',
-    requireEnv('SUI_MARKET_ADMIN_CAP_ID', MARKET_ADMIN_CAP_ID),
-    marketId,
-    '--gas-budget',
-    '20000000',
-    '--json',
-  ]));
+export async function resolveSuiMarket(marketId: string, side: 'yes' | 'no'): Promise<TxResult> {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: `${requireEnv('SUI_PACKAGE_ID', PACKAGE_ID)}::${MARKET_MODULE}::resolve_${side}`,
+    arguments: [
+      tx.object(requireEnv('SUI_MARKET_ADMIN_CAP_ID', MARKET_ADMIN_CAP_ID)),
+      tx.object(marketId),
+    ],
+  });
+  return runTx(tx);
 }
 
-export async function claimSuiMarket(marketId: string, positionId: string) {
-  return sui(clientArgs([
-    'call',
-    '--package',
-    requireEnv('SUI_PACKAGE_ID', PACKAGE_ID),
-    '--module',
-    MARKET_MODULE,
-    '--function',
-    'claim',
-    '--args',
-    marketId,
-    positionId,
-    '--gas-budget',
-    '20000000',
-    '--json',
-  ]));
+export async function claimSuiMarket(marketId: string, positionId: string): Promise<TxResult> {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: `${requireEnv('SUI_PACKAGE_ID', PACKAGE_ID)}::${MARKET_MODULE}::claim`,
+    arguments: [tx.object(marketId), tx.object(positionId)],
+  });
+  return runTx(tx);
 }
 
 export async function redeemSuiLocalBasketPosition(args: {

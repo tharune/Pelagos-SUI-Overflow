@@ -312,7 +312,7 @@ export default function PpnPage() {
   useEffect(() => {
     let cancelled = false;
     setDistributionLoading(true);
-    fetchDistributionCandidates({ limit: 6, refresh: true })
+    fetchDistributionCandidates({ limit: 6, refresh: false })
       .then((result) => {
         if (!cancelled) setDistributionCandidates(result.candidates);
       })

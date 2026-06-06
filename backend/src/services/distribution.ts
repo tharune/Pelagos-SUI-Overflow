@@ -6,6 +6,30 @@ const CLOB_API = 'https://clob.polymarket.com';
 const BOOK_CACHE_TTL_MS = 5_000;
 const CANDIDATE_CACHE_TTL_MS = 45_000;
 
+// Cap concurrent CLOB /book requests. A single discovery pass can ask for
+// hundreds of order books at once; without a gate that burst exhausts outbound
+// sockets and starves every other backend endpoint (bundles, markets, health).
+// Requests above the cap queue instead of stampeding Polymarket.
+const MAX_CONCURRENT_BOOKS = 12;
+let activeBookFetches = 0;
+const bookWaiters: Array<() => void> = [];
+function acquireBookSlot(): Promise<void> {
+  if (activeBookFetches < MAX_CONCURRENT_BOOKS) {
+    activeBookFetches += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => bookWaiters.push(resolve));
+}
+function releaseBookSlot(): void {
+  const next = bookWaiters.shift();
+  if (next) next();
+  else activeBookFetches -= 1;
+}
+
+// Coalesce concurrent discovery passes: a cold cache hit by several pages at
+// once should run ONE compute, not one storm per caller.
+let inFlightDiscover: Promise<void> | null = null;
+
 type BookLevel = { price: number; size: number };
 type CachedBook = { bids: BookLevel[]; asks: BookLevel[]; fetched_at: number };
 type DepthSource = 'clob_orderbook' | 'gamma_liquidity' | 'none';
@@ -212,12 +236,14 @@ async function fetchBook(tokenId: string | null): Promise<CachedBook | null> {
   if (!tokenId) return null;
   const cached = bookCache.get(tokenId);
   if (cached && Date.now() - cached.fetched_at < BOOK_CACHE_TTL_MS) return cached;
+  await acquireBookSlot();
   try {
     const response = await fetch(`${CLOB_API}/book?token_id=${encodeURIComponent(tokenId)}`, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Mozilla/5.0 (compatible; pelagos-backend/1.0)',
       },
+      signal: AbortSignal.timeout(4_000),
     });
     if (!response.ok) return null;
     const raw = await response.json() as {
@@ -238,6 +264,8 @@ async function fetchBook(tokenId: string | null): Promise<CachedBook | null> {
     return book;
   } catch {
     return null;
+  } finally {
+    releaseBookSlot();
   }
 }
 
@@ -534,6 +562,8 @@ export async function discoverDistributionCandidates(params: {
     };
   }
 
+  if (!inFlightDiscover) {
+    inFlightDiscover = (async () => {
   const filters: DiscoveryFunnel['filters'] = {
     min_volume_usd: params.minVolumeUsd ?? 2_000,
     min_depth_usd: params.minDepthUsd ?? 100,
@@ -590,11 +620,18 @@ export async function discoverDistributionCandidates(params: {
   funnel.kept_candidates = candidates.length;
   funnel.rejected.too_few_bands = Math.max(0, combined.length - candidates.length);
   candidateCache = { at: Date.now(), candidates, funnel };
+    })().finally(() => {
+      inFlightDiscover = null;
+    });
+  }
 
+  await inFlightDiscover;
+  const ready = candidateCache;
+  if (!ready) throw new Error('distribution discovery produced no result');
   return {
-    candidates: candidates.slice(0, params.limit ?? 12),
-    funnel,
-    fetched_at: new Date().toISOString(),
+    candidates: ready.candidates.slice(0, params.limit ?? 12),
+    funnel: ready.funnel,
+    fetched_at: new Date(ready.at).toISOString(),
   };
 }
 

@@ -554,8 +554,8 @@ export default function DistributionMarketsPage() {
   }
 
   useEffect(() => {
-    void load(true);
-    const timer = setInterval(() => void load(true), 45_000);
+    void load(false);
+    const timer = setInterval(() => void load(false), 45_000);
     return () => clearInterval(timer);
   }, []);
 

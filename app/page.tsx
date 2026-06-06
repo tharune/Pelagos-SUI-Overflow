@@ -642,7 +642,7 @@ export default function HomePage() {
     const timer = setTimeout(() => {
       if (!cancelled) setChartReady(true);
     }, 2200);
-    fetchDistributionCandidates({ limit: 4, refresh: true })
+    fetchDistributionCandidates({ limit: 4, refresh: false })
       .then((result) => {
         if (!cancelled) setCandidates(result.candidates);
       })

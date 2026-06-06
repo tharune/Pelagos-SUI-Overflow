@@ -528,7 +528,7 @@ const SURFACES: Array<{
   href: string;
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
-  { id: "distribution", eyebrow: "Curve launch", title: "Distribution Markets", body: "Quote a full probability curve against live CLOB-implied bands, then take a position anywhere along it.", href: "/app/distribution", Icon: IconCurve },
+  { id: "distribution", eyebrow: "Curve trade", title: "Distribution Markets", body: "Set your own continuous view of where a price lands, then trade that curve against the market and settle on Sui.", href: "/app/distribution", Icon: IconCurve },
   { id: "basket", eyebrow: "PBU basket", title: "Market Baskets", body: "Bundle several correlated markets into one Sui-local position with a single collateral leg.", href: "/app/basket", Icon: IconBasket },
   { id: "risk", eyebrow: "Waterfall", title: "Risk Slices", body: "Split a market into senior, balanced, and upside-heavy tranches that absorb losses in order.", href: "/app/tranche", Icon: IconSlices },
   { id: "ppn", eyebrow: "Floor target", title: "Protected Notes", body: "Route USDC into a principal sleeve sized from live Sui yield, keeping residual market upside.", href: "/app/ppn", Icon: IconShield },

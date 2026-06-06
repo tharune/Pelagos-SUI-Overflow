@@ -693,9 +693,19 @@ export default function PpnPage() {
                     {state.ppnVaults.map((note) => {
                       const liveBasket = liveBaskets.find((basket) => basket.id === note.bundleId);
                       const basket = liveBasket ?? bundleById(note.bundleId);
-                      const elapsed = Math.max(0, (renderNow - note.createdAt) / 86_400_000);
-                      const daysLeft = Math.max(0, note.maturityDays - Math.floor(elapsed));
-                      const accrued = note.principal * (note.apy / 100 / 365) * Math.min(elapsed, note.maturityDays);
+                      // Guard against a freshly-opened / not-yet-indexed note whose
+                      // createdAt / maturityDays / apy aren't populated yet, so the row
+                      // never renders NaN.
+                      const createdAt = Number.isFinite(note.createdAt) ? note.createdAt : renderNow;
+                      const maturityDays =
+                        Number.isFinite(note.maturityDays) && note.maturityDays > 0
+                          ? note.maturityDays
+                          : basket?.daysLeft ?? 30;
+                      const apy = Number.isFinite(note.apy) ? note.apy : 0;
+                      const principal = Number.isFinite(note.principal) ? note.principal : 0;
+                      const elapsed = Math.max(0, (renderNow - createdAt) / 86_400_000);
+                      const daysLeft = Math.max(0, Math.round(maturityDays - elapsed));
+                      const accrued = principal * (apy / 100 / 365) * Math.min(elapsed, maturityDays);
                       const matured = daysLeft <= 0;
                       const vaultIds = note.allVaultIds ?? [note.id];
                       const busy = redeemBusyId === note.id;
@@ -703,7 +713,7 @@ export default function PpnPage() {
                         <div key={note.id} className="ppn-position">
                           <div>
                             <strong>{basket?.id ?? note.bundleId}</strong>
-                            <span>{fmtUsd(note.principal, 2)} principal · +{fmtUsd(accrued, 2)} accrued · {daysLeft}d left</span>
+                            <span>{fmtUsd(principal, 2)} principal · +{fmtUsd(accrued, 2)} accrued · {daysLeft}d left</span>
                             {redeemError[note.id] && <em>{redeemError[note.id]}</em>}
                           </div>
                           <div className="ppn-position-actions">
@@ -858,7 +868,7 @@ const PPN_CSS = `
   .ppn-amount b { color: ${C.textMuted}; font-family: ${FM}; font-size: 15px; }
   .ppn-amount input { width: 100%; height: 44px; border: 0; background: transparent; color: ${C.textPrimary}; font-family: ${FD}; font-size: 19px; outline: none; padding-left: 7px; }
   .ppn-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 11px; }
-  .ppn-presets button, .ppn-link-button, .ppn-position-actions button { border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textSecondary}; border-radius: 999px; height: 32px; font-family: ${FD}; font-size: 11.5px; cursor: pointer; transition: border-color 0.14s ${EASE}, background 0.14s ${EASE}, color 0.14s ${EASE}; }
+  .ppn-presets button, .ppn-link-button, .ppn-position-actions button { border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textSecondary}; border-radius: 999px; height: 34px; padding: 0 16px; white-space: nowrap; font-family: ${FD}; font-size: 11.5px; cursor: pointer; transition: border-color 0.14s ${EASE}, background 0.14s ${EASE}, color 0.14s ${EASE}; }
   .ppn-presets button:hover, .ppn-link-button:hover, .ppn-position-actions button:hover { border-color: ${C.borderHover}; background: ${C.card}; color: ${C.textPrimary}; }
   .ppn-breakdown { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; padding: 11px; display: grid; gap: 9px; }
   .ppn-breakdown div { display: flex; justify-content: space-between; gap: 12px; color: ${C.textMuted}; font-family: ${FS}; font-size: 11.5px; }

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
   createPPNVault,
   createTransaction,
+  getActivePPNVault,
   getBundleById,
   getLegsByBundleId,
   getPPNVaultById,
@@ -266,8 +267,20 @@ async function confirmCloseHandler(req: Request, res: Response, status: string) 
   if (ownerMismatch(c.event, wallet_address)) {
     return res.status(400).json({ error: 'Digest owner does not match wallet_address' });
   }
+  // The redeem's vault_id is the on-chain SHARE id, not the Supabase row id, so
+  // resolve the active note/tranche vault by (wallet, bundle) to mark it
+  // withdrawn AND stamp the redemption signature. Stamping it is what lets the
+  // ledger enrichment tag this sell with its real product (Note / Tranche)
+  // instead of defaulting to "Basket".
+  let resolvedVault: Awaited<ReturnType<typeof getActivePPNVault>> = null;
   try {
-    if (vault_id) await updatePPNVaultOnchain(vault_id, { status: 'withdrawn', redemption_tx_signature: signature });
+    if (wallet_address && bundle_id) {
+      resolvedVault = await getActivePPNVault(wallet_address, bundle_id);
+    }
+    const updateId = resolvedVault?.id ?? vault_id;
+    if (updateId) {
+      await updatePPNVaultOnchain(updateId, { status: 'withdrawn', redemption_tx_signature: signature });
+    }
   } catch {
     /* DB optional */
   }
@@ -279,8 +292,7 @@ async function confirmCloseHandler(req: Request, res: Response, status: string) 
     if (wallet_address) {
       const already = await getTransactionBySignature(signature);
       if (!already) {
-        const vault = vault_id ? await getPPNVaultById(vault_id) : null;
-        const ledgerBundle = bundle_id ?? vault?.bundle_id;
+        const ledgerBundle = bundle_id ?? resolvedVault?.bundle_id;
         if (ledgerBundle) {
           await createTransaction({
             bundle_id: ledgerBundle,

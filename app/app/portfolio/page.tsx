@@ -20,6 +20,8 @@ import {
 } from "../_lib/virtual-positions";
 import { Personalization } from "./_personalization";
 import { History } from "./_history";
+import { AuditTrail } from "../_components/AuditTrail";
+import { fetchEvidenceGrouped } from "../_lib/receipts-client";
 import {
   fetchContinuousPositions,
   type ContinuousPosition,
@@ -332,6 +334,13 @@ export default function PortfolioPage() {
       fetchContinuousPositions(wallet).then((r) =>
         setDistPositions(Array.isArray(r?.positions) ? r.positions : []),
       ),
+      // Receipts/invoices the wallet attached at send time. Persisted in the
+      // backend store, so the audit trail survives reloads.
+      fetchEvidenceGrouped(wallet).then((grouped) => {
+        for (const [key, items] of Object.entries(grouped)) {
+          dispatch({ type: "evidence/attach", key, items });
+        }
+      }),
     ]);
   }, [appWalletAddress, dispatch]);
 
@@ -1402,6 +1411,14 @@ export default function PortfolioPage() {
           }
           return rows.map(r => r.el);
         })()}
+
+        {/* Verification & audit trail — receipts / invoices attached to sends. */}
+        {walletReady && (
+          <AuditTrail
+            evidence={state.evidence}
+            onRemove={(key, id) => dispatch({ type: "evidence/remove", key, id })}
+          />
+        )}
         </>
         )}
       </PageFrame>

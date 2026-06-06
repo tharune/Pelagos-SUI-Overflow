@@ -368,7 +368,17 @@ export default function PortfolioPage() {
               ? "Transaction was rejected in your wallet."
               : err.message
             : String(err);
-      setRedeemError((prev) => ({ ...prev, [bundleId]: msg }));
+      // "No vault positions" means nothing is on-chain behind this card — it's
+      // an orphaned optimistic/virtual position (e.g. a deposit that never
+      // landed, or an already-redeemed bundle). Clear it so the stale card
+      // disappears instead of lingering with an un-redeemable balance.
+      if (/no vault position/i.test(msg) && appWalletAddress) {
+        clearVirtualPositionsByUiBundleId(appWalletAddress, bundleId, uiBundleId);
+        await hydratePortfolio();
+        void usdc.refresh();
+      } else {
+        setRedeemError((prev) => ({ ...prev, [bundleId]: msg }));
+      }
     } finally {
       setRedeemBusy(null);
     }

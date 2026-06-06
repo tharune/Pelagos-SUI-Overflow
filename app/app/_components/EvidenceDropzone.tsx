@@ -11,7 +11,7 @@
  * Purely presentational + validation — no network. Upload lives in
  * `receipts-client.ts`; the parent calls it after the on-chain action lands.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { C, FM, FS, EASE } from "../_lib/tokens";
 import { ACCEPTED_MIME, MAX_RECEIPT_BYTES, fmtBytes } from "../_lib/receipts-client";
 
@@ -60,16 +60,16 @@ export function EvidenceDropzone({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previews, setPreviews] = useState<(string | null)[]>([]);
 
-  // Object URLs for image thumbnails, regenerated whenever the file set changes.
+  // Object URLs for image thumbnails, derived from the file set (no setState in
+  // an effect). The effect only revokes the URLs when they change / on unmount.
+  const previews = useMemo(
+    () => files.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null)),
+    [files],
+  );
   useEffect(() => {
-    const urls = files.map((f) =>
-      f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
-    );
-    setPreviews(urls);
-    return () => urls.forEach((u) => u && URL.revokeObjectURL(u));
-  }, [files]);
+    return () => previews.forEach((u) => u && URL.revokeObjectURL(u));
+  }, [previews]);
 
   const addFiles = useCallback(
     (incoming: FileList | File[]) => {

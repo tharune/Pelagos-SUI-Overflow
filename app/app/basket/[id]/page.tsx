@@ -9,7 +9,9 @@ import { C, FS, FD, FM, EASE, tc } from "../../_lib/tokens";
 import { bundleById, type Bundle } from "../../_lib/bundles";
 import type { LiveBasket, LiveMarket, WindowKey } from "../../_lib/live-baskets";
 import { useLiveBaskets } from "../../_lib/use-live-baskets";
-import { useSandbox } from "../../_lib/demo-state";
+import { useSandbox, evidenceKey } from "../../_lib/demo-state";
+import { EvidenceDropzone } from "../../_components/EvidenceDropzone";
+import { uploadReceipts } from "../../_lib/receipts-client";
 import {
   fetchOrderbooks,
   quoteBidSideImpact,
@@ -694,6 +696,11 @@ function BasketBuyPanel({
   // Actual tokens from the vault's issue_price_bps, set once prepare resolves.
   // Replaces the pre-estimate (tokensOut) which uses the stale DB NAV.
   const [confirmedTokensOut, setConfirmedTokensOut] = useState<number | null>(null);
+  // Supporting documents (receipts / invoices) the user attaches to this buy.
+  // Uploaded to the receipt store after the on-chain deposit confirms, then
+  // surfaced on the Portfolio as this position's verification / audit trail.
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [evidenceMemo, setEvidenceMemo] = useState<string>("");
 
   // Vault's on-chain issue price, fee, and state — declared here; effect
   // runs after resolvedBundleUuid is declared below.
@@ -944,6 +951,34 @@ function BasketBuyPanel({
           nav: navPrice,
           tokensOut: actualTokens,
         });
+        // Attach any supporting documents to this position's audit trail. The
+        // deposit already succeeded — an upload hiccup must not fail the trade,
+        // so this is best-effort and surfaces only as a non-blocking warning.
+        if (evidenceFiles.length > 0) {
+          try {
+            const items = await uploadReceipts(
+              evidenceFiles,
+              {
+                walletAddress: wallet.address ?? undefined,
+                contextType: "basket",
+                contextId: bundle.id,
+                digest: result.signature,
+              },
+              evidenceMemo.trim() || undefined,
+            );
+            dispatch({
+              type: "evidence/attach",
+              key: evidenceKey("basket", bundle.id),
+              items,
+            });
+            setEvidenceFiles([]);
+            setEvidenceMemo("");
+          } catch (e) {
+            setTxError(
+              `Deposit confirmed, but a document failed to upload: ${(e as Error).message}`,
+            );
+          }
+        }
         void usdc.refresh();
         void pbuBalances.refresh();
       } catch (err) {
@@ -1199,6 +1234,20 @@ function BasketBuyPanel({
             bookStatus={bookStatus}
             topLegCount={topLegs.length}
           />
+        )}
+
+        {/* Brex-style supporting documents — attach receipts or invoices that
+            back this deposit. Optional; becomes the position's audit trail. */}
+        {mode === "buy" && (
+          <div style={{ marginTop: 4 }}>
+            <EvidenceDropzone
+              files={evidenceFiles}
+              onChange={setEvidenceFiles}
+              memo={evidenceMemo}
+              onMemoChange={setEvidenceMemo}
+              disabled={txBusy}
+            />
+          </div>
         )}
 
         {/* Single primary action. Wallet connection is implicit: the

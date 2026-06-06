@@ -385,20 +385,42 @@ router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
     if (!vaultConfigured()) {
       return res.json({ wallet_address: walletAddress, vaults: [], summary: { total_vaults: 0, total_principal: 0, total_value: 0, principal_protected: true } });
     }
-    const [state, shares] = await Promise.all([readVaultState(), listShares(walletAddress)]);
+    const [state, shares, dbVaults] = await Promise.all([
+      readVaultState(),
+      listShares(walletAddress),
+      getPPNVaultsByWallet(walletAddress).catch(() => [] as Awaited<ReturnType<typeof getPPNVaultsByWallet>>),
+    ]);
     const ppnShares = shares.filter((s) => s.label.startsWith('ppn:'));
+    const DAY = 86_400_000;
+    const now = Date.now();
     const rows = ppnShares.map((s) => {
       const parts = s.label.split(':');
+      const bundleId = parts[2] ?? 'pelagos-vault';
+      const trancheKind = parts[1] && parts[1] !== 'note' ? parts[1] : null;
       const value = s.shares * state.share_price;
+      // Recover the note's term / apy / created-at from the matching Supabase
+      // vault row. The on-chain share carries principal but no maturity
+      // metadata, so without this the portfolio (and its NaN-guarded UI) shows
+      // "MATURITY UNKNOWN" even though the note was created with a real term.
+      const dbV = dbVaults.find(
+        (v) => v.bundle_id === bundleId && (v.tranche_kind ?? null) === trancheKind,
+      );
+      const createdMs = dbV?.created_at ? new Date(dbV.created_at).getTime() : NaN;
+      const maturityMs = dbV?.maturity_date ? new Date(dbV.maturity_date).getTime() : NaN;
       return {
         share_id: s.share_id,
         vault_id: s.share_id,
-        bundle_id: parts[2] ?? 'pelagos-vault',
-        tranche_kind: parts[1] && parts[1] !== 'note' ? parts[1] : null,
+        bundle_id: bundleId,
+        tranche_kind: trancheKind,
         principal_usdc: s.principal_usdc,
         current_value: value,
         accrued_yield: value - s.principal_usdc,
         status: 'active',
+        created_at: dbV?.created_at ?? null,
+        maturity_date: dbV?.maturity_date ?? null,
+        days_elapsed: Number.isFinite(createdMs) ? Math.max(0, (now - createdMs) / DAY) : 0,
+        days_remaining: Number.isFinite(maturityMs) ? Math.max(0, (maturityMs - now) / DAY) : 0,
+        estimated_apy: dbV?.estimated_apy ?? null,
       };
     });
     const totalPrincipal = rows.reduce((sum, r) => sum + r.principal_usdc, 0);

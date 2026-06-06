@@ -4,6 +4,13 @@ import {
   discoverDistributionCandidates,
   quoteDistributionCandidate,
 } from '../services/distribution';
+import {
+  listContinuousMarkets,
+  quoteContinuous,
+  prepareContinuousOpen,
+  listContinuousPositions,
+} from '../services/distribution-continuous';
+import { confirmDigest } from '../services/vault';
 
 const router = Router();
 
@@ -91,6 +98,68 @@ router.post('/launch-plan', async (req, res) => {
   try {
     const plan = await buildDistributionLaunchPlan(String(req.body?.candidate_id ?? ''));
     res.json({ plan });
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Continuous distribution markets (Normal mu/sigma, on-chain collateral)
+// ---------------------------------------------------------------------------
+
+router.get('/continuous/markets', (_req, res) => {
+  res.json({ markets: listContinuousMarkets() });
+});
+
+router.post('/continuous/quote', (req, res) => {
+  try {
+    res.json(
+      quoteContinuous({
+        marketId: String(req.body?.market_id ?? ''),
+        targetMu: bodyNumber(req, 'target_mu'),
+        targetSigma: bodyNumber(req, 'target_sigma'),
+        collateralUsdc: bodyNumber(req, 'collateral_usdc'),
+      }),
+    );
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+/** Build the real on-chain collateral deposit; the wallet signs `tx_bytes`. */
+router.post('/continuous/open/prepare', async (req, res) => {
+  try {
+    const owner = String(req.body?.wallet_address ?? '');
+    if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('wallet_address (0x...) is required');
+    res.json(
+      await prepareContinuousOpen({
+        owner,
+        marketId: String(req.body?.market_id ?? ''),
+        targetMu: bodyNumber(req, 'target_mu'),
+        targetSigma: bodyNumber(req, 'target_sigma'),
+        collateralUsdc: bodyNumber(req, 'collateral_usdc'),
+      }),
+    );
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+/** Verify the wallet-signed open on-chain. */
+router.post('/continuous/open/confirm', async (req, res) => {
+  try {
+    const digest = String(req.body?.signature ?? req.body?.digest ?? '');
+    if (!digest) throw new Error('signature (tx digest) is required');
+    const c = await confirmDigest(digest);
+    res.json({ confirmed: c.ok, status: c.ok ? 'success' : c.status, digest, explorer_url: c.explorer_url });
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+router.get('/continuous/positions/:owner', async (req, res) => {
+  try {
+    res.json({ positions: await listContinuousPositions(req.params.owner) });
   } catch (err) {
     errorResponse(res, err);
   }

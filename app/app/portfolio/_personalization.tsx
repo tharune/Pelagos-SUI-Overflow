@@ -598,7 +598,7 @@ function ResultView({ result }: { result: PortfolioResponse }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
           <MetricTile
             label="EXPECTED APY"
-            value={`${result.expected_apy_low.toFixed(1)}% – ${result.expected_apy_high.toFixed(1)}%`}
+            value={`${(result.expected_apy_low ?? 0).toFixed(1)}% – ${(result.expected_apy_high ?? 0).toFixed(1)}%`}
           />
           <MetricTile
             label="RISK SCORE"

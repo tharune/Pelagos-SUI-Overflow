@@ -140,10 +140,12 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
 
 router.post('/onchain/confirm', async (req: Request, res: Response) => {
   try {
-    const { vault_id, wallet_address, signature } = req.body as {
+    const { vault_id, wallet_address, signature, bundle_id, amount_usdc } = req.body as {
       vault_id?: string;
       wallet_address?: string;
       signature: string;
+      bundle_id?: string;
+      amount_usdc?: number;
     };
     if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
     const c = await confirmDigest(signature, wallet_address);
@@ -159,16 +161,19 @@ router.post('/onchain/confirm', async (req: Request, res: Response) => {
     // Record the deposit in the ledger so it shows in Portfolio → History.
     // The basket rail records via /api/deposit/confirm; PPN/tranche deposits
     // ride this confirm, so without this they were invisible to the ledger.
-    // Best-effort + idempotent (keyed on the digest): never blocks the response.
+    // Prefer the bundle/amount the client passed (always available) and fall
+    // back to the Supabase vault row — so recording works even when the vault
+    // lookup misses. Best-effort + idempotent on the digest.
     try {
-      if (vault_id && wallet_address) {
+      if (wallet_address) {
         const already = await getTransactionBySignature(signature);
         if (!already) {
-          const vault = await getPPNVaultById(vault_id);
-          if (vault) {
-            const principal = Number(vault.principal_usdc) || 0;
+          const vault = vault_id ? await getPPNVaultById(vault_id) : null;
+          const ledgerBundle = bundle_id ?? vault?.bundle_id;
+          const principal = Number(amount_usdc) || Number(vault?.principal_usdc) || 0;
+          if (ledgerBundle && principal > 0) {
             await createTransaction({
-              bundle_id: vault.bundle_id,
+              bundle_id: ledgerBundle,
               wallet_address,
               type: 'deposit',
               amount_usdc: principal,
@@ -249,10 +254,11 @@ router.post('/onchain/close/prepare', async (req, res) => {
 });
 
 async function confirmCloseHandler(req: Request, res: Response, status: string) {
-  const { vault_id, wallet_address, signature } = req.body as {
+  const { vault_id, wallet_address, signature, bundle_id } = req.body as {
     vault_id?: string;
     wallet_address?: string;
     signature: string;
+    bundle_id?: string;
   };
   if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
   const c = await confirmDigest(signature, wallet_address);
@@ -264,6 +270,32 @@ async function confirmCloseHandler(req: Request, res: Response, status: string) 
     if (vault_id) await updatePPNVaultOnchain(vault_id, { status: 'withdrawn', redemption_tx_signature: signature });
   } catch {
     /* DB optional */
+  }
+  // Record the exit in the ledger (Portfolio → History). PPN/tranche sells ride
+  // this handler — without this they never reached the ledger (the basket rail
+  // records its own redemptions in /api/deposit/redeem/confirm). Amount is the
+  // real on-chain USDC delta. Best-effort + idempotent on the digest.
+  try {
+    if (wallet_address) {
+      const already = await getTransactionBySignature(signature);
+      if (!already) {
+        const vault = vault_id ? await getPPNVaultById(vault_id) : null;
+        const ledgerBundle = bundle_id ?? vault?.bundle_id;
+        if (ledgerBundle) {
+          await createTransaction({
+            bundle_id: ledgerBundle,
+            wallet_address,
+            type: 'redemption',
+            amount_usdc: c.usdc_delta ?? 0,
+            tokens: 0,
+            fee_usdc: 0,
+            tx_signature: signature,
+          });
+        }
+      }
+    }
+  } catch {
+    /* ledger indexing optional */
   }
   return res.json({
     confirmed: true,

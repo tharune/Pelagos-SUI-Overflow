@@ -372,6 +372,10 @@ export async function ppnDeposit(args: {
     vault_id: prepare.vault_id,
     wallet_address: owner,
     signature,
+    // Pass the bundle + amount so the ledger record never depends solely on
+    // the Supabase vault lookup (lets the buy show in Portfolio → History).
+    bundle_id: bundleUuid,
+    amount_usdc: args.amountUsdc,
   });
   return { signature, prepare, confirm };
 }
@@ -405,6 +409,8 @@ export async function ppnRedeem(args: {
     vault_id: prepare.vault_id ?? args.vaultId,
     wallet_address: owner,
     signature,
+    // Bundle fallback so the sell records even if the vault lookup misses.
+    bundle_id: args.bundleId ?? prepare.bundle_id ?? undefined,
   });
   return { signature, prepare, confirm };
 }

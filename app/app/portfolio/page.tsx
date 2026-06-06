@@ -397,7 +397,7 @@ export default function PortfolioPage() {
         // us bail on the first failure without leaving a partial state on
         // subsequent vaults.
         for (const vaultId of ids) {
-          await ppnRedeem({ wallet: walletSigner, vaultId });
+          await ppnRedeem({ wallet: walletSigner, vaultId, bundleId: opts.bundleId });
         }
       } else {
         await ppnRedeem({
@@ -1187,8 +1187,7 @@ export default function PortfolioPage() {
                             : p.vaultId
                               ? [p.vaultId]
                               : undefined,
-                          bundleId:
-                            p.allVaultIds?.length || p.vaultId ? undefined : p.bundleId,
+                          bundleId: p.bundleId,
                         })
                       }
                       disabled={isBusy || !walletReady}
@@ -1285,7 +1284,7 @@ export default function PortfolioPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleRedeemPpn(rowKey, { vaultIds: v.allVaultIds ?? [v.id] })}
+                      onClick={() => handleRedeemPpn(rowKey, { vaultIds: v.allVaultIds ?? [v.id], bundleId: v.bundleId })}
                       disabled={isBusy || !walletReady}
                       title={matured ? "Redeem at maturity" : "Redeem this note early — principal-protected payout"}
                       style={{

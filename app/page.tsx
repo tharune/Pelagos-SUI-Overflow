@@ -876,7 +876,7 @@ export default function HomePage() {
             <div>
               <div className="lp-eyebrow">Sui testnet · structured markets</div>
               <h1 className="lp-hero-title">
-                Build structured products on <em>live market probability</em>
+                Structured products on <em>live market probability</em>
               </h1>
               <p className="lp-hero-sub">
                 Pelagos turns prediction-market pricing into four composable products — distribution

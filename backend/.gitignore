@@ -9,3 +9,6 @@ dist/
 # Sandbox verification artifacts (not needed locally)
 tsconfig.verify.json
 src/@types/
+
+# Uploaded receipts / evidence (runtime data, not source)
+uploads/

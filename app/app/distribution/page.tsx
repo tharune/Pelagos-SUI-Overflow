@@ -2,17 +2,20 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
-import { C, FD, FM, FS, EASE } from "../_lib/tokens";
+import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { monotonePath } from "../_lib/curve";
-import { useWalletSigner, useActiveWalletAddress } from "../_lib/wallet-bridge";
+import { suiExplorerTxUrl } from "../_lib/chain";
+import { useWalletSigner, useActiveWalletAddress, useUsdcBalance } from "../_lib/wallet-bridge";
 import {
   fetchContinuousMarkets,
   quoteContinuous,
   fetchContinuousPositions,
   openContinuousPosition,
+  settleContinuousPosition,
   type ContinuousMarket,
   type ContinuousQuote,
   type ContinuousPosition,
+  type SettleResult,
 } from "../_lib/distribution-continuous-client";
 
 const price = (v: number) =>
@@ -152,8 +155,11 @@ export default function DistributionPage() {
   const [positions, setPositions] = useState<ContinuousPosition[]>([]);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
-  const [result, setResult] = useState<{ digest: string; explorer_url: string } | null>(null);
+  const [result, setResult] = useState<{ digest: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const usdc = useUsdcBalance();
+  const [settling, setSettling] = useState<string | null>(null);
+  const [, setSettleResults] = useState<Record<string, SettleResult>>({});
 
   const market = useMemo(() => markets.find((m) => m.id === marketId) ?? null, [markets, marketId]);
 
@@ -236,8 +242,9 @@ export default function DistributionPage() {
         collateralUsdc: Number(collateral),
       });
       setStage(null);
-      setResult(res);
+      setResult({ digest: res.digest });
       refreshPositions();
+      usdc.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -245,6 +252,42 @@ export default function DistributionPage() {
       setStage(null);
     }
   }
+
+  async function settle(positionId: string) {
+    if (!activeAddress) return;
+    setSettling(positionId);
+    setError(null);
+    try {
+      const r = await settleContinuousPosition({ owner: activeAddress, positionId });
+      setSettleResults((prev) => ({ ...prev, [positionId]: r }));
+      refreshPositions();
+      usdc.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettling(null);
+    }
+  }
+
+  async function getFaucet() {
+    if (!wallet.address) return;
+    setBusy(true);
+    try {
+      await fetch(`${BACKEND_URL}/api/dev/airdrop-mock-usdc`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ walletAddress: wallet.address, amount: 1000 }),
+      });
+      window.setTimeout(() => usdc.refresh(), 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const openPositions = positions.filter((p) => !p.settled);
+  const settledPositions = positions.filter((p) => p.settled);
 
   return (
     <>
@@ -299,6 +342,19 @@ export default function DistributionPage() {
                   <button onClick={() => market && (setMu(market.mu), setSigma(market.sigma))} className="dc-reset">
                     Reset to market
                   </button>
+                  {wallet.connected && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `0.5px solid ${C.border}`, paddingTop: 12 }}>
+                      <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                        Balance:{" "}
+                        <span style={{ color: C.textPrimary }}>
+                          {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC
+                        </span>
+                      </span>
+                      <button onClick={getFaucet} disabled={busy} className="dc-reset" style={{ width: "auto", padding: "6px 10px" }}>
+                        Get test mUSDC
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -332,27 +388,67 @@ export default function DistributionPage() {
 
               {result && (
                 <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.green }}>
-                  ✓ Settled on testnet ·{" "}
-                  <a href={result.explorer_url} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
+                  ✓ Position opened on testnet ·{" "}
+                  <a href={suiExplorerTxUrl(result.digest)} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
                     {result.digest.slice(0, 10)}…
-                  </a>
+                  </a>{" "}
+                  <span style={{ color: C.textMuted }}>· settle it below to realize the outcome</span>
                 </div>
               )}
               {error && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red }}>{error}</div>}
             </div>
 
-            {positions.length > 0 && (
+            {openPositions.length > 0 && (
               <div style={PANEL}>
-                <div className="dc-cap">Your open positions ({positions.length})</div>
+                <div className="dc-cap">Open positions ({openPositions.length})</div>
                 <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                  {positions.map((p) => (
-                    <div key={p.share_id} className="dc-pos">
-                      <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{p.question}</span>
-                      <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                        g = N({price(p.target_mu)}, {Math.round(p.target_sigma)}) · {usd(p.collateral_usdc)} locked
-                      </span>
+                  {openPositions.map((p) => (
+                    <div key={p.id} className="dc-pos" style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "grid", gap: 2 }}>
+                        <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{p.question}</span>
+                        <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                          g = N({price(p.target_mu)}, {Math.round(p.target_sigma)}) · {usd(p.collateral_usdc)} locked · up to {usd(p.max_profit_usdc)}
+                        </span>
+                      </div>
+                      <button onClick={() => settle(p.id)} disabled={settling === p.id} className="dc-settle">
+                        {settling === p.id ? "Settling…" : "Settle"}
+                      </button>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {settledPositions.length > 0 && (
+              <div style={PANEL}>
+                <div className="dc-cap">Settled ({settledPositions.length})</div>
+                <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                  {settledPositions.map((p) => {
+                    const pnl = (p.net_usdc ?? 0) - p.collateral_usdc;
+                    const win = pnl >= 0;
+                    return (
+                      <div key={p.id} className="dc-pos" style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "grid", gap: 2 }}>
+                          <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{p.question}</span>
+                          <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                            resolved at {price(p.realized_x)} · returned {usd(p.net_usdc ?? 0)}
+                            {p.settle_digest ? (
+                              <>
+                                {" · "}
+                                <a href={suiExplorerTxUrl(p.settle_digest)} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
+                                  payout
+                                </a>
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                        <span style={{ fontFamily: FD, fontSize: 14, color: win ? C.green : C.red }}>
+                          {win ? "+" : ""}
+                          {usd(pnl)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -372,6 +468,8 @@ export default function DistributionPage() {
         .dc-reset:hover { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
         .dc-open { width: 100%; background: ${C.tealLight}; border: none; border-radius: 10px; padding: 14px; color: #06121a; font-family: ${FD}; font-size: 14px; font-weight: 600; }
         .dc-pos { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 0.5px solid ${C.border}; border-radius: 10px; }
+        .dc-settle { background: ${C.tealLight}; border: none; border-radius: 8px; padding: 7px 14px; color: #06121a; font-family: ${FD}; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .dc-settle:disabled { opacity: 0.5; cursor: not-allowed; }
         .dc-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 4px; background: ${C.border}; outline: none; }
         .dc-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }
         .dc-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }

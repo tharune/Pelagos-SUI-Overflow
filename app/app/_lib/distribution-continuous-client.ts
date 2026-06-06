@@ -48,14 +48,33 @@ export interface ContinuousQuote {
 }
 
 export interface ContinuousPosition {
-  share_id: string;
+  id: string;
   market_id: string;
   question: string;
-  target_mu: number;
-  target_sigma: number;
   market_mu: number;
   market_sigma: number;
+  target_mu: number;
+  target_sigma: number;
   collateral_usdc: number;
+  max_profit_usdc: number;
+  open_digest: string;
+  opened_at: number;
+  realized_x: number;
+  settled: boolean;
+  settle_digest?: string;
+  payoff_usdc?: number;
+  net_usdc?: number;
+  settled_at?: number;
+}
+
+export interface SettleResult {
+  position_id: string;
+  realized_x: number;
+  payoff_usdc: number;
+  net_usdc: number;
+  pnl_usdc: number;
+  settle_digest: string | null;
+  explorer_url: string | null;
 }
 
 async function jsonGet<T>(path: string): Promise<T> {
@@ -114,7 +133,7 @@ export async function openContinuousPosition(args: {
   targetMu: number;
   targetSigma: number;
   collateralUsdc: number;
-}): Promise<{ digest: string; explorer_url: string }> {
+}): Promise<{ digest: string; position: ContinuousPosition }> {
   const owner = args.wallet.address;
   if (!args.wallet.connected || !owner) throw new Error("Connect a Sui wallet to open a position.");
 
@@ -129,9 +148,27 @@ export async function openContinuousPosition(args: {
 
   const digest = await args.wallet.signAndExecute(prep.tx_bytes);
 
-  const conf = await jsonPost<{ confirmed: boolean; explorer_url: string }>(
+  const conf = await jsonPost<{ confirmed: boolean; position: ContinuousPosition }>(
     "/api/distribution/continuous/open/confirm",
-    { signature: digest },
+    {
+      wallet_address: owner,
+      market_id: args.marketId,
+      target_mu: args.targetMu,
+      target_sigma: args.targetSigma,
+      collateral_usdc: args.collateralUsdc,
+      signature: digest,
+    },
   );
-  return { digest, explorer_url: conf.explorer_url };
+  return { digest, position: conf.position };
+}
+
+/** Settle a position: the protocol pays the realized net on-chain. */
+export function settleContinuousPosition(args: {
+  owner: string;
+  positionId: string;
+}): Promise<SettleResult> {
+  return jsonPost("/api/distribution/continuous/settle", {
+    wallet_address: args.owner,
+    position_id: args.positionId,
+  });
 }

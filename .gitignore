@@ -78,3 +78,5 @@ init-vaults.log
 
 # Claude Code worktrees (session-local, never commit)
 .claude/
+.distribution-positions.json
+backend/.distribution-positions.json

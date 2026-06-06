@@ -8,9 +8,10 @@ import {
   listContinuousMarkets,
   quoteContinuous,
   prepareContinuousOpen,
+  confirmContinuousOpen,
   listContinuousPositions,
+  settleContinuousPosition,
 } from '../services/distribution-continuous';
-import { confirmDigest } from '../services/vault';
 
 const router = Router();
 
@@ -145,21 +146,43 @@ router.post('/continuous/open/prepare', async (req, res) => {
   }
 });
 
-/** Verify the wallet-signed open on-chain. */
+/** Record the position after the wallet executed the on-chain escrow. */
 router.post('/continuous/open/confirm', async (req, res) => {
   try {
+    const owner = String(req.body?.wallet_address ?? '');
+    if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('wallet_address (0x...) is required');
     const digest = String(req.body?.signature ?? req.body?.digest ?? '');
     if (!digest) throw new Error('signature (tx digest) is required');
-    const c = await confirmDigest(digest);
-    res.json({ confirmed: c.ok, status: c.ok ? 'success' : c.status, digest, explorer_url: c.explorer_url });
+    const position = await confirmContinuousOpen({
+      owner,
+      marketId: String(req.body?.market_id ?? ''),
+      targetMu: bodyNumber(req, 'target_mu'),
+      targetSigma: bodyNumber(req, 'target_sigma'),
+      collateralUsdc: bodyNumber(req, 'collateral_usdc'),
+      digest,
+    });
+    res.json({ confirmed: true, position });
   } catch (err) {
     errorResponse(res, err);
   }
 });
 
-router.get('/continuous/positions/:owner', async (req, res) => {
+/** Settle a position: the protocol pays the realized net (g(x*)-f(x*)) on-chain. */
+router.post('/continuous/settle', async (req, res) => {
   try {
-    res.json({ positions: await listContinuousPositions(req.params.owner) });
+    const owner = String(req.body?.wallet_address ?? '');
+    if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('wallet_address (0x...) is required');
+    const positionId = String(req.body?.position_id ?? '');
+    if (!positionId) throw new Error('position_id is required');
+    res.json(await settleContinuousPosition({ owner, positionId }));
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+router.get('/continuous/positions/:owner', (req, res) => {
+  try {
+    res.json({ positions: listContinuousPositions(req.params.owner) });
   } catch (err) {
     errorResponse(res, err);
   }

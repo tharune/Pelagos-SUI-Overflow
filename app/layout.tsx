@@ -24,30 +24,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }}
         />
         <style>{`
-          /* ===== Theme variables ===== */
+          /* ===== Theme variables — "Tidal" (Sui Ocean + aqua on deep sea) ===== */
           :root {
-            --c-bg: #050b14;
-            --c-surface: #07111f;
-            --c-card: #0b1624;
-            --c-card-hover: #102033;
-            --c-card-gradient: linear-gradient(135deg, rgba(11, 22, 36, 0.72) 0%, rgba(5, 11, 20, 0.86) 100%);
-            --c-card-gradient-hover: linear-gradient(160deg, rgba(16, 32, 51, 0.94) 0%, rgba(7, 17, 31, 0.96) 100%);
-            --c-card-gradient-strong: linear-gradient(135deg, rgba(11, 22, 36, 0.88) 0%, rgba(5, 11, 20, 0.96) 100%);
-            --c-panel-gradient: linear-gradient(180deg, rgba(11, 22, 36, 0.9) 0%, rgba(5, 11, 20, 0.96) 100%);
-            --c-border: rgba(125, 211, 252, 0.10);
-            --c-border-hover: rgba(125, 211, 252, 0.22);
-            --c-border-strong: rgba(125, 211, 252, 0.28);
-            --c-text-primary: #eef2f7;
-            --c-text-secondary: #89a4c2;
-            --c-text-muted: #50657f;
-            --c-text-strong: #d6dce6;
-            --c-text-subtle: #a3b0c2;
-            --c-text-dim: #8d9aad;
-            --c-header-bg: rgba(5, 11, 20, 0.84);
-            --c-page-glow: rgba(56, 189, 248, 0.12);
-            --c-scrollbar-thumb: rgba(125, 211, 252, 0.18);
-            --c-scrollbar-thumb-hover: rgba(125, 211, 252, 0.34);
-            --c-edge-fade: #050b14;
+            --c-bg: #04121e;
+            --c-surface: #07182a;
+            --c-card: #0a1f33;
+            --c-card-hover: #0f2944;
+            --c-card-gradient: linear-gradient(135deg, rgba(10, 31, 51, 0.72) 0%, rgba(4, 18, 30, 0.86) 100%);
+            --c-card-gradient-hover: linear-gradient(160deg, rgba(15, 41, 68, 0.94) 0%, rgba(6, 22, 38, 0.96) 100%);
+            --c-card-gradient-strong: linear-gradient(135deg, rgba(10, 31, 51, 0.88) 0%, rgba(4, 18, 30, 0.96) 100%);
+            --c-panel-gradient: linear-gradient(180deg, rgba(10, 31, 51, 0.9) 0%, rgba(4, 18, 30, 0.96) 100%);
+            --c-border: rgba(110, 200, 240, 0.12);
+            --c-border-hover: rgba(125, 220, 255, 0.24);
+            --c-border-strong: rgba(125, 220, 255, 0.30);
+            --c-text-primary: #eaf2fb;
+            --c-text-secondary: #8aa6c6;
+            --c-text-muted: #51687f;
+            --c-text-strong: #d9e3ef;
+            --c-text-subtle: #a5b6cb;
+            --c-text-dim: #8ea0b6;
+            --c-header-bg: rgba(4, 18, 30, 0.84);
+            --c-page-glow: rgba(77, 162, 255, 0.13);
+            --c-scrollbar-thumb: rgba(125, 220, 255, 0.18);
+            --c-scrollbar-thumb-hover: rgba(125, 220, 255, 0.34);
+            --c-edge-fade: #04121e;
           }
 
           [data-theme="light"] {
@@ -59,9 +59,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --c-card-gradient-hover: #f9fbfd;
             --c-card-gradient-strong: #ffffff;
             --c-panel-gradient: #ffffff;
-            --c-border: rgba(14, 165, 233, 0.22);
-            --c-border-hover: rgba(14, 165, 233, 0.45);
-            --c-border-strong: rgba(14, 165, 233, 0.35);
+            --c-border: rgba(77, 162, 255, 0.22);
+            --c-border-hover: rgba(77, 162, 255, 0.45);
+            --c-border-strong: rgba(77, 162, 255, 0.35);
             --c-text-primary: #0b111a;
             --c-text-secondary: #4a5668;
             --c-text-muted: #8a96a8;
@@ -69,9 +69,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --c-text-subtle: #2d3544;
             --c-text-dim: #4a5668;
             --c-header-bg: rgba(244, 246, 249, 0.88);
-            --c-page-glow: rgba(14, 165, 233, 0.14);
-            --c-scrollbar-thumb: rgba(14, 165, 233, 0.26);
-            --c-scrollbar-thumb-hover: rgba(14, 165, 233, 0.46);
+            --c-page-glow: rgba(77, 162, 255, 0.14);
+            --c-scrollbar-thumb: rgba(77, 162, 255, 0.26);
+            --c-scrollbar-thumb-hover: rgba(77, 162, 255, 0.46);
             --c-edge-fade: #f4f6f9;
           }
 
@@ -102,7 +102,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           ::-webkit-scrollbar-thumb:hover { background: var(--c-scrollbar-thumb-hover); }
           a { color: inherit; }
           input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-          input[type=range] { accent-color: #38bdf8; }
+          input[type=range] { accent-color: #4da2ff; }
 
         `}</style>
       </head>

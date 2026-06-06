@@ -46,9 +46,11 @@ export const C = {
   pageGlow: "var(--c-page-glow)",
 
   // Accent colors — stay as hex so alpha concatenation patterns still work.
-  teal: "#38bdf8",
-  tealLight: "#7dd3fc",
-  tealBg: "#082f49",
+  // "Tidal": Sui Ocean blue is the single brand accent (chrome, actions, key
+  // data); the lighter aqua is its luminous highlight for hover + data-viz.
+  teal: "#4da2ff",       // Sui Ocean — primary accent
+  tealLight: "#7de7ff",  // aqua highlight — curves, hover, the "wow" graphics
+  tealBg: "#06243f",     // deep ocean chip background
   amber: "#d97706",
   amberBg: "#1c1000",
   coral: "#ea580c",
@@ -59,8 +61,8 @@ export const C = {
   redBg: "#1f0a0a",
   violet: "#8b5cf6",
   violetBg: "#15091c",
-  blue: "#60a5fa",
-  blueBg: "#0b1f3a",
+  blue: "#5eb1ff",
+  blueBg: "#06243f",
 } as const;
 
 export const FS = "'Inter', system-ui, sans-serif";
@@ -80,10 +82,10 @@ export function tc(tier: number): string {
 
 // Tranches share one blue family, separated by value (light → deep) rather than
 // hue, so the seniority ranking reads at a glance while every slice stays
-// clearly visible on the dark plot: senior = lightest sky, mezzanine = brand
-// cyan-blue, junior = deep azure.
+// clearly visible on the dark plot: senior = light aqua, mezzanine = Sui Ocean
+// blue (the brand accent), junior = deep azure.
 export function trancheColor(kind: "senior" | "mezzanine" | "junior"): string {
-  return kind === "senior" ? "#7dd3fc" : kind === "mezzanine" ? "#38bdf8" : "#2563eb";
+  return kind === "senior" ? "#8fe3ff" : kind === "mezzanine" ? "#4da2ff" : "#1f5fd1";
 }
 
 export function tl(daysLeft: number): "This week" | "This month" | "Long term" {

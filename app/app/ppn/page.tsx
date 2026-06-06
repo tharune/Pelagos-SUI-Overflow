@@ -496,8 +496,10 @@ export default function PpnPage() {
   async function handleRedeemAll() {
     if (!appConnected || redeemBusyId) return;
     for (const note of state.ppnVaults) {
-      const elapsed = Math.max(0, (renderNow - note.createdAt) / 86_400_000);
-      const daysLeft = Math.max(0, note.maturityDays - Math.floor(elapsed));
+      const createdAt = Number.isFinite(note.createdAt) ? note.createdAt : renderNow;
+      const maturityDays = Number.isFinite(note.maturityDays) && note.maturityDays > 0 ? note.maturityDays : 30;
+      const elapsed = Math.max(0, (renderNow - createdAt) / 86_400_000);
+      const daysLeft = Math.max(0, maturityDays - Math.floor(elapsed));
       const vaultIds = note.allVaultIds ?? [note.id];
       // eslint-disable-next-line no-await-in-loop
       await runExit(note.id, vaultIds, daysLeft <= 0 ? "withdraw" : "close");

@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import {
   createPPNVault,
+  createTransaction,
   getBundleById,
   getLegsByBundleId,
   getPPNVaultById,
   getPPNVaultsByWallet,
+  getTransactionBySignature,
   updatePPNVaultOnchain,
 } from '../db/queries';
 import {
@@ -153,6 +155,32 @@ router.post('/onchain/confirm', async (req: Request, res: Response) => {
       if (vault_id) await updatePPNVaultOnchain(vault_id, { onchain_tx_signature: signature });
     } catch {
       /* DB optional */
+    }
+    // Record the deposit in the ledger so it shows in Portfolio → History.
+    // The basket rail records via /api/deposit/confirm; PPN/tranche deposits
+    // ride this confirm, so without this they were invisible to the ledger.
+    // Best-effort + idempotent (keyed on the digest): never blocks the response.
+    try {
+      if (vault_id && wallet_address) {
+        const already = await getTransactionBySignature(signature);
+        if (!already) {
+          const vault = await getPPNVaultById(vault_id);
+          if (vault) {
+            const principal = Number(vault.principal_usdc) || 0;
+            await createTransaction({
+              bundle_id: vault.bundle_id,
+              wallet_address,
+              type: 'deposit',
+              amount_usdc: principal,
+              tokens: 0,
+              fee_usdc: principal * 0.0015,
+              tx_signature: signature,
+            });
+          }
+        }
+      }
+    } catch {
+      /* ledger indexing optional */
     }
     res.json({ confirmed: true, vault_id: vault_id ?? null, digest: signature, explorer_url: c.explorer_url, event: c.event });
   } catch (err) {

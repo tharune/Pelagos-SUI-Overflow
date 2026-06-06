@@ -78,23 +78,33 @@ async function main() {
   const digest = await signExec(prep.tx_bytes);
   console.log(`  ✓ on-chain open digest: ${digest}`);
 
-  const conf = await api<{ confirmed: boolean; explorer_url: string }>(
+  const conf = await api<{ confirmed: boolean; position: { id: string; realized_x: number } }>(
     'POST',
     '/api/distribution/continuous/open/confirm',
-    { signature: digest },
+    { wallet_address: WALLET, market_id: m.id, target_mu: targetMu, target_sigma: targetSigma, collateral_usdc: collateral, signature: digest },
   );
-  console.log(`confirm: confirmed=${conf.confirmed}  ${conf.explorer_url}`);
+  console.log(`confirm: recorded position ${conf.position.id.slice(0, 10)}… (realized x* = ${conf.position.realized_x} locked in)`);
 
-  const { positions } = await api<{ positions: Array<{ market_id: string; target_mu: number; target_sigma: number; collateral_usdc: number }> }>(
+  const { positions } = await api<{ positions: Array<{ id: string; settled: boolean }> }>(
     'GET',
     `/api/distribution/continuous/positions/${WALLET}`,
   );
-  const mine = positions.filter((p) => p.market_id === m.id);
-  console.log(`positions on-chain: ${positions.length} (this market: ${mine.length})`);
-  for (const p of mine.slice(0, 3)) console.log(`  - mu=${p.target_mu} sigma=${p.target_sigma} collateral=$${p.collateral_usdc}`);
+  console.log(`open positions: ${positions.filter((p) => !p.settled).length}`);
 
-  console.log(`\n${conf.confirmed && mine.length > 0 ? '✓ PASS — continuous distribution trade settled on testnet' : '✗ FAIL'}\n`);
-  if (!conf.confirmed || mine.length === 0) process.exit(1);
+  const settle = await api<{
+    realized_x: number;
+    payoff_usdc: number;
+    net_usdc: number;
+    pnl_usdc: number;
+    settle_digest: string | null;
+    explorer_url: string | null;
+  }>('POST', '/api/distribution/continuous/settle', { wallet_address: WALLET, position_id: conf.position.id });
+  console.log(`settle: resolved x* = ${settle.realized_x}  ->  payoff $${settle.payoff_usdc}, net returned $${settle.net_usdc}, P&L $${settle.pnl_usdc}`);
+  console.log(`  payout digest: ${settle.settle_digest ?? '(total loss — no payout minted)'}${settle.explorer_url ? "  " + settle.explorer_url : ""}`);
+
+  const consistent = settle.net_usdc === 0 || Math.abs(settle.pnl_usdc - settle.payoff_usdc) < 0.05;
+  console.log(`\n${conf.confirmed && consistent ? "✓ PASS — open + settle both on testnet, P&L reconciles" : "✗ FAIL"}\n`);
+  if (!conf.confirmed || !consistent) process.exit(1);
 }
 
 main().catch((e) => {

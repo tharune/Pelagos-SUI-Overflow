@@ -11,6 +11,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { C, FS, FD, FM, EASE, BACKEND_URL, fmtUsd } from "../_lib/tokens";
 import { explorerTxUrl } from "../_lib/wallet-bridge";
+import {
+  fetchContinuousPositions,
+  type ContinuousPosition,
+} from "../_lib/distribution-continuous-client";
 
 type TxType = "deposit" | "redemption" | "divest" | string;
 
@@ -52,6 +56,8 @@ function labelForType(t: TxType): { text: string; color: string } {
   if (t === "deposit") return { text: "BUY", color: C.green };
   if (t === "redemption") return { text: "SELL", color: C.violet };
   if (t === "divest") return { text: "DIVEST", color: C.amber };
+  if (t === "open") return { text: "OPEN", color: C.coral };
+  if (t === "settle") return { text: "SETTLE", color: C.blue };
   return { text: String(t).toUpperCase(), color: C.textSecondary };
 }
 
@@ -114,6 +120,51 @@ function feeForRow(row: TxRow): number {
   return (amount * bps) / (10_000 - bps);
 }
 
+/** Invalid/missing ms timestamp → now, so toISOString() never throws. */
+function isoFromMs(ms: number | undefined): string {
+  const t = Number.isFinite(ms) ? (ms as number) : Date.now();
+  return new Date(t).toISOString();
+}
+
+/**
+ * Synthesize ledger rows from a continuous distribution position. Distribution
+ * opens/settles live in the backend's file store (not the transactions table),
+ * so we surface them here directly: an OPEN row at open time (collateral
+ * escrowed) and, once settled, a SETTLE row at settle time (net paid out).
+ * Both carry their real on-chain digest so the Tx link resolves.
+ */
+function distRowsForPosition(p: ContinuousPosition): TxRow[] {
+  const collateral = Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0;
+  const out: TxRow[] = [
+    {
+      id: `dist-open-${p.id}`,
+      bundle_id: p.market_id,
+      bundle_name: p.question,
+      type: "open",
+      amount_usdc: collateral,
+      tokens: null,
+      fee_usdc: 0,
+      tx_signature: p.open_digest ?? null,
+      created_at: isoFromMs(p.opened_at),
+    },
+  ];
+  if (p.settled) {
+    const net = Number.isFinite(p.net_usdc) ? (p.net_usdc as number) : 0;
+    out.push({
+      id: `dist-settle-${p.id}`,
+      bundle_id: p.market_id,
+      bundle_name: p.question,
+      type: "settle",
+      amount_usdc: net,
+      tokens: null,
+      fee_usdc: 0,
+      tx_signature: p.settle_digest ?? null,
+      created_at: isoFromMs(p.settled_at ?? p.opened_at),
+    });
+  }
+  return out;
+}
+
 export function History({ walletAddress, connected }: HistoryProps) {
   const [rows, setRows] = useState<TxRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +187,22 @@ export function History({ walletAddress, connected }: HistoryProps) {
           throw new Error(`HTTP ${res.status}`);
         }
         const data = (await res.json()) as TxResponse;
-        setRows(Array.isArray(data.transactions) ? data.transactions : []);
+        const txRows = Array.isArray(data.transactions) ? data.transactions : [];
+        // Merge in distribution opens/settles (file-store sourced, with real
+        // digests). Best-effort: a distribution fetch failure never blocks the
+        // core ledger.
+        let distRows: TxRow[] = [];
+        try {
+          const dist = await fetchContinuousPositions(walletAddress);
+          distRows = (dist?.positions ?? []).flatMap(distRowsForPosition);
+        } catch {
+          /* distribution merge optional */
+        }
+        const merged = [...txRows, ...distRows].sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+        setRows(merged);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));

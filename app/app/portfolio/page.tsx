@@ -20,6 +20,10 @@ import {
 } from "../_lib/virtual-positions";
 import { Personalization } from "./_personalization";
 import { History } from "./_history";
+import {
+  fetchContinuousPositions,
+  type ContinuousPosition,
+} from "../_lib/distribution-continuous-client";
 
 type View = "positions" | "personalization" | "history";
 
@@ -155,6 +159,7 @@ export default function PortfolioPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [renderNow, setRenderNow] = useState<number>(() => Date.now());
   const [view, setView] = useState<View>("positions");
+  const [distPositions, setDistPositions] = useState<ContinuousPosition[]>([]);
   useEffect(() => {
     const t = setInterval(() => setRenderNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -214,6 +219,17 @@ export default function PortfolioPage() {
   }, 0);
   const effectivePpnValue = effectivePpnVaults.reduce(
     (sum, v) => sum + (Number.isFinite(v.principal) ? v.principal : 0),
+    0,
+  );
+  // Open continuous distribution positions. Collateral is escrowed on-chain
+  // at open; we surface it as value-at-risk in the headline + a product row.
+  // Settled positions have already paid out to USDC (counted in liveUsdc), so
+  // only unsettled positions contribute here — no double counting.
+  const effectiveDistPositions = walletReady
+    ? distPositions.filter((p) => !p.settled)
+    : [];
+  const distValue = effectiveDistPositions.reduce(
+    (sum, p) => sum + (Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0),
     0,
   );
   // On-chain NAV lookup for a backend bundle id (UUID). We key `pbuBalances`
@@ -284,6 +300,7 @@ export default function PortfolioPage() {
       effectivePpnValue +
       ppnAccruedYield +
       trancheAccruedYield +
+      distValue +
       totals.lendValue -
       totals.loanDebt
     : 0;
@@ -312,6 +329,9 @@ export default function PortfolioPage() {
           positions: mergeTranches(portfolio),
         });
       }),
+      fetchContinuousPositions(wallet).then((r) =>
+        setDistPositions(Array.isArray(r?.positions) ? r.positions : []),
+      ),
     ]);
   }, [appWalletAddress, dispatch]);
 
@@ -463,6 +483,14 @@ export default function PortfolioPage() {
       value: effectivePpnValue + ppnAccruedYield,
       color: C.violet,
       href: "/app/ppn",
+    },
+    {
+      id: "distribution",
+      label: "Distribution Markets",
+      description: "Continuous μ/σ positions · collateral at risk",
+      value: distValue,
+      color: C.coral,
+      href: "/app/distribution",
     },
     {
       id: "lending",
@@ -1280,6 +1308,44 @@ export default function PortfolioPage() {
                       {errMsg}
                     </div>
                   )}
+                </div>
+              ),
+            });
+          });
+
+          // Distribution Markets — open continuous μ/σ positions. Collateral
+          // is escrowed on-chain at open; the card shows it as value at risk
+          // and links to /app/distribution where the position is settled.
+          effectiveDistPositions.forEach((p) => {
+            const collateral = Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0;
+            const maxProfit = Number.isFinite(p.max_profit_usdc) ? p.max_profit_usdc : 0;
+            const rowKey = `dist-${p.id}`;
+            rows.push({
+              key: rowKey,
+              value: collateral,
+              el: (
+                <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em" }}>DISTRIBUTION MARKET</div>
+                    <Link href="/app/distribution" style={{ fontSize: 11, color: C.coral, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0" }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <div style={{ width: 4, height: 24, borderRadius: 2, background: C.coral }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{p.question}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>target μ {Math.round(p.target_mu)} · σ {Math.round(p.target_sigma)} · max profit {fmtUsd(maxProfit, 2)}</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(collateral, 2)}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>collateral at risk</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · CONTINUOUS</div>
+                    <Link href="/app/distribution" style={{ padding: "7px 16px", fontSize: 12, fontFamily: FD, fontWeight: 500, letterSpacing: "0.02em", borderRadius: 8, border: `0.5px solid ${C.coral}`, background: `${C.coral}24`, color: C.coral, textDecoration: "none" }}>Settle →</Link>
+                  </div>
                 </div>
               ),
             });

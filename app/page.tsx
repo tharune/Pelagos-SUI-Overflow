@@ -575,7 +575,7 @@ const SHOWCASE: Showcase[] = [
     title: "Protected Notes",
     href: "/app/ppn",
     Icon: IconShield,
-    lead: "Your principal is floored at 95% — the downside is protected and you keep the upside above it.",
+    lead: "Your principal is floored at 95%, so the downside is protected and you keep the upside above it.",
     specs: ["USDC principal sleeve", "Downside floored at 95%", "Full upside above the floor"],
     caption: "Note floored at 95% while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor (95%)", dashed: true, op: 0.75 }],
@@ -697,14 +697,14 @@ export default function HomePage() {
           .lp-section { padding: 108px 0; border-top: 0.5px solid ${C.border}; }
           .lp-eyebrow { color: ${C.tealLight}; font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; }
           .lp-head { max-width: 660px; }
-          .lp-head h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.04; letter-spacing: -0.03em; font-weight: 600; }
-          .lp-head p { margin: 14px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 560px; }
+          .lp-head h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.12; letter-spacing: -0.03em; font-weight: 600; text-wrap: balance; }
+          .lp-head p { margin: 14px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 560px; text-wrap: pretty; }
 
           /* ---- hero ---- */
           .lp-hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr); gap: 60px; align-items: center; padding: 76px 0 84px; }
-          .lp-hero-title { color: ${C.textPrimary}; font-family: ${FD}; font-size: clamp(46px, 5.4vw, 72px); line-height: 1.0; letter-spacing: -0.04em; font-weight: 600; margin: 16px 0 0; }
+          .lp-hero-title { color: ${C.textPrimary}; font-family: ${FD}; font-size: clamp(44px, 4.8vw, 64px); line-height: 1.06; letter-spacing: -0.035em; font-weight: 600; margin: 16px 0 0; text-wrap: balance; }
           .lp-hero-title em { font-style: normal; color: ${C.tealLight}; }
-          .lp-hero-sub { color: ${C.textSubtle}; font-family: ${FS}; font-size: 16.5px; line-height: 1.62; max-width: 528px; margin: 22px 0 0; }
+          .lp-hero-sub { color: ${C.textSubtle}; font-family: ${FS}; font-size: 16px; line-height: 1.65; max-width: 520px; margin: 20px 0 0; text-wrap: pretty; }
           .lp-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 32px; }
           .lp-btn { height: 44px; display: inline-flex; align-items: center; gap: 8px; justify-content: center; border-radius: 9px; padding: 0 20px; font-family: ${FD}; font-size: 14px; font-weight: 600; text-decoration: none; transition: transform 0.18s ${EASE}, background 0.18s ${EASE}, border-color 0.18s ${EASE}, box-shadow 0.18s ${EASE}; }
           .lp-btn-primary { background: ${C.tealLight}; color: #06131f; border: 0.5px solid ${C.tealLight}; box-shadow: 0 8px 28px ${C.tealLight}26; }
@@ -806,8 +806,8 @@ export default function HomePage() {
           /* ---- closing (single spec-sheet panel) ---- */
           .lp-close { display: grid; grid-template-columns: 0.86fr 1.14fr; border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.cardGradient}; overflow: hidden; }
           .lp-close-left { padding: 36px; display: flex; flex-direction: column; border-right: 0.5px solid ${C.border}; }
-          .lp-close-left h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 600; margin: 16px 0 0; max-width: 320px; }
-          .lp-close-left p { color: ${C.textSubtle}; font-family: ${FS}; font-size: 14px; line-height: 1.6; margin: 14px 0 0; max-width: 340px; }
+          .lp-close-left h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 26px; line-height: 1.14; letter-spacing: -0.03em; font-weight: 600; margin: 16px 0 0; max-width: 320px; text-wrap: balance; }
+          .lp-close-left p { color: ${C.textSubtle}; font-family: ${FS}; font-size: 14px; line-height: 1.6; margin: 14px 0 0; max-width: 340px; text-wrap: pretty; }
           .lp-close-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 28px; color: ${C.tealLight}; font-family: ${FD}; font-size: 13px; font-weight: 600; text-decoration: none; width: fit-content; }
           .lp-close-cta .lp-ar { transition: transform 0.2s ${EASE}; }
           .lp-close-cta:hover .lp-ar { transform: translateX(4px); }
@@ -879,8 +879,8 @@ export default function HomePage() {
                 Structured products on <em>live market probability</em>
               </h1>
               <p className="lp-hero-sub">
-                Pelagos turns prediction-market pricing into four composable products — distribution
-                curves, baskets, risk slices, and protected notes — each collateralized in USDC and
+                Pelagos turns prediction-market pricing into four composable products: distribution
+                curves, baskets, risk slices, and protected notes. Each is collateralized in USDC and
                 settled on Sui.
               </p>
               <div className="lp-actions">
@@ -920,7 +920,7 @@ export default function HomePage() {
               <div className="lp-eyebrow">Built on the same curve</div>
               <h2>Three structured products, one probability engine</h2>
               <p>
-                Distribution markets quote the curve directly — shown live above. These three reshape that
+                Distribution markets quote the curve directly, shown live above. These three reshape that
                 same curve into bundled, tranched, and principal-protected payoffs.
               </p>
             </div>
@@ -960,9 +960,6 @@ export default function HomePage() {
                 <div className="lp-actions">
                   <Link className="lp-btn lp-btn-primary" href="/app">
                     Enter app <span className="lp-ar"><IconArrow /></span>
-                  </Link>
-                  <Link className="lp-close-cta" href="/app/portfolio">
-                    View a portfolio <span className="lp-ar"><IconArrow /></span>
                   </Link>
                 </div>
               </div>

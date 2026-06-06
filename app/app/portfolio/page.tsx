@@ -971,7 +971,8 @@ export default function PortfolioPage() {
                       onClick={() => {
                         handleRedeem(uuid, labelId, qty);
                       }}
-                      disabled={!matured || isBusy || !walletReady}
+                      disabled={isBusy || !walletReady}
+                      title={matured ? "Redeem at maturity" : "Exit this position early — pro-rata payout, small exit fee"}
                       style={{
                         padding: "7px 16px",
                         fontSize: 12,
@@ -979,10 +980,10 @@ export default function PortfolioPage() {
                         fontWeight: 500,
                         letterSpacing: "0.02em",
                         borderRadius: 8,
-                        cursor: matured && !isBusy ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${matured ? C.teal : "rgba(255,255,255,0.08)"}`,
-                        background: matured ? "rgba(45, 212, 191, 0.12)" : "transparent",
-                        color: matured ? C.tealLight : C.textMuted,
+                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
+                        border: `0.5px solid ${!isBusy && walletReady ? C.teal : "rgba(255,255,255,0.08)"}`,
+                        background: !isBusy && walletReady ? "rgba(45, 212, 191, 0.12)" : "transparent",
+                        color: !isBusy && walletReady ? C.tealLight : C.textMuted,
                         opacity: isBusy ? 0.6 : 1,
                         transition: `all 0.15s ${EASE}`,
                       }}
@@ -1190,7 +1191,8 @@ export default function PortfolioPage() {
                             p.allVaultIds?.length || p.vaultId ? undefined : p.bundleId,
                         })
                       }
-                      disabled={!matured || isBusy || !walletReady}
+                      disabled={isBusy || !walletReady}
+                      title={matured ? "Redeem at maturity" : "Exit this tranche early — pro-rata payout"}
                       style={{
                         padding: "7px 16px",
                         fontSize: 12,
@@ -1198,10 +1200,10 @@ export default function PortfolioPage() {
                         fontWeight: 500,
                         letterSpacing: "0.02em",
                         borderRadius: 8,
-                        cursor: matured && !isBusy ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${matured ? C.amber : "rgba(255,255,255,0.08)"}`,
-                        background: matured ? "rgba(217, 119, 6, 0.14)" : "transparent",
-                        color: matured ? C.amber : C.textMuted,
+                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
+                        border: `0.5px solid ${!isBusy && walletReady ? C.amber : "rgba(255,255,255,0.08)"}`,
+                        background: !isBusy && walletReady ? "rgba(217, 119, 6, 0.14)" : "transparent",
+                        color: !isBusy && walletReady ? C.amber : C.textMuted,
                         opacity: isBusy ? 0.6 : 1,
                         transition: `all 0.15s ${EASE}`,
                       }}
@@ -1284,7 +1286,8 @@ export default function PortfolioPage() {
                     <button
                       type="button"
                       onClick={() => handleRedeemPpn(rowKey, { vaultIds: v.allVaultIds ?? [v.id] })}
-                      disabled={!matured || isBusy || !walletReady}
+                      disabled={isBusy || !walletReady}
+                      title={matured ? "Redeem at maturity" : "Redeem this note early — principal-protected payout"}
                       style={{
                         padding: "7px 16px",
                         fontSize: 12,
@@ -1292,10 +1295,10 @@ export default function PortfolioPage() {
                         fontWeight: 500,
                         letterSpacing: "0.02em",
                         borderRadius: 8,
-                        cursor: matured && !isBusy ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${matured ? C.violet : "rgba(255,255,255,0.08)"}`,
-                        background: matured ? "rgba(139, 92, 246, 0.14)" : "transparent",
-                        color: matured ? C.violet : C.textMuted,
+                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
+                        border: `0.5px solid ${!isBusy && walletReady ? C.violet : "rgba(255,255,255,0.08)"}`,
+                        background: !isBusy && walletReady ? "rgba(139, 92, 246, 0.14)" : "transparent",
+                        color: !isBusy && walletReady ? C.violet : C.textMuted,
                         opacity: isBusy ? 0.6 : 1,
                         transition: `all 0.15s ${EASE}`,
                       }}

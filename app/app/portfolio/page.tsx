@@ -180,9 +180,16 @@ export default function PortfolioPage() {
   // capped at maturity). This is what makes PPN positions contribute to
   // unrealized P&L — the demo-state totals only know about basket drift.
   const ppnAccruedYield = effectivePpnVaults.reduce((sum, v) => {
-    const elapsedDays = Math.max(0, (renderNow - v.createdAt) / 86_400_000);
+    // Guard every field: a freshly-opened note can arrive before the indexer
+    // has filled in created_at / days_* / estimated_apy, which would otherwise
+    // make this term NaN and poison the headline, P&L, and allocation totals.
+    const principal = Number.isFinite(v.principal) ? v.principal : 0;
+    const apy = Number.isFinite(v.apy) ? v.apy : 0;
+    const maturityDays = Number.isFinite(v.maturityDays) ? v.maturityDays : 0;
+    const createdAt = Number.isFinite(v.createdAt) ? v.createdAt : renderNow;
+    const elapsedDays = Math.max(0, (renderNow - createdAt) / 86_400_000);
     const accrued =
-      v.principal * (v.apy / 100 / 365) * Math.min(elapsedDays, v.maturityDays);
+      principal * (apy / 100 / 365) * Math.min(elapsedDays, maturityDays);
     return sum + accrued;
   }, 0);
   // Tranche accrued yield. Principal is qty*avgCost (frozen at entry) because
@@ -201,12 +208,12 @@ export default function PortfolioPage() {
   // Principal sums for the filtered (on-chain-backed) rows. Replace
   // `totals.trancheValue` / `totals.ppnValue` everywhere below so the
   // headline, donut, and breakdown all agree with the card list.
-  const effectiveTrancheValue = effectiveTranches.reduce(
-    (sum, p) => sum + p.qty * p.avgCost,
-    0,
-  );
+  const effectiveTrancheValue = effectiveTranches.reduce((sum, p) => {
+    const v = p.qty * p.avgCost;
+    return sum + (Number.isFinite(v) ? v : 0);
+  }, 0);
   const effectivePpnValue = effectivePpnVaults.reduce(
-    (sum, v) => sum + v.principal,
+    (sum, v) => sum + (Number.isFinite(v.principal) ? v.principal : 0),
     0,
   );
   // On-chain NAV lookup for a backend bundle id (UUID). We key `pbuBalances`
@@ -660,7 +667,7 @@ export default function PortfolioPage() {
                     </div>
                     <div style={{ textAlign: "right" }}>
                       <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 14, fontWeight: 600 }}>{fmtUsd(row.value, 2)}</div>
-                      <div style={{ color: active ? row.color : C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{share.toFixed(1)}%</div>
+                      <div style={{ color: active ? row.color : C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{(share ?? 0).toFixed(1)}%</div>
                     </div>
                   </>
                 );
@@ -919,7 +926,7 @@ export default function PortfolioPage() {
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{labelId}</div>
                         <div style={{ fontSize: 11, color: C.textSecondary, fontFamily: FS, marginTop: 2 }}>{contextLine}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{qty.toFixed(2)} units · avg ${avgCost.toFixed(3)}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{(qty ?? 0).toFixed(2)} units · avg ${(avgCost ?? 0).toFixed(3)}</div>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
@@ -1128,7 +1135,7 @@ export default function PortfolioPage() {
                       <div style={{ width: 4, height: 24, borderRadius: 2, background: trancheColor(p.kind) }} />
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD, textTransform: "capitalize" }}>{p.bundleName ?? p.bundleId} · {p.kind}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{p.qty.toFixed(2)} units · issued ${p.avgCost.toFixed(2)}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{(p.qty ?? 0).toFixed(2)} units · issued ${(p.avgCost ?? 0).toFixed(2)}</div>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
@@ -1187,19 +1194,31 @@ export default function PortfolioPage() {
           // Same on-chain gate as the tranche loop above — cancelled-tx rows
           // never reach this list, so the card count matches the wallet.
           effectivePpnVaults.forEach((v) => {
-            const elapsed = Math.max(0, (renderNow - v.createdAt) / 86_400_000);
-            const accrued = v.principal * (v.apy / 100 / 365) * Math.min(elapsed, v.maturityDays);
-            const value = v.principal + accrued;
+            // On-chain `ppn:` shares carry principal but not the note's term or
+            // created-at, so those hydrate to NaN. Mirror the tranche card's
+            // graceful "MATURITY UNKNOWN" path: when the term is unknown, show
+            // principal as the value with no fabricated accrual or maturity date.
+            const principal = Number.isFinite(v.principal) ? v.principal : 0;
+            const apy = Number.isFinite(v.apy) ? v.apy : 0;
+            const hasTerm = Number.isFinite(v.createdAt) && Number.isFinite(v.maturityDays);
+            const elapsed = hasTerm ? Math.max(0, (renderNow - v.createdAt) / 86_400_000) : 0;
+            const accrued = hasTerm
+              ? principal * (apy / 100 / 365) * Math.min(elapsed, v.maturityDays)
+              : 0;
+            const value = principal + accrued;
             const rowKey = `ppn-${v.id}`;
-            const maturityMs = v.createdAt + v.maturityDays * 86_400_000;
-            const matured = maturityMs <= renderNow;
+            const maturityMs = hasTerm ? v.createdAt + v.maturityDays * 86_400_000 : null;
+            const matured = maturityMs != null ? maturityMs <= renderNow : false;
             const isBusy = redeemBusy === rowKey;
             const errMsg = redeemError[rowKey];
-            const maturityLabel = new Date(maturityMs).toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
+            const maturityLabel =
+              maturityMs != null
+                ? new Date(maturityMs).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null;
             rows.push({
               key: rowKey,
               value,
@@ -1214,7 +1233,7 @@ export default function PortfolioPage() {
                       <div style={{ width: 4, height: 24, borderRadius: 2, background: C.violet }} />
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{v.bundleId}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{v.apy.toFixed(2)}% APY · {v.maturityDays}d maturity</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{hasTerm ? `${apy.toFixed(2)}% APY · ${Math.round(v.maturityDays)}d maturity` : "Principal-protected note"}</div>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
@@ -1232,7 +1251,7 @@ export default function PortfolioPage() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
                     <div style={{ fontSize: 11, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
-                      {matured ? "MATURED" : `MATURES ${maturityLabel.toUpperCase()}`}
+                      {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
                     </div>
                     <button
                       type="button"

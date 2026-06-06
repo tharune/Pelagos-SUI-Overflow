@@ -518,6 +518,25 @@ export async function getTranchesByWallet(walletAddress: string): Promise<PPNVau
   return data ?? [];
 }
 
+/**
+ * ALL note/tranche vaults for a wallet — no status or signature filter — so the
+ * transaction-ledger enrichment can tag each tx with its product type by
+ * matching the tx digest against the vault's deposit/redemption signature
+ * (withdrawn vaults still hold the redemption signature, so they must be kept).
+ */
+export async function getPPNVaultsForLedger(walletAddress: string): Promise<PPNVault[]> {
+  const { data, error } = await supabase
+    .from('ppn_vaults')
+    .select('*')
+    .eq('wallet_address', walletAddress);
+
+  if (error) {
+    console.error('getPPNVaultsForLedger error:', error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
 export async function getPPNVaultById(id: string): Promise<PPNVault | null> {
   const { data, error } = await supabase
     .from('ppn_vaults')

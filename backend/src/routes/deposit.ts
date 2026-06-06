@@ -5,6 +5,7 @@ import {
   createTransaction,
   getTransactionBySignature,
   getTransactionsByWallet,
+  getPPNVaultsForLedger,
 } from '../db/queries';
 
 /** Classify a prepare/build error into the right HTTP status. */
@@ -398,10 +399,25 @@ router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
 router.get('/transactions/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    const transactions = await getTransactionsByWallet(walletAddress);
+    const [transactions, ledgerVaults] = await Promise.all([
+      getTransactionsByWallet(walletAddress),
+      getPPNVaultsForLedger(walletAddress).catch(() => []),
+    ]);
+    // Map every vault's deposit + redemption digest -> the vault, so each
+    // transaction can be tagged with its product type (note / tranche). A tx
+    // with no vault match is a Market Basket (PBU units, no vault share).
+    const vaultBySig = new Map<string, (typeof ledgerVaults)[number]>();
+    for (const v of ledgerVaults) {
+      if (v.onchain_tx_signature) vaultBySig.set(v.onchain_tx_signature, v);
+      if (v.redemption_tx_signature) vaultBySig.set(v.redemption_tx_signature, v);
+    }
     const enriched = await Promise.all(
       transactions.map(async (tx) => {
         const bundle = await getBundleById(tx.bundle_id).catch(() => null);
+        const v = tx.tx_signature ? vaultBySig.get(tx.tx_signature) : undefined;
+        // product: 'tranche' (has tranche_kind) | 'note' (vault share, no
+        // tranche) | 'basket' (no vault match). Drives the History label.
+        const product = v ? (v.tranche_kind ? 'tranche' : 'note') : 'basket';
         return {
           id: tx.id,
           bundle_id: tx.bundle_id,
@@ -412,6 +428,9 @@ router.get('/transactions/:walletAddress', async (req: Request, res: Response) =
           fee_usdc: tx.fee_usdc,
           tx_signature: tx.tx_signature,
           created_at: tx.created_at,
+          product,
+          tranche_kind: v?.tranche_kind ?? null,
+          principal_usdc: v ? v.principal_usdc : null,
         };
       }),
     );

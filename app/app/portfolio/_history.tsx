@@ -37,6 +37,9 @@ interface TxRow {
   // Non-null when the tx matches a ppn_vaults row. Tells a vanilla PPN
   // buy apart from a basket buy when both have 0 PBU units.
   principal_usdc?: number | null;
+  // Product type tagged by the backend ledger enrichment (tx digest matched
+  // against the vault's deposit/redemption signature).
+  product?: "basket" | "note" | "tranche" | string;
 }
 
 interface TxResponse {
@@ -376,11 +379,20 @@ function TxRowView({ row }: { row: TxRow }) {
   // Product suffix: tranche kind for tranche rows, "PPN" for vanilla
   // PPN rows (a matched vault row with no tranche overlay), bare bundle
   // name for basket rows (no vault match).
-  const productLabel = row.tranche_kind
-    ? `${row.bundle_name} · ${row.tranche_kind}`
-    : row.principal_usdc != null && (row.tokens == null || row.tokens === 0)
-      ? `${row.bundle_name} · PPN`
-      : row.bundle_name;
+  // Tag every row with its product so a note / tranche / basket / distribution
+  // are distinguishable even when they share a bundle name.
+  const productLabel = (() => {
+    if (row.type === "open" || row.type === "settle") return `${row.bundle_name} · Distribution`;
+    if (row.tranche_kind) {
+      const kind = row.tranche_kind.charAt(0).toUpperCase() + row.tranche_kind.slice(1);
+      return `${row.bundle_name} · ${kind} tranche`;
+    }
+    if (row.product === "tranche") return `${row.bundle_name} · Tranche`;
+    if (row.product === "note" || (row.principal_usdc != null && row.tokens === 0)) {
+      return `${row.bundle_name} · Protected Note`;
+    }
+    return `${row.bundle_name} · Basket`;
+  })();
   return (
     <div
       style={{

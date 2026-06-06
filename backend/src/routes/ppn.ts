@@ -213,9 +213,16 @@ async function prepareRedeemHandler(req: Request, res: Response) {
     share_id,
     label: bundle_id ? ppnLabel(bundle_id, tranche_kind) : undefined,
   });
+  // Derive the bundle from the share's on-chain label (ppn:kind:bundle) so the
+  // redemption always carries a bundle for the ledger + product tagging, even
+  // when the client didn't pass bundle_id.
+  const labelBundle =
+    typeof prep.label === 'string' && prep.label.startsWith('ppn:')
+      ? prep.label.split(':')[2] ?? null
+      : null;
   return res.json({
     kind: 'prepared',
-    bundle_id: bundle_id ?? null,
+    bundle_id: bundle_id ?? labelBundle ?? null,
     wallet_address,
     share_id: prep.share_id,
     principal_usdc: prep.economics.shares,

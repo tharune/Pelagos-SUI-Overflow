@@ -253,7 +253,7 @@ export async function prepareRedeem(args: {
   share_id?: string;
   label?: string;
 }): Promise<
-  PreparedTx & { economics: RedeemEconomics; vault_id: string; share_id: string }
+  PreparedTx & { economics: RedeemEconomics; vault_id: string; share_id: string; label: string }
 > {
   ensureConfigured();
   const shares = await listShares(args.owner);
@@ -296,6 +296,7 @@ export async function prepareRedeem(args: {
     },
     vault_id: VAULT.vaultObjectId,
     share_id: target.share_id,
+    label: target.label,
   };
 }
 

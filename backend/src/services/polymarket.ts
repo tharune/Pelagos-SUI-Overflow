@@ -64,7 +64,12 @@ const POLY_FETCH_HEADERS = {
 async function fetchWithRetry(url: string, retries = 1): Promise<Response | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, { headers: POLY_FETCH_HEADERS });
+      const response = await fetch(url, {
+        headers: POLY_FETCH_HEADERS,
+        // Hard timeout: Gamma's deep-offset pages currently hang for tens of
+        // seconds. Without this, a single bad page stalls the whole backend.
+        signal: AbortSignal.timeout(4000),
+      });
       if (response.ok) return response;
       if (response.status >= 500 && attempt < retries) {
         await new Promise((r) => setTimeout(r, 1000));
@@ -73,11 +78,14 @@ async function fetchWithRetry(url: string, retries = 1): Promise<Response | null
       console.error(`Polymarket API ${response.status}: ${url}`);
       return null;
     } catch (err) {
-      if (attempt < retries) {
+      // A timeout won't get better on retry, so bail immediately and let the
+      // caller proceed with whatever it has already collected.
+      const timedOut = err instanceof Error && err.name === 'TimeoutError';
+      if (!timedOut && attempt < retries) {
         await new Promise((r) => setTimeout(r, 1000));
         continue;
       }
-      console.error(`Polymarket API fetch failed: ${url}`, err);
+      console.error(`Polymarket API fetch failed: ${url}`, err instanceof Error ? err.name : err);
       return null;
     }
   }
@@ -164,7 +172,7 @@ function toPolymarketEvent(e: GammaEventResponse): PolymarketEvent {
  *
  * Callers can pass limit up to ~5000 to retrieve the full live universe.
  */
-export async function fetchMarkets(params: {
+async function fetchMarketsRaw(params: {
   limit?: number;
   active?: boolean;
   closed?: boolean;
@@ -179,6 +187,11 @@ export async function fetchMarkets(params: {
     searchParams.set('limit', String(pageSize));
     if (params.active !== undefined) searchParams.set('active', String(params.active));
     if (params.closed !== undefined) searchParams.set('closed', String(params.closed));
+    // Volume-sorted so the highest-value markets land in the first (reachable)
+    // pages. Gamma's deep-offset pages are currently unreliable, so ranking the
+    // top pages by volume is what keeps baskets + distribution populated.
+    searchParams.set('order', 'volumeNum');
+    searchParams.set('ascending', 'false');
     searchParams.set('offset', String(offset));
 
     const url = `${GAMMA_API}/markets?${searchParams.toString()}`;
@@ -195,6 +208,33 @@ export async function fetchMarkets(params: {
   }
 
   return collected.map(toPolymarketMarket);
+}
+
+// Cache + coalesce market-universe fetches. The same params get requested by
+// /api/bundles, /api/markets, distribution discovery, and the cron within
+// seconds of each other; without this each one re-walks dozens of slow Gamma
+// pages. One fetch (≤60s old) is shared across all callers.
+const marketsCache = new Map<string, { at: number; data: PolymarketMarket[] }>();
+const marketsInFlight = new Map<string, Promise<PolymarketMarket[]>>();
+const MARKETS_CACHE_TTL_MS = 60_000;
+export async function fetchMarkets(params: {
+  limit?: number;
+  active?: boolean;
+  closed?: boolean;
+}): Promise<PolymarketMarket[]> {
+  const key = `${params.limit ?? GAMMA_PAGE_MAX}:${params.active}:${params.closed}`;
+  const cached = marketsCache.get(key);
+  if (cached && Date.now() - cached.at < MARKETS_CACHE_TTL_MS) return cached.data;
+  const existing = marketsInFlight.get(key);
+  if (existing) return existing;
+  const pending = fetchMarketsRaw(params)
+    .then((data) => {
+      if (data.length) marketsCache.set(key, { at: Date.now(), data });
+      return data;
+    })
+    .finally(() => marketsInFlight.delete(key));
+  marketsInFlight.set(key, pending);
+  return pending;
 }
 
 export async function fetchMarketByConditionId(

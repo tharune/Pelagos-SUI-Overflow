@@ -6,11 +6,15 @@ import {
 } from '../services/distribution';
 import {
   listContinuousMarkets,
+  listContinuousMarketsLive,
   quoteContinuous,
   prepareContinuousOpen,
   confirmContinuousOpen,
   listContinuousPositions,
   settleContinuousPosition,
+  closeContinuousPosition,
+  seedLiquidity,
+  seedAllRandom,
 } from '../services/distribution-continuous';
 
 const router = Router();
@@ -108,8 +112,33 @@ router.post('/launch-plan', async (req, res) => {
 // Continuous distribution markets (Normal mu/sigma, on-chain collateral)
 // ---------------------------------------------------------------------------
 
-router.get('/continuous/markets', (_req, res) => {
-  res.json({ markets: listContinuousMarkets() });
+router.get('/continuous/markets', async (_req, res) => {
+  try {
+    // Live Polymarket-derived forwards (cached); falls back to synthetic.
+    res.json({ markets: await listContinuousMarketsLive() });
+  } catch {
+    res.json({ markets: listContinuousMarkets() });
+  }
+});
+
+/** Seed simulated AMM liquidity into a market's pool. */
+router.post('/continuous/seed-liquidity', (req, res) => {
+  try {
+    const marketId = String(req.body?.market_id ?? '');
+    if (!marketId) throw new Error('market_id is required');
+    res.json(seedLiquidity(marketId, bodyNumber(req, 'amount_usdc')));
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+/** Seed a random 5–6 figure position into every market pool at once. */
+router.post('/continuous/seed-all', (_req, res) => {
+  try {
+    res.json(seedAllRandom());
+  } catch (err) {
+    errorResponse(res, err);
+  }
 });
 
 router.post('/continuous/quote', (req, res) => {
@@ -175,6 +204,20 @@ router.post('/continuous/settle', async (req, res) => {
     const positionId = String(req.body?.position_id ?? '');
     if (!positionId) throw new Error('position_id is required');
     res.json(await settleContinuousPosition({ owner, positionId }));
+  } catch (err) {
+    errorResponse(res, err);
+  }
+});
+
+/** Sell/close a position before settlement: unwind through the AMM (mark-to-f
+ * minus maker fee + price-impact slippage), protocol pays the net on-chain. */
+router.post('/continuous/close', async (req, res) => {
+  try {
+    const owner = String(req.body?.wallet_address ?? '');
+    if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('wallet_address (0x...) is required');
+    const positionId = String(req.body?.position_id ?? '');
+    if (!positionId) throw new Error('position_id is required');
+    res.json(await closeContinuousPosition({ owner, positionId }));
   } catch (err) {
     errorResponse(res, err);
   }

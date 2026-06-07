@@ -12,6 +12,8 @@ import {
   fetchContinuousPositions,
   openContinuousPosition,
   settleContinuousPosition,
+  closeContinuousPosition,
+  type CloseResult,
   type ContinuousMarket,
   type ContinuousQuote,
   type ContinuousPosition,
@@ -21,6 +23,37 @@ import {
 const price = (v: number) =>
   v >= 1000 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(v < 10 ? 2 : 0)}`;
 const usd = (v: number) => `$${v.toFixed(2)}`;
+// Unit-aware: dollar markets show $, count markets (e.g. Fed rate cuts) show a
+// plain number so "0.30 cuts" doesn't read as "$0".
+const fmtVal = (unit: string, v: number) =>
+  unit === "count" ? (Math.round(v * 100) / 100).toString() : price(v);
+// Compact USD for volume / pool depth: $26.8M, $172.0K.
+const compact = (v: number) =>
+  v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`;
+
+// Clean a market question into a short name for the sidebar.
+function marketName(m: ContinuousMarket): string {
+  const q = m.question.replace(/\?+$/, "").trim();
+  if (m.source !== "polymarket") return q; // curated names are already short
+  if (/bitcoin/i.test(q)) return "Bitcoin price · 2026";
+  if (/crude oil|\bcl\b|brent|wti/i.test(q)) return "Crude oil · June";
+  if (/fed rate cut/i.test(q)) return "Fed rate cuts · 2026";
+  if (/ethereum|\beth\b/i.test(q)) return "Ethereum price";
+  if (/solana|\bsol\b/i.test(q)) return "Solana price";
+  return q.length > 30 ? `${q.slice(0, 30)}…` : q;
+}
+
+// Outcome category → display label + accent.
+const CATEGORY: Record<string, { label: string; color: string }> = {
+  crypto: { label: "Crypto", color: "#7de7ff" },
+  economics: { label: "Macro", color: "#9ad0ff" },
+  commodities: { label: "Commodities", color: "#d4b46f" },
+  sports: { label: "Sports", color: "#7ee0b0" },
+  politics: { label: "Politics", color: "#c9a9ff" },
+};
+function categoryMeta(c: string): { label: string; color: string } {
+  return CATEGORY[c] ?? { label: c.charAt(0).toUpperCase() + c.slice(1), color: "#9ad0ff" };
+}
 
 // ---------------------------------------------------------------------------
 // Chart: the two continuous Normal curves (market f vs your view g) + payoff.
@@ -48,7 +81,33 @@ function DistChart({ quote }: { quote: ContinuousQuote }) {
   const syPay = (v: number) => zeroY - (v / payAbs) * (HB / 2 - 10);
   const barW = Math.max(1.2, (W - 2 * P) / n - 0.6);
 
-  const ticks = [xMin, quote.market_mu, quote.target_mu, xMax].sort((a, b) => a - b);
+  // X-axis ticks: min, market μ, your μ, max. When μ_market and μ_target are
+  // close their labels collide ("$1$104"), so we dedupe near-identical x's and
+  // drop any colliding label to a lower row instead of overlapping.
+  const rawTicks: Array<{ v: number; anchor: "start" | "middle" | "end" }> = [
+    { v: xMin, anchor: "start" },
+    { v: quote.market_mu, anchor: "middle" },
+    { v: quote.target_mu, anchor: "middle" },
+    { v: xMax, anchor: "end" },
+  ];
+  rawTicks.sort((a, b) => a.v - b.v);
+
+  const placedTicks: Array<{ v: number; anchor: "start" | "middle" | "end"; row: number; label: string }> = [];
+  const rowRight = [-Infinity, -Infinity];
+  for (let i = 0; i < rawTicks.length; i++) {
+    const t = rawTicks[i];
+    // Skip a tick whose pixel position duplicates the previous one.
+    if (i > 0 && Math.abs(sx(t.v) - sx(rawTicks[i - 1].v)) < 3) continue;
+    const label = fmtVal(quote.unit, t.v);
+    const halfW = (label.length * 5.6) / 2;
+    const px = sx(t.v);
+    const left = px - halfW;
+    const right = px + halfW;
+    let row = 0;
+    if (left < rowRight[0] + 6) row = left < rowRight[1] + 6 ? 0 : 1; // collide → drop to row 1
+    rowRight[row] = right;
+    placedTicks.push({ ...t, row, label });
+  }
 
   return (
     <div>
@@ -62,9 +121,17 @@ function DistChart({ quote }: { quote: ContinuousQuote }) {
         {/* market view: line */}
         <path d={monotonePath(marketPts)} fill="none" stroke={C.textSecondary} strokeWidth="1.5" strokeDasharray="5 4" opacity={0.85} />
         {/* x ticks */}
-        {ticks.map((t, i) => (
-          <text key={i} x={sx(t)} y={HP - 6} fill={C.textMuted} fontFamily={FM} fontSize="9.5" textAnchor="middle">
-            {price(t)}
+        {placedTicks.map((t, i) => (
+          <text
+            key={i}
+            x={sx(t.v)}
+            y={HP - 13 + t.row * 11}
+            fill={C.textMuted}
+            fontFamily={FM}
+            fontSize="9.5"
+            textAnchor={t.anchor}
+          >
+            {t.label}
           </text>
         ))}
       </svg>
@@ -160,6 +227,8 @@ export default function DistributionPage() {
   const usdc = useUsdcBalance();
   const [settling, setSettling] = useState<string | null>(null);
   const [, setSettleResults] = useState<Record<string, SettleResult>>({});
+  const [closing, setClosing] = useState<string | null>(null);
+  const [closeResults, setCloseResults] = useState<Record<string, CloseResult>>({});
 
   const market = useMemo(() => markets.find((m) => m.id === marketId) ?? null, [markets, marketId]);
 
@@ -269,20 +338,20 @@ export default function DistributionPage() {
     }
   }
 
-  async function getFaucet() {
-    if (!wallet.address) return;
-    setBusy(true);
+  // Sell/close before settlement — routes the unwind through the AMM.
+  async function sell(positionId: string) {
+    if (!activeAddress) return;
+    setClosing(positionId);
+    setError(null);
     try {
-      await fetch(`${BACKEND_URL}/api/dev/airdrop-mock-usdc`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ walletAddress: wallet.address, amount: 1000 }),
-      });
-      window.setTimeout(() => usdc.refresh(), 1500);
+      const r = await closeContinuousPosition({ owner: activeAddress, positionId });
+      setCloseResults((prev) => ({ ...prev, [positionId]: r }));
+      refreshPositions();
+      usdc.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setClosing(null);
     }
   }
 
@@ -292,26 +361,30 @@ export default function DistributionPage() {
   return (
     <>
       <Header />
-      <PageFrame wide>
+      <PageFrame wide zoom={0.8}>
         <div style={{ marginBottom: 22 }}>
           <h1 style={{ fontFamily: FD, fontSize: 34, fontWeight: 600, letterSpacing: "-0.03em", color: C.textPrimary, margin: 0 }}>
             Distribution Markets
           </h1>
-          <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 640, lineHeight: 1.6 }}>
-            Trade a continuous probability distribution. The market prices a Normal forward f(x); set your own
-            view g(x) by moving the mean and spread. Your position pays g(x) − f(x) at the realized outcome, and
-            the collateral is escrowed on Sui testnet.
+          <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 660, lineHeight: 1.6 }}>
+            Stake a full probability distribution on live markets — Polymarket CLOB odds and live spot price
+            feeds — not a binary yes/no. Each market prices a Normal forward f(x); set your own view g(x) by
+            moving the mean and spread. Your position pays g(x) − f(x) at the realized outcome, collateral
+            escrowed on Sui testnet.
           </p>
         </div>
 
         <div className="dc-grid">
           {/* ---- left: market list + your view controls ---- */}
-          <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
+          <aside style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={PANEL}>
-              <div className="dc-cap">Forwards</div>
-              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <div className="dc-cap">Markets · top liquidity</div>
+              </div>
+              <div className="dc-market-scroll">
                 {markets.map((m) => {
                   const on = m.id === marketId;
+                  const cat = categoryMeta(m.category);
                   return (
                     <button
                       key={m.id}
@@ -319,13 +392,46 @@ export default function DistributionPage() {
                       className="dc-market"
                       style={{ borderColor: on ? C.tealLight : C.border, background: on ? C.cardHover : "transparent" }}
                     >
-                      <span style={{ fontFamily: FD, fontSize: 14, color: C.textPrimary }}>{m.underlying}/USD</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
+                        <span style={{ fontFamily: FD, fontSize: 14, color: C.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {marketName(m)}
+                        </span>
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontFamily: FM,
+                            fontSize: 9,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase",
+                            color: cat.color,
+                            background: `${cat.color}1f`,
+                            borderRadius: 999,
+                            padding: "2px 7px",
+                          }}
+                        >
+                          {cat.label}
+                        </span>
+                      </div>
                       <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                        f = N({price(m.mu)}, {Math.round(m.sigma)})
+                        f = N({fmtVal(m.unit, m.mu)}, {fmtVal(m.unit, m.sigma)})
                       </span>
+                      <div style={{ display: "flex", gap: 10, marginTop: 2, fontFamily: FM, fontSize: 10, color: C.textMuted }}>
+                        {m.source === "polymarket" ? (
+                          <span>vol {compact(m.volume_usd)}</span>
+                        ) : (
+                          <span>{fmtVal(m.unit, m.mu)} spot</span>
+                        )}
+                        <span>pool {compact(m.pool_liquidity_usdc)}</span>
+                        <span style={{ color: `${C.green}cc` }}>live</span>
+                      </div>
                     </button>
                   );
                 })}
+                {markets.length === 0 && (
+                  <span style={{ fontFamily: FS, fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+                    Discovering live markets…
+                  </span>
+                )}
               </div>
             </div>
 
@@ -333,15 +439,38 @@ export default function DistributionPage() {
               <div style={PANEL}>
                 <div className="dc-cap">Your view · g(x)</div>
                 <div style={{ display: "grid", gap: 18, marginTop: 14 }}>
-                  <Slider label="Mean (μ)" value={mu} min={market.mu_min} max={market.mu_max} step={market.step} fmt={price} onChange={setMu} />
-                  <Slider label="Std dev (σ) · conviction" value={sigma} min={market.sigma_min} max={market.sigma_max} step={market.step} fmt={(v) => `±${Math.round(v).toLocaleString()}`} onChange={setSigma} />
+                  <Slider label="Mean (μ)" value={mu} min={market.mu_min} max={market.mu_max} step={market.step} fmt={(v) => fmtVal(market.unit, v)} onChange={setMu} />
+                  <Slider label="Std dev (σ) · conviction" value={sigma} min={market.sigma_min} max={market.sigma_max} step={market.step} fmt={(v) => (market.unit === "count" ? `±${(Math.round(v * 100) / 100)}` : `±${Math.round(v).toLocaleString()}`)} onChange={setSigma} />
                   <div>
                     <div className="dc-cap" style={{ marginBottom: 6 }}>Collateral (USDC) · max loss</div>
-                    <input className="dc-num" type="number" min={1} value={collateral} onChange={(e) => setCollateral(e.target.value)} />
+                    <div style={{ position: "relative" }}>
+                      <input className="dc-num" type="number" min={1} value={collateral} onChange={(e) => setCollateral(e.target.value)} style={{ paddingRight: 54 }} />
+                      {wallet.connected && usdc.uiAmount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setCollateral(String(Math.floor(usdc.uiAmount * 100) / 100))}
+                          className="dc-max"
+                          title={`Use full balance · ${usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC`}
+                        >
+                          MAX
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <button onClick={() => market && (setMu(market.mu), setSigma(market.sigma))} className="dc-reset">
                     Reset to market
                   </button>
+                </div>
+
+                {/* Pool depth + balance, flowing right under the controls. */}
+                <div style={{ display: "grid", gap: 14, paddingTop: 18 }}>
+                  {/* Pool liquidity — backend-seeded AMM depth, display only. */}
+                  <div style={{ borderTop: `0.5px solid ${C.border}`, paddingTop: 14 }}>
+                    <span className="dc-cap">Pool liquidity</span>
+                    <div style={{ fontFamily: FD, fontSize: 22, fontWeight: 600, color: C.textPrimary, marginTop: 6 }}>
+                      {compact(market.pool_liquidity_usdc)}
+                    </div>
+                  </div>
                   {wallet.connected && (
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `0.5px solid ${C.border}`, paddingTop: 12 }}>
                       <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
@@ -350,9 +479,6 @@ export default function DistributionPage() {
                           {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC
                         </span>
                       </span>
-                      <button onClick={getFaucet} disabled={busy} className="dc-reset" style={{ width: "auto", padding: "6px 10px" }}>
-                        Get test mUSDC
-                      </button>
                     </div>
                   )}
                 </div>
@@ -361,10 +487,10 @@ export default function DistributionPage() {
           </aside>
 
           {/* ---- right: chart + quote + open ---- */}
-          <main style={{ display: "grid", gap: 16, alignContent: "start" }}>
+          <main style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={PANEL}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-                <div className="dc-cap">{market ? `${market.underlying}/USD forward · 30d` : "Select a market"}</div>
+                <div className="dc-cap">{market ? `${marketName(market)} · forward f(x)` : "Select a market"}</div>
                 {quote && (
                   <div style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
                     continuous · L2 AMM · {quote.x.length}-pt grid
@@ -381,6 +507,14 @@ export default function DistributionPage() {
                 <Stat label="Max loss" value={quote ? usd(quote.max_loss_usdc) : "—"} color={C.red} />
                 <Stat label="EV if you're right" value={quote ? usd(quote.expected_value_usdc) : "—"} color={quote && quote.expected_value_usdc >= 0 ? C.green : C.red} />
               </div>
+
+              {quote && (
+                <div style={{ display: "flex", gap: 18, marginTop: 12, fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                  <span>pool depth {compact(quote.pool_liquidity_usdc)}</span>
+                  <span>price impact {quote.price_impact_bps} bps</span>
+                  <span>maker fee {usd(quote.maker_fee_usdc)}</span>
+                </div>
+              )}
 
               <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
                 {busy ? stage ?? "Submitting…" : !wallet.connected ? "Connect wallet to trade" : flat ? "Move your view off the market" : `Open position · lock ${quote ? usd(quote.collateral_required_usdc) : ""}`}
@@ -402,19 +536,41 @@ export default function DistributionPage() {
               <div style={PANEL}>
                 <div className="dc-cap">Open positions ({openPositions.length})</div>
                 <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                  {openPositions.map((p) => (
-                    <div key={p.id} className="dc-pos" style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ display: "grid", gap: 2 }}>
-                        <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{p.question}</span>
-                        <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                          g = N({price(p.target_mu)}, {Math.round(p.target_sigma)}) · {usd(p.collateral_usdc)} locked · up to {usd(p.max_profit_usdc)}
-                        </span>
+                  {openPositions.map((p) => {
+                    const cr = closeResults[p.id];
+                    return (
+                    <div key={p.id} className="dc-pos">
+                      <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                        <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                          <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{p.question}</span>
+                          <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                            g = N({price(p.target_mu)}, {Math.round(p.target_sigma)}) · {usd(p.collateral_usdc)} locked · up to {usd(p.max_profit_usdc)}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                          <button onClick={() => sell(p.id)} disabled={closing === p.id || settling === p.id} className="dc-sell">
+                            {closing === p.id ? "Selling…" : "Sell"}
+                          </button>
+                          <button onClick={() => settle(p.id)} disabled={settling === p.id || closing === p.id} className="dc-settle">
+                            {settling === p.id ? "Settling…" : "Settle"}
+                          </button>
+                        </div>
                       </div>
-                      <button onClick={() => settle(p.id)} disabled={settling === p.id} className="dc-settle">
-                        {settling === p.id ? "Settling…" : "Settle"}
-                      </button>
+                      {cr && (
+                        <div style={{ marginTop: 8, fontFamily: FM, fontSize: 11, color: C.textMuted, display: "flex", flexWrap: "wrap", gap: 12 }}>
+                          <span>AMM unwind · net {usd(cr.net_usdc)}</span>
+                          <span>slippage {usd(cr.slippage_usdc)} ({cr.price_impact_bps}bps)</span>
+                          <span>fee {usd(cr.fee_usdc)}</span>
+                          {cr.close_digest && (
+                            <a href={suiExplorerTxUrl(cr.close_digest)} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
+                              tx ↗
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -457,19 +613,26 @@ export default function DistributionPage() {
       </PageFrame>
 
       <style jsx global>{`
-        .dc-grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+        .dc-grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 30px; align-items: start; }
         @media (max-width: 900px) { .dc-grid { grid-template-columns: 1fr; } }
         .dc-cap { font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: ${C.textMuted}; }
+        .dc-market-scroll { display: grid; gap: 8px; margin-top: 12px; max-height: 296px; overflow-y: auto; padding-right: 2px; scrollbar-width: none; -ms-overflow-style: none; }
+        .dc-market-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
         .dc-market { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 12px 14px; border: 0.5px solid ${C.border}; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color 0.15s ${EASE}, background 0.15s ${EASE}; }
         .dc-market:hover { border-color: ${C.borderHover}; }
         .dc-num { width: 100%; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 10px 12px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; outline: none; }
         .dc-num:focus { border-color: ${C.tealLight}; }
+        .dc-max { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); padding: 4px 9px; border-radius: 6px; border: 0.5px solid ${C.border}; background: ${C.tealBg}; color: ${C.tealLight}; font-family: ${FM}; font-size: 10px; letter-spacing: 0.08em; cursor: pointer; }
+        .dc-max:hover { border-color: ${C.tealLight}; }
         .dc-reset { background: transparent; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 8px; color: ${C.textSecondary}; font-family: ${FM}; font-size: 11px; cursor: pointer; }
         .dc-reset:hover { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
         .dc-open { width: 100%; background: ${C.tealLight}; border: none; border-radius: 10px; padding: 14px; color: #06121a; font-family: ${FD}; font-size: 14px; font-weight: 600; }
         .dc-pos { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 0.5px solid ${C.border}; border-radius: 10px; }
         .dc-settle { background: ${C.tealLight}; border: none; border-radius: 8px; padding: 7px 14px; color: #06121a; font-family: ${FD}; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
         .dc-settle:disabled { opacity: 0.5; cursor: not-allowed; }
+        .dc-sell { background: transparent; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 7px 14px; color: ${C.textSecondary}; font-family: ${FD}; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.15s ${EASE}; }
+        .dc-sell:hover { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
+        .dc-sell:disabled { opacity: 0.5; cursor: not-allowed; }
         .dc-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 4px; background: ${C.border}; outline: none; }
         .dc-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }
         .dc-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }

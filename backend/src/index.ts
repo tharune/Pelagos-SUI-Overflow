@@ -97,11 +97,13 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
 app.use(requestLogger);
 app.use(metricsMiddleware);
 
-// Rate limiting: 100 req/min per IP (general)
+// Rate limiting: 300 req/min per IP (general). Raised from 100 so a busy page
+// (orderbooks + vault prices + balance polling across product tabs) can't 429
+// the wallet-balance fetch and make it read $0.
 // express-rate-limit@^7.5.0 is fully compatible with Express 4 (v8 hangs on localhost).
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 100,
+  limit: 300,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },

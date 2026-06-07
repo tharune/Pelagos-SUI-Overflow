@@ -1203,12 +1203,17 @@ function TrancheBuyPanel({
     mezzanine: 2_600,
     junior: 3_600,
   };
-  const effectiveSlippageBps =
-    order.slippageBps + (order.risk?.marketImpactBps ?? 0);
-  const slippageBlocked =
-    hasAmount && effectiveSlippageBps > SLIPPAGE_BLOCK_BPS;
+  // Block only on GENUINE illiquidity — the live orderbook walk + dealer market
+  // impact. The tail-risk underwriting premium (which dominates `order.slippageBps`
+  // for junior/mezz) is a price the user is allowed to pay for tail leverage, not
+  // a liquidity wall, so it must NOT trip this gate. A small clip ($100) walks
+  // ~20 bps and is always tradeable.
+  const trueImpactBps = basketSlippageBps + (order.risk?.marketImpactBps ?? 0);
+  const slippageBlocked = hasAmount && trueImpactBps > SLIPPAGE_BLOCK_BPS;
+  // A small absolute notional is trivially warehouseable no matter the fraction,
+  // so only gate the warehouse block on meaningfully-sized clips.
   const warehouseBlocked =
-    hasAmount && order.warehouseFraction > WAREHOUSE_BLOCK_FRAC;
+    hasAmount && usdcAmount > 1_000 && order.warehouseFraction > WAREHOUSE_BLOCK_FRAC;
   const feeBlocked =
     hasAmount && order.totalFeeBps > TOTAL_FEE_BLOCK_BPS[selected.kind];
   const liquidityBlocked =
@@ -1298,21 +1303,21 @@ function TrancheBuyPanel({
   }
 
   async function handleRequestSellRfq() {
-    if (!appConnected || sellLots.length === 0 || sellRfqBusy) return;
+    if (!appConnected || !wallet.address || sellRfqBusy) return;
     setSellError(null);
     setSellRfqBusy(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      setSellRfq(
-        sellLots.map((vaultId) => ({
-          vault_id: vaultId,
-          status: "can_execute_onchain",
-          matured: true,
-          indicative_usdc: usdcAmount || selected.marketPrice * 100,
-          indicative_price_pct: 1,
-          onchain_expected_usdc: usdcAmount || selected.marketPrice * 100,
-        } satisfies TrancheSellRfqQuote)),
-      );
+      // Real RFQ: the backend prices each lot through the tranche engine
+      // (quoteTranches — seniority waterfall, MM spread, underwriting + protocol
+      // fees) and returns the on-chain-expected USDC. No more flat 1.0 mock.
+      const resp = await fetchTrancheSellRfq({
+        walletAddress: wallet.address,
+        vaultIds: sellLots,
+      });
+      setSellRfq(resp.quotes);
+      if (resp.quotes.length === 0) {
+        setSellError("No on-chain tranche lots found for this wallet to sell.");
+      }
     } catch (err) {
       if (err instanceof PpnError) {
         setSellError(err.message);
@@ -1343,27 +1348,30 @@ function TrancheBuyPanel({
       // is a full unwind + 5 bps strategy fee + 30 bps vault fee on the
       // basket sleeve. The RFQ response tells us which is which via
       // `matured`.
+      let lastDigest: string | null = null;
+      let proceeds = 0;
       for (const q of executable) {
-        if (q.matured) {
-          await ppnRedeem({ wallet, vaultId: q.vault_id });
-        } else {
-          await ppnCloseEarly({ wallet, vaultId: q.vault_id });
-        }
+        const res = q.matured
+          ? await ppnRedeem({ wallet, vaultId: q.vault_id })
+          : await ppnCloseEarly({ wallet, vaultId: q.vault_id });
+        lastDigest = res.signature ?? lastDigest;
+        proceeds += q.onchain_expected_usdc ?? q.indicative_usdc ?? 0;
       }
       if (IS_SUI) {
         dispatch({
           type: "tranche/redeem",
           bundleId: bundle.id,
           kind: selected.kind,
-          payoutUsdc: 0,
+          payoutUsdc: proceeds,
         });
       }
       const executedIds = new Set(executable.map((q) => q.vault_id));
       setSellLots((prev) => prev.filter((id) => !executedIds.has(id)));
       setSellModalOpen(false);
       setSellRfq(null);
-      setTxStage("idle");
-      setTxSignature(null);
+      // Surface the on-chain sell digest so the explorer link renders after tx.
+      setTxStage("done");
+      setTxSignature(lastDigest);
       void usdc.refresh();
     } catch (err) {
       if (err instanceof PpnError) {
@@ -1549,6 +1557,9 @@ function TrancheBuyPanel({
         >
           <div
             style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
               fontFamily: FM,
               fontSize: 10,
               letterSpacing: "0.14em",
@@ -1557,7 +1568,38 @@ function TrancheBuyPanel({
               fontWeight: 500,
             }}
           >
-            Amount
+            <span>Amount</span>
+            {appConnected && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span>
+                  Balance{" "}
+                  <span style={{ color: C.textSecondary }}>
+                    {liveUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                  </span>
+                </span>
+                {liveUsdc > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(String(Math.floor(Math.min(liveUsdc, capacityUsdc) * 100) / 100))}
+                    style={{
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      border: `0.5px solid ${C.border}`,
+                      background: C.tealBg,
+                      color: C.tealLight,
+                      fontFamily: FM,
+                      fontSize: 9.5,
+                      letterSpacing: "0.08em",
+                      textTransform: "none",
+                      cursor: "pointer",
+                    }}
+                    title={`Max tradeable: ${Math.min(liveUsdc, capacityUsdc).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC`}
+                  >
+                    MAX
+                  </button>
+                )}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <input

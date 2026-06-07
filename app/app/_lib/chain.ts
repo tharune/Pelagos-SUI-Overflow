@@ -12,6 +12,11 @@ export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// suiexplorer.com was sunset; Suiscan is the live explorer (matches the backend).
 export function suiExplorerTxUrl(digest: string): string {
-  return `https://suiexplorer.com/txblock/${digest}?network=${SUI_NETWORK}`;
+  return `https://suiscan.xyz/${SUI_NETWORK}/tx/${digest}`;
+}
+
+export function suiExplorerObjectUrl(id: string): string {
+  return `https://suiscan.xyz/${SUI_NETWORK}/object/${id}`;
 }

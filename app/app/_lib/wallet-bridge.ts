@@ -76,14 +76,19 @@ export function useUsdcBalance() {
     try {
       // Real mUSDC balance of the CONNECTED wallet (not the deployer).
       const res = await fetch(`${BACKEND_URL}/api/dev/balances/${address}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { usdc?: number };
       setState({ uiAmount: Number(data.usdc ?? 0), loading: false, error: null });
     } catch (err) {
-      setState({
-        uiAmount: 0,
+      // KEEP the last-known balance on a transient failure (e.g. an RPC blip or
+      // a rate-limited burst on a busy page) — never flash $0, which would
+      // wrongly trip "Insufficient USDC". A quick retry + the poll self-correct.
+      setState((prev) => ({
+        ...prev,
         loading: false,
         error: err instanceof Error ? err.message : String(err),
-      });
+      }));
+      window.setTimeout(() => void refresh(), 2_500);
     } finally {
       inFlight.current = false;
     }
@@ -91,10 +96,14 @@ export function useUsdcBalance() {
 
   useEffect(() => {
     const initial = window.setTimeout(() => void refresh(), 0);
-    const interval = window.setInterval(() => void refresh(), 15_000);
+    const interval = window.setInterval(() => void refresh(), 8_000);
+    // Re-check when the user returns to the tab (e.g. after signing in-wallet).
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
     };
   }, [refresh]);
 

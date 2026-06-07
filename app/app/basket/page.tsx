@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
-import { Sparkline } from "../_components/charts";
 import { C, FS, FD, FM, EASE, tc, tl } from "../_lib/tokens";
+import { monotonePath } from "../_lib/curve";
 import { BUNDLES, type Bundle } from "../_lib/bundles";
 import type { LiveBasket, LiveMarket, WindowKey } from "../_lib/live-baskets";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
@@ -349,6 +349,112 @@ function BasketSelectorRow({
   );
 }
 
+const TREND_TABS = [
+  { key: "1D", label: "1D" },
+  { key: "7D", label: "7D" },
+  { key: "30D", label: "30D" },
+  { key: "1Y", label: "1Y" },
+] as const;
+type TrendKey = (typeof TREND_TABS)[number]["key"];
+
+function trendXLabels(key: TrendKey): [string, string, string] {
+  return key === "1D" ? ["24h ago", "12h", "now"]
+    : key === "7D" ? ["7d ago", "3d", "now"]
+    : key === "30D" ? ["30d ago", "15d", "now"]
+    : ["1y ago", "6m", "now"];
+}
+
+/**
+ * Basket NAV trend — probability % on the Y-axis, time on the X-axis, with
+ * timeframe tabs (1D pulls 5-min intraday history; 7D/30D/1Y slice the daily
+ * series). NAV is a market probability in [0,1], rendered as a percentage.
+ */
+function BasketTrendChart({
+  dayHistory,
+  history,
+  color,
+}: {
+  dayHistory?: number[];
+  history: number[];
+  color: string;
+}) {
+  const [range, setRange] = useState<TrendKey>("30D");
+  const series = useMemo(() => {
+    if (range === "1D") return dayHistory && dayHistory.length > 2 ? dayHistory : history.slice(-2);
+    if (range === "7D") return history.slice(-7);
+    if (range === "30D") return history.slice(-30);
+    return history;
+  }, [range, dayHistory, history]);
+
+  const W = 600, H = 196, PL = 44, PR = 10, PT = 10, PB = 22;
+  const n = series.length;
+  const lo = Math.min(...series), hi = Math.max(...series);
+  const pad = (hi - lo) * 0.18 || 0.01;
+  const yMin = Math.max(0, lo - pad), yMax = Math.min(1, hi + pad);
+  const sx = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR);
+  const sy = (v: number) => PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
+  const pts = series.map((v, i) => [sx(i), sy(v)] as [number, number]);
+  const line = monotonePath(pts);
+  const area = `${line} L ${sx(n - 1)} ${H - PB} L ${sx(0)} ${H - PB} Z`;
+  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
+  const xLabels = trendXLabels(range);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {TREND_TABS.map((t) => {
+          const on = t.key === range;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setRange(t.key)}
+              style={{
+                padding: "4px 11px",
+                borderRadius: 7,
+                border: `0.5px solid ${on ? C.borderHover : C.border}`,
+                background: on ? C.cardHover : "transparent",
+                color: on ? C.textPrimary : C.textMuted,
+                fontFamily: FM,
+                fontSize: 11,
+                cursor: "pointer",
+                transition: `all 0.15s ${EASE}`,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.55} />
+            <text x={PL - 7} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
+              {(v * 100).toFixed(1)}%
+            </text>
+          </g>
+        ))}
+        <path d={area} fill={color} opacity={0.12} />
+        <path d={line} fill="none" stroke={color} strokeWidth="2" />
+        {[0, 0.5, 1].map((f, i) => (
+          <text
+            key={i}
+            x={PL + f * (W - PL - PR)}
+            y={H - 6}
+            textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
+            fill={C.textMuted}
+            fontFamily={FM}
+            fontSize="9.5"
+          >
+            {xLabels[i]}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function SelectedBasketPanel({
   basket,
   vaultPrice,
@@ -362,10 +468,6 @@ function SelectedBasketPanel({
 }) {
   const color = tc(basket.tier);
   const positive = basket.change >= 0;
-  const chartSeries =
-    basket.dayHistory && basket.dayHistory.length > 1
-      ? basket.dayHistory
-      : basket.history.slice(-90);
   const marketVolume = basket.markets.reduce((sum, market) => sum + market.volumeUsd, 0);
   const topMarkets = basket.markets.slice(0, 6);
 
@@ -383,7 +485,7 @@ function SelectedBasketPanel({
       </div>
 
       <div className="basket-chart">
-        <Sparkline data={chartSeries} color={color} height={188} />
+        <BasketTrendChart dayHistory={basket.dayHistory} history={basket.history} color={color} />
       </div>
 
       <div className="basket-metrics">

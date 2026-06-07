@@ -1486,11 +1486,32 @@ function BuySection({
         >
           <span>Amount</span>
           {connected && (
-            <span>
-              Available{" "}
-              <span style={{ color: C.textSecondary }}>
-                ${stateUsdc.toFixed(2)}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span>
+                Balance{" "}
+                <span style={{ color: C.textSecondary }}>
+                  {stateUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                </span>
               </span>
+              {stateUsdc > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAmount(String(Math.floor(Math.min(stateUsdc, MAX_ORDER_USDC) * 100) / 100))}
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    border: `0.5px solid ${C.border}`,
+                    background: C.tealBg,
+                    color: C.tealLight,
+                    fontFamily: FM,
+                    fontSize: 9.5,
+                    letterSpacing: "0.08em",
+                    cursor: "pointer",
+                  }}
+                >
+                  MAX
+                </button>
+              )}
             </span>
           )}
         </div>

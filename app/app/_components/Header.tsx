@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConnectButton } from "./ConnectButton";
-import { FaucetButton } from "./FaucetButton";
+import { TestnetBadge } from "./TestnetBadge";
 import { C, FD } from "../_lib/tokens";
 import { ThemeToggle } from "../_lib/theme";
 
@@ -122,7 +122,7 @@ export function Header() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
           <ThemeToggle />
-          <FaucetButton />
+          <TestnetBadge />
           <ConnectButton variant="header" />
         </div>
       </header>
@@ -130,7 +130,16 @@ export function Header() {
   );
 }
 
-export function PageFrame({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+export function PageFrame({
+  children,
+  wide = false,
+  zoom,
+}: {
+  children: React.ReactNode;
+  wide?: boolean;
+  /** Optional content scale (e.g. 0.8) for pages that read large at 100%. */
+  zoom?: number;
+}) {
   return (
     <main style={{
       minHeight: "calc(100vh - 56px)",
@@ -140,6 +149,7 @@ export function PageFrame({ children, wide = false }: { children: React.ReactNod
       maxWidth: wide ? 1760 : 1440,
       margin: "0 auto",
       position: "relative",
+      ...(zoom ? ({ zoom } as React.CSSProperties) : {}),
     }}>
       <div style={{
         position: "fixed",

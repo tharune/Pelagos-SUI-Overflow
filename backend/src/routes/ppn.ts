@@ -20,8 +20,42 @@ import {
   VAULT,
 } from '../services/vault';
 import { quoteTranches } from '../services/tranching';
+import { allocateNote } from '../services/ppn-allocator';
 
 const router = Router();
+
+/**
+ * Capital deployment plan for a protected note: floor sleeve (protected vault)
+ * + the risk sleeve split across basket / tranche / distribution by profile.
+ */
+router.post('/allocate', (req: Request, res: Response) => {
+  try {
+    const b = req.body as {
+      profile?: string;
+      amount_usdc?: number;
+      apy?: number;
+      days?: number;
+      basket_label?: string;
+      distribution_label?: string;
+      baskets?: string[];
+      distributions?: string[];
+    };
+    res.json(
+      allocateNote({
+        profile: String(b.profile ?? 'Income'),
+        amountUsdc: Number(b.amount_usdc ?? 0),
+        apy: Number(b.apy ?? 0),
+        days: Number(b.days ?? 30),
+        basketLabel: b.basket_label,
+        distributionLabel: b.distribution_label,
+        baskets: Array.isArray(b.baskets) ? b.baskets.filter(Boolean) : undefined,
+        distributions: Array.isArray(b.distributions) ? b.distributions.filter(Boolean) : undefined,
+      }),
+    );
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
 
 type TrancheKind = 'senior' | 'mezzanine' | 'junior';
 

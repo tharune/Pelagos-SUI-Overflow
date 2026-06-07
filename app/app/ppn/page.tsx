@@ -20,6 +20,8 @@ import {
   ppnDivest,
   ppnCloseEarly,
   fetchPpnPortfolio,
+  fetchNoteAllocation,
+  type NoteAllocation,
   PpnError,
 } from "../_lib/ppn-client";
 import { mergePpnVaults, mergeTranches } from "../_lib/ppn-hydrate";
@@ -193,6 +195,11 @@ function pct(value: number, digits = 1): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
+/** Accent per risk-sleeve product, for the deployment breakdown. */
+function legColor(product: string): string {
+  return product === "basket" ? C.teal : product === "tranche" ? C.tealLight : C.violet;
+}
+
 function shortUsd(value: number): string {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
@@ -238,6 +245,7 @@ export default function PpnPage() {
   const [distributionCandidates, setDistributionCandidates] = useState<DistributionCandidate[]>([]);
   const [distributionLoading, setDistributionLoading] = useState(true);
   const [suiStatus, setSuiStatus] = useState<SuiStatus | null>(null);
+  const [allocation, setAllocation] = useState<NoteAllocation | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setRenderNow(Date.now()), 1000);
@@ -398,6 +406,51 @@ export default function PpnPage() {
   const vaultAtMaturity = vaultAmt * Math.pow(1 + apy / 365, maturityDays);
   const estimatedYield = vaultAtMaturity - vaultAmt;
 
+  // Capital deployment plan from the backend allocator: floor sleeve + the risk
+  // sleeve split across basket / tranche / distribution by strategy profile.
+  const allocAmount = dep > 0 ? netDeposit : selectedStrategy?.suggestedAmount ?? 1000;
+  // Fan the basket sleeve across the strategy's basket + the next-best live
+  // basket of the same tier, and the curve sleeve across its signal + two other
+  // top markets — so deployment is genuinely multi-position, never one market.
+  const deployBaskets = useMemo(() => {
+    const primary = selectedStrategy?.basket?.id;
+    const extras = liveBaskets
+      .map((b) => b.id)
+      .filter((id) => id && id !== primary);
+    return [primary, ...extras].filter(Boolean).slice(0, 2) as string[];
+  }, [selectedStrategy?.basket?.id, liveBaskets]);
+  const deployDistributions = useMemo(() => {
+    const primary = selectedStrategy?.distribution?.title;
+    const extras = distributionCandidates
+      .map((c) => c.title)
+      .filter((t) => t && t !== primary);
+    return [primary, ...extras].filter(Boolean).slice(0, 3) as string[];
+  }, [selectedStrategy?.distribution?.title, distributionCandidates]);
+
+  useEffect(() => {
+    if (!selectedStrategy) return;
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      fetchNoteAllocation({
+        profile: selectedStrategy.profile,
+        amountUsdc: allocAmount,
+        apy,
+        days: maturityDays,
+        baskets: deployBaskets,
+        distributions: deployDistributions,
+      })
+        .then((a) => {
+          if (!cancelled) setAllocation(a);
+        })
+        .catch(() => undefined);
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStrategy?.id, selectedStrategy?.profile, allocAmount, apy, maturityDays, deployBaskets, deployDistributions]);
+
   async function refreshPortfolioAfterWrite() {
     void usdc.refresh();
   }
@@ -530,7 +583,7 @@ export default function PpnPage() {
   return (
     <>
       <Header />
-      <PageFrame wide>
+      <PageFrame wide zoom={0.8}>
         <style>{PPN_CSS}</style>
         <div className="ppn-shell">
           <section className="ppn-hero">
@@ -633,6 +686,48 @@ export default function PpnPage() {
                   <b style={{ width: `${basketPct * 100}%` }} />
                 </div>
           </div>
+
+          {allocation && (
+            <div className="ppn-panel" style={{ marginTop: 12 }}>
+              <div className="ppn-panel-head">
+                <div>
+                  <span>Capital deployment</span>
+                  <h2>Risk sleeve across baskets, tranches &amp; distribution</h2>
+                </div>
+                <strong>{selectedStrategy.profile}</strong>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 18, margin: "12px 0 12px", fontFamily: FM, fontSize: 12, color: C.textSecondary }}>
+                <span>
+                  Floor sleeve <b style={{ color: C.textPrimary }}>{pct(allocation.floor.pct, 1)}</b> · {fmtUsd(allocation.floor.usdc, 2)} → protected vault
+                </span>
+                <span>
+                  Risk sleeve <b style={{ color: C.textPrimary }}>{pct(allocation.risk_sleeve.pct, 1)}</b> · {fmtUsd(allocation.risk_sleeve.usdc, 2)} deployed
+                </span>
+              </div>
+              <div style={{ display: "flex", height: 8, borderRadius: 999, overflow: "hidden", border: `0.5px solid ${C.border}` }}>
+                {allocation.risk_sleeve.legs.map((leg, i) => (
+                  <span key={i} style={{ width: `${leg.pct * 100}%`, background: legColor(leg.product) }} />
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 14 }}>
+                {allocation.risk_sleeve.legs.map((leg, i) => (
+                  <div key={i} style={{ border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: legColor(leg.product) }} />
+                      <span style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: C.textMuted }}>
+                        {leg.product === "tranche" ? `${leg.kind} tranche` : leg.product === "distribution" ? "Distribution" : "Basket"}
+                      </span>
+                    </div>
+                    <div style={{ fontFamily: FD, fontSize: 18, fontWeight: 600, color: C.textPrimary }}>{pct(leg.pct, 0)}</div>
+                    <div style={{ fontFamily: FM, fontSize: 11, color: C.textSecondary, marginTop: 3 }}>{fmtUsd(leg.usdc, 2)}</div>
+                    <div style={{ fontFamily: FS, fontSize: 11.5, color: C.textMuted, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={leg.label}>
+                      {leg.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <section className="ppn-main-grid">
             <div className="ppn-left-stack">

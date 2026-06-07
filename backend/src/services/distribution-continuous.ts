@@ -441,6 +441,10 @@ export interface ContinuousQuote {
   price_impact_bps: number;
   /** Backing-constrained minimum sigma (k^2*sqrt(pi)/b^2) at the live pool. */
   sigma_min: number;
+  /** Largest collateral the pool can back (max payout <= pool, lock <= pool). */
+  max_collateral_usdc: number;
+  /** True when the requested size exceeded the pool and was capped. */
+  capacity_exceeded: boolean;
   quote_model: 'continuous_normal_l2_distribution_amm';
 }
 
@@ -513,6 +517,8 @@ function quoteCore(p: {
     pool_liquidity_usdc: 0, // filled in by quoteContinuous (knows the market's pool)
     price_impact_bps: 0,
     sigma_min: 0,
+    max_collateral_usdc: 0,
+    capacity_exceeded: false,
     quote_model: 'continuous_normal_l2_distribution_amm',
   };
 }
@@ -525,18 +531,33 @@ export function quoteContinuous(args: {
 }): ContinuousQuote & { market_id: string; question: string; unit: string } {
   const market = getContinuousMarket(args.marketId);
   if (!market) throw new Error(`Unknown continuous market: ${args.marketId}`);
-  const core = quoteCore({
-    marketMu: market.mu,
-    marketSigma: market.sigma,
-    targetMu: args.targetMu,
-    targetSigma: args.targetSigma,
-    collateral: args.collateralUsdc,
-  });
-  // Liquidity context, read from the LIVE pool (reflects seeds): price impact
-  // rises with trade-size / backing and falls when liquidity is seeded; sigma_min
-  // is the backing-constrained floor (k^2*sqrt(pi)/b^2) that also falls with
-  // seeding. Informational — the settlement payoff is the clean g(x)-f(x) curve.
   const poolLiquidity = poolBacking(market.id, market.pool_liquidity_usdc, market.sigma);
+
+  const coreOf = (collateral: number) =>
+    quoteCore({
+      marketMu: market.mu,
+      marketSigma: market.sigma,
+      targetMu: args.targetMu,
+      targetSigma: args.targetSigma,
+      collateral,
+    });
+
+  // First pass to read the geometry (max payout scales linearly with size).
+  const probe = coreOf(args.collateralUsdc);
+
+  // AMM solvency cap: the pool must be able to back the worst-case payout. The
+  // position can neither lock more than the pool, nor have a max profit the pool
+  // can't pay. max_profit is linear in collateral, so the cap is a stable bound.
+  const requested = args.collateralUsdc;
+  const profitCap =
+    probe.max_profit_usdc > 0 ? (poolLiquidity * requested) / probe.max_profit_usdc : Infinity;
+  const maxCollateral = Math.max(0, Math.min(poolLiquidity, profitCap));
+  const effective = maxCollateral > 0 ? Math.min(requested, maxCollateral) : requested;
+  const capacityExceeded = effective < requested - 1e-6;
+
+  // Re-quote at the capped size so every dollar figure shown is actually backable.
+  const core = capacityExceeded ? coreOf(effective) : probe;
+
   const sigmaMin = Math.max(poolSigmaMin(market.id, market.pool_liquidity_usdc, market.sigma), market.sigma * 0.02);
   const utilization = core.collateral_required_usdc / (poolLiquidity || 1);
   const priceImpactBps = Math.round(Math.min(2000, 5000 * utilization)); // cap 20%
@@ -545,6 +566,8 @@ export function quoteContinuous(args: {
     pool_liquidity_usdc: Math.round(poolLiquidity),
     price_impact_bps: priceImpactBps,
     sigma_min: Math.round(sigmaMin * 100) / 100,
+    max_collateral_usdc: Math.round(maxCollateral),
+    capacity_exceeded: capacityExceeded,
     market_id: market.id,
     question: market.question,
     unit: market.unit,

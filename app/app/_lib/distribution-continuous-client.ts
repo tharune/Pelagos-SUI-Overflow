@@ -54,6 +54,8 @@ export interface ContinuousQuote {
   pool_liquidity_usdc: number;
   price_impact_bps: number;
   sigma_min: number;
+  max_collateral_usdc: number;
+  capacity_exceeded: boolean;
   quote_model: string;
 }
 

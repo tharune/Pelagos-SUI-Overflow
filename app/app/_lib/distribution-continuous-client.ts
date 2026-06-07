@@ -20,6 +20,13 @@ export interface ContinuousMarket {
   sigma_min: number;
   sigma_max: number;
   step: number;
+  source: "polymarket" | "spot" | "reference";
+  volume_usd: number;
+  category: string;
+  polymarket_url: string | null;
+  pool_liquidity_usdc: number;
+  backing_usdc: number;
+  l2_norm_k: number;
 }
 
 export interface ContinuousQuote {
@@ -44,6 +51,9 @@ export interface ContinuousQuote {
   max_loss_usdc: number;
   expected_value_usdc: number;
   l2_distance: number;
+  pool_liquidity_usdc: number;
+  price_impact_bps: number;
+  sigma_min: number;
   quote_model: string;
 }
 
@@ -103,6 +113,25 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
 
 export function fetchContinuousMarkets(): Promise<{ markets: ContinuousMarket[] }> {
   return jsonGet("/api/distribution/continuous/markets");
+}
+
+/** Seed simulated AMM liquidity into a market's pool. */
+export function seedLiquidity(
+  marketId: string,
+  amountUsdc: number,
+): Promise<{ market_id: string; pool_liquidity_usdc: number; seeded_usdc: number }> {
+  return jsonPost("/api/distribution/continuous/seed-liquidity", {
+    market_id: marketId,
+    amount_usdc: amountUsdc,
+  });
+}
+
+/** Seed a random 5–6 figure position into EVERY market pool at once. */
+export function seedAllPools(): Promise<{
+  count: number;
+  seeded: Array<{ market_id: string; amount_usdc: number; pool_liquidity_usdc: number }>;
+}> {
+  return jsonPost("/api/distribution/continuous/seed-all", {});
 }
 
 export function quoteContinuous(args: {
@@ -168,6 +197,30 @@ export function settleContinuousPosition(args: {
   positionId: string;
 }): Promise<SettleResult> {
   return jsonPost("/api/distribution/continuous/settle", {
+    wallet_address: args.owner,
+    position_id: args.positionId,
+  });
+}
+
+export interface CloseResult {
+  position_id: string;
+  mark_usdc: number;
+  slippage_usdc: number;
+  fee_usdc: number;
+  net_usdc: number;
+  pnl_usdc: number;
+  price_impact_bps: number;
+  close_digest: string | null;
+  explorer_url: string | null;
+}
+
+/** Sell/close a position before settlement — unwind through the AMM (mark
+ * minus maker fee + price-impact slippage), protocol pays the net on-chain. */
+export function closeContinuousPosition(args: {
+  owner: string;
+  positionId: string;
+}): Promise<CloseResult> {
+  return jsonPost("/api/distribution/continuous/close", {
     wallet_address: args.owner,
     position_id: args.positionId,
   });

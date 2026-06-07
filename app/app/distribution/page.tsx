@@ -448,7 +448,7 @@ export default function DistributionPage() {
                       {wallet.connected && usdc.uiAmount > 0 && (
                         <button
                           type="button"
-                          onClick={() => setCollateral(String(Math.floor(usdc.uiAmount * 100) / 100))}
+                          onClick={() => setCollateral(String(Math.floor(Math.min(usdc.uiAmount, market.pool_liquidity_usdc) * 100) / 100))}
                           className="dc-max"
                           title={`Use full balance · ${usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC`}
                         >
@@ -513,6 +513,13 @@ export default function DistributionPage() {
                   <span>pool depth {compact(quote.pool_liquidity_usdc)}</span>
                   <span>price impact {quote.price_impact_bps} bps</span>
                   <span>maker fee {usd(quote.maker_fee_usdc)}</span>
+                </div>
+              )}
+
+              {quote && quote.capacity_exceeded && (
+                <div style={{ marginTop: 10, fontFamily: FM, fontSize: 11.5, color: C.amber }}>
+                  Capped to pool capacity — this market can back at most{" "}
+                  {usd(quote.max_collateral_usdc)}. Your position locks {usd(quote.collateral_required_usdc)}.
                 </div>
               )}
 

@@ -26,19 +26,6 @@ import React, {
 import { INITIAL_USDC } from "./tokens";
 import { BUNDLES, bundleById } from "./bundles";
 import { IS_SUI } from "./chain";
-import type { EvidenceItem } from "./receipts-client";
-
-/**
- * Context key for a position's attached evidence. Keeps the receipt map keyed
- * consistently across the send flow (attach) and the Portfolio (read), without
- * threading a receipts array through every position type.
- */
-export function evidenceKey(
-  contextType: "basket" | "tranche" | "ppn" | "distribution",
-  ...parts: string[]
-): string {
-  return [contextType, ...parts].join(":");
-}
 
 // ---------- Position types ----------
 
@@ -141,12 +128,6 @@ export type SandboxState = {
   ppnVaults: PpnVault[];
   loans: LendingLoan[];
   lend: LendingDeposit | null;
-  /**
-   * Receipts / invoices attached to transactions, keyed by `evidenceKey(...)`.
-   * This is the audit trail the Portfolio renders per position. Files live in
-   * the backend receipt store; here we keep the metadata for fast lookup.
-   */
-  evidence: Record<string, EvidenceItem[]>;
 };
 
 // ---------- Actions ----------
@@ -206,9 +187,7 @@ type Action =
     }
   | { type: "lending/repay"; loanId: string; repaidUsdc: number }
   | { type: "lending/deposit"; amount: number; apy: number }
-  | { type: "lending/withdraw"; amount: number }
-  | { type: "evidence/attach"; key: string; items: EvidenceItem[] }
-  | { type: "evidence/remove"; key: string; id: string };
+  | { type: "lending/withdraw"; amount: number };
 
 // ---------- Reducer ----------
 
@@ -219,7 +198,6 @@ export const initialSandboxState: SandboxState = {
   ppnVaults: [],
   loans: [],
   lend: null,
-  evidence: {},
 };
 
 function reducer(state: SandboxState, action: Action): SandboxState {
@@ -466,25 +444,6 @@ function reducer(state: SandboxState, action: Action): SandboxState {
         usdc: state.usdc + action.amount,
         lend: remainingPrincipal > 0 ? { ...state.lend, amount: remainingPrincipal } : null,
       };
-    }
-
-    case "evidence/attach": {
-      if (action.items.length === 0) return state;
-      const existing = state.evidence[action.key] ?? [];
-      // De-dupe by receipt id so re-hydrates don't double-list.
-      const seen = new Set(existing.map((e) => e.id));
-      const merged = [...existing, ...action.items.filter((e) => !seen.has(e.id))];
-      return { ...state, evidence: { ...state.evidence, [action.key]: merged } };
-    }
-
-    case "evidence/remove": {
-      const existing = state.evidence[action.key];
-      if (!existing) return state;
-      const next = existing.filter((e) => e.id !== action.id);
-      const evidence = { ...state.evidence };
-      if (next.length === 0) delete evidence[action.key];
-      else evidence[action.key] = next;
-      return { ...state, evidence };
     }
 
     default:

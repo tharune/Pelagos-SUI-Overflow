@@ -11,7 +11,6 @@
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
-import { toBase64 } from '@mysten/sui/utils';
 import { getSuiClient, getSigner, signerAddress } from '../predict/sui';
 import { VAULT, vaultConfigured, vaultTarget, shareType, explorerTx } from './config';
 
@@ -124,9 +123,21 @@ export interface PreparedTx {
 async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
   const client = getSuiClient();
   tx.setSender(sender);
-  const bytes = await tx.build({ client });
+  // Return the UNBUILT transaction (serialized JSON, no gas resolved) so the
+  // connected wallet builds it with its OWN gas coin + fresh object versions,
+  // then signs & executes via the standard wallet flow. This is broadly
+  // compatible with EVERY wallet type — seed-phrase, hardware, and zkLogin /
+  // social-login (Slush-with-Google). Previously we sent a fully-built tx,
+  // which zkLogin wallets can't re-process; it failed with a generic empty
+  // error that the wallet surfaced as a misleading "Incorrect password".
+  const serialized = await tx.toJSON();
+  // Validate server-side by building + dry-running a throwaway copy (this
+  // resolves gas just for the simulation; the wallet does its own at sign time).
   let dry: PreparedTx['dry_run'] = { ok: false, status: 'unknown' };
   try {
+    const probe = Transaction.from(serialized);
+    probe.setSender(sender);
+    const bytes = await probe.build({ client });
     const dr = await client.dryRunTransactionBlock({ transactionBlock: bytes });
     const status = dr.effects?.status.status ?? 'unknown';
     const gas = dr.effects?.gasUsed;
@@ -146,7 +157,7 @@ async function buildAndDryRun(tx: Transaction, sender: string): Promise<Prepared
   } catch (e) {
     dry = { ok: false, status: 'dry_run_error', error: (e as Error).message };
   }
-  return { tx_bytes: toBase64(bytes), sender, dry_run: dry };
+  return { tx_bytes: serialized, sender, dry_run: dry };
 }
 
 /**

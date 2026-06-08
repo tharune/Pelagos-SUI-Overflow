@@ -129,6 +129,20 @@ export interface NoteSleeveLeg {
   label: string;
 }
 
+export interface NoteExitLeg {
+  product: "basket" | "tranche" | "distribution" | "floor";
+  label: string;
+  weight: number;
+  fee_bps: number;
+  fee_usdc: number;
+}
+
+export interface NoteExitPlan {
+  blended_fee_bps: number;
+  est_fee_usdc: number;
+  legs: NoteExitLeg[];
+}
+
 export interface NoteAllocation {
   profile: string;
   deposit_usdc: number;
@@ -136,6 +150,7 @@ export interface NoteAllocation {
   maturity_days: number;
   floor: { pct: number; usdc: number; at_maturity_usdc: number };
   risk_sleeve: { pct: number; usdc: number; legs: NoteSleeveLeg[] };
+  exit: NoteExitPlan;
 }
 
 /** Ask the backend allocator how a note's capital deploys across products. */

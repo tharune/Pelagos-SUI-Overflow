@@ -8,7 +8,6 @@ import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
 import { useSandbox, type BasketPosition } from "../_lib/demo-state";
 import { useActiveWalletAddress, useUsdcBalance, useWalletSigner } from "../_lib/wallet-bridge";
-import { shortAddress } from "../_lib/chain";
 import { fetchBasketPortfolio, usePbuBalances } from "../_lib/portfolio-client";
 import { fetchPpnPortfolio, ppnRedeem, PpnError } from "../_lib/ppn-client";
 import { mergePpnVaults, mergeTranches } from "../_lib/ppn-hydrate";
@@ -20,8 +19,6 @@ import {
 } from "../_lib/virtual-positions";
 import { Personalization } from "./_personalization";
 import { History } from "./_history";
-import { AuditTrail } from "../_components/AuditTrail";
-import { fetchEvidenceGrouped } from "../_lib/receipts-client";
 import {
   fetchContinuousPositions,
   type ContinuousPosition,
@@ -47,62 +44,136 @@ function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
   return d.join(" ");
 }
 
+const ACCOUNT_TF = [
+  { key: "1D", label: "1D", drift: 0.004, vol: 0.0018, n: 24, x: ["24h ago", "12h", "now"] },
+  { key: "7D", label: "7D", drift: 0.019, vol: 0.0042, n: 28, x: ["7d ago", "3d", "now"] },
+  { key: "30D", label: "30D", drift: 0.055, vol: 0.0085, n: 30, x: ["30d ago", "15d", "now"] },
+  { key: "1Y", label: "1Y", drift: 0.165, vol: 0.022, n: 48, x: ["1y ago", "6m", "now"] },
+] as const;
+type AccountTfKey = (typeof ACCOUNT_TF)[number]["key"];
+
+// Deterministic hash-noise in [0,1). Stable across renders (no Math.random),
+// so the curve doesn't jitter every time the 1s P&L tick re-renders the page.
+function hashNoise(i: number, seed: number): number {
+  const v = Math.sin(i * 12.9898 + seed * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+// Build the net-value series for a window. The right edge is pinned to the real
+// current value; the left edge sits `drift` below it (a longer window implies
+// more growth). A sin-weighted wobble adds organic movement that vanishes at
+// both anchors, so the endpoints stay exact. Labelled "Illustrative" in the UI
+// because we don't yet persist a real per-account value history.
+function buildValueSeries(value: number, tf: (typeof ACCOUNT_TF)[number]): number[] {
+  if (value <= 0.01) return Array.from({ length: tf.n }, () => 0);
+  const start = value * (1 - tf.drift);
+  const seed = tf.key.length + tf.n;
+  const out: number[] = [];
+  for (let i = 0; i < tf.n; i++) {
+    const t = i / (tf.n - 1);
+    const trend = start + (value - start) * t;
+    const wobble = (hashNoise(i, seed) - 0.5) * 2 * value * tf.vol * Math.sin(t * Math.PI);
+    out.push(Math.max(0, trend + wobble));
+  }
+  out[0] = start;
+  out[out.length - 1] = value;
+  return out;
+}
+
+const fmtAxisUsd = (v: number): string =>
+  v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(0)}`;
+
 function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
-  const width = 520;
-  const height = 128;
-  const padX = 6;
-  const padY = 18;
-  // A funded account with movement gets a real curve; a flat / empty account
-  // gets a calm baseline that reads as "no activity yet" — not a broken line.
-  const hasMotion = value > 0.01 && Math.abs(pnl) >= 0.01;
-  const base = Math.max(value - pnl, 1);
-  const drift = Math.max(Math.abs(pnl), base * 0.012);
-  const values = hasMotion
-    ? [
-        base - drift * 0.85,
-        base - drift * 0.32,
-        base - drift * 0.5,
-        base + pnl * 0.22,
-        base + pnl * 0.5,
-        base + pnl * 0.82,
-        value,
-      ].map((v) => Math.max(0, v))
-    : [value, value, value, value, value, value, value];
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const isFlat = Math.abs(max - min) < 0.0001;
-  const range = Math.max(1, max - min);
-  const x = (index: number) => padX + (index / (values.length - 1)) * (width - padX * 2);
-  // Flat → seat the baseline ~62% down so the gradient reads as a quiet floor.
-  const y = (point: number) => (isFlat ? height * 0.62 : padY + (1 - (point - min) / range) * (height - padY * 2));
-  const pts = values.map((point, index): [number, number] => [x(index), y(point)]);
+  const [tf, setTf] = useState<AccountTfKey>("30D");
+  const cfg = ACCOUNT_TF.find((t) => t.key === tf) ?? ACCOUNT_TF[2];
+  const series = React.useMemo(() => buildValueSeries(value, cfg), [value, cfg]);
+
+  const W = 560, H = 244, PL = 52, PR = 14, PT = 16, PB = 26;
+  const n = series.length;
+  const lo = Math.min(...series), hi = Math.max(...series);
+  const dataSpan = hi - lo;
+  const isFlat = dataSpan < 0.0001;
+  const pad = dataSpan > 0 ? dataSpan * 0.22 : Math.max(value * 0.01, 1);
+  const yMin = Math.max(0, lo - pad), yMax = hi + pad;
+  const sx = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR);
+  const sy = (v: number) => PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
+  const pts = series.map((v, i): [number, number] => [sx(i), sy(v)]);
   const line = smoothLine(pts);
-  const area = `${line} L ${x(values.length - 1).toFixed(1)} ${height} L ${x(0).toFixed(1)} ${height} Z`;
+  const area = `${line} L ${sx(n - 1).toFixed(1)} ${(H - PB).toFixed(1)} L ${sx(0).toFixed(1)} ${(H - PB).toFixed(1)} Z`;
   const stroke = pnl >= 0 ? C.tealLight : C.coral;
   const end = pts[pts.length - 1];
+  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="128" aria-label="Account value trend">
-      <defs>
-        <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.12" : "0.22"} />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#portfolioValueFill)" />
-      <path
-        d={line}
-        fill="none"
-        stroke={stroke}
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeOpacity={isFlat ? 0.7 : 1}
-        style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
-      />
-      <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
-      <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
-    </svg>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 12 }}>
+        {ACCOUNT_TF.map((t) => {
+          const on = t.key === tf;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTf(t.key)}
+              style={{
+                padding: "4px 11px",
+                borderRadius: 7,
+                border: `0.5px solid ${on ? C.borderHover : C.border}`,
+                background: on ? C.cardHover : "transparent",
+                color: on ? C.textPrimary : C.textMuted,
+                fontFamily: FM,
+                fontSize: 11,
+                cursor: "pointer",
+                transition: `all 0.15s ${EASE}`,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} aria-label="Account value trend" style={{ display: "block" }}>
+        <defs>
+          <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.1" : "0.2"} />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} />
+            <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
+              {fmtAxisUsd(v)}
+            </text>
+          </g>
+        ))}
+        <path d={area} fill="url(#portfolioValueFill)" />
+        <path
+          d={line}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeOpacity={isFlat ? 0.7 : 1}
+          style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
+        />
+        <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
+        <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
+        {cfg.x.map((lbl, i) => (
+          <text
+            key={i}
+            x={PL + (i / 2) * (W - PL - PR)}
+            y={H - 6}
+            textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
+            fill={C.textMuted}
+            fontFamily={FM}
+            fontSize="9.5"
+          >
+            {lbl}
+          </text>
+        ))}
+      </svg>
+    </div>
   );
 }
 
@@ -334,13 +405,6 @@ export default function PortfolioPage() {
       fetchContinuousPositions(wallet).then((r) =>
         setDistPositions(Array.isArray(r?.positions) ? r.positions : []),
       ),
-      // Receipts/invoices the wallet attached at send time. Persisted in the
-      // backend store, so the audit trail survives reloads.
-      fetchEvidenceGrouped(wallet).then((grouped) => {
-        for (const [key, items] of Object.entries(grouped)) {
-          dispatch({ type: "evidence/attach", key, items });
-        }
-      }),
     ]);
   }, [appWalletAddress, dispatch]);
 
@@ -520,10 +584,20 @@ export default function PortfolioPage() {
     },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
-  const fundedProductCount = productRows.filter((row) => row.value > 0.000001).length;
-  const accountLabel = walletReady
-    ? `Sui testnet · ${appWalletAddress ? shortAddress(appWalletAddress) : "local signer"}`
-    : "Wallet not connected";
+  // Capital actually put to work (everything that isn't idle cash) as a share
+  // of net account value. More telling than a raw "funded products" count — it
+  // answers how hard the capital is working, and moves as you deploy/redeem.
+  const deployedValue = Math.max(0, displayTotal - liveUsdc);
+  const deployedPct = displayTotal > 0 ? (deployedValue / displayTotal) * 100 : 0;
+  // Open-position count across every product rail: distinct on-chain basket
+  // holdings + risk slices + protected notes + unsettled distribution
+  // positions. A truer "how many things am I holding" than a product-type
+  // count — it grows with each deposit rather than topping out at six.
+  const positionCount =
+    Object.keys(onchainTokensByUuid).length +
+    effectiveTranches.length +
+    effectivePpnVaults.length +
+    effectiveDistPositions.length;
 
   return (
     <>
@@ -541,8 +615,8 @@ export default function PortfolioPage() {
         .portfolio-tab:hover { color: ${C.textPrimary}; }
         .portfolio-tab.active { background: ${C.card}; color: ${C.tealLight}; font-weight: 600; }
         .portfolio-overview {
-          display: grid; grid-template-columns: minmax(360px, 0.82fr) minmax(420px, 1.18fr);
-          gap: 14px; margin-bottom: 18px;
+          display: grid; grid-template-columns: 1fr 1fr;
+          gap: 14px; margin-bottom: 18px; align-items: stretch;
         }
         .portfolio-panel {
           background: ${C.card}; border: 0.5px solid ${C.border}; border-radius: 10px; padding: 22px;
@@ -576,8 +650,7 @@ export default function PortfolioPage() {
         .portfolio-value-chart {
           margin-top: 22px;
           border-top: 0.5px solid ${C.border};
-          padding-top: 14px;
-          opacity: 0.94;
+          padding-top: 16px;
         }
         @media (max-width: 1120px) {
           .portfolio-overview { grid-template-columns: 1fr; }
@@ -648,11 +721,8 @@ export default function PortfolioPage() {
               <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 12 }}>
                 Net account value
               </div>
-              <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: "clamp(42px, 5vw, 66px)", lineHeight: 0.96, letterSpacing: "-0.045em", fontWeight: 600 }}>
+              <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: "clamp(30px, 3.2vw, 44px)", lineHeight: 1.0, letterSpacing: "-0.035em", fontWeight: 600 }}>
                 {fmtUsd(displayTotal, 2)}
-              </div>
-              <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13, marginTop: 12 }}>
-                {accountLabel}
               </div>
               <div className="portfolio-value-chart">
                 <AccountValueChart value={displayTotal} pnl={displayPnl} />
@@ -667,12 +737,12 @@ export default function PortfolioPage() {
                 </div>
               </div>
               <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Funded</div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{fundedProductCount}</div>
+                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Deployed</div>
+                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{deployedPct.toFixed(1)}%</div>
               </div>
               <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Network</div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>Sui</div>
+                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Positions</div>
+                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{positionCount}</div>
               </div>
             </div>
           </div>
@@ -1411,14 +1481,6 @@ export default function PortfolioPage() {
           }
           return rows.map(r => r.el);
         })()}
-
-        {/* Verification & audit trail — receipts / invoices attached to sends. */}
-        {walletReady && (
-          <AuditTrail
-            evidence={state.evidence}
-            onRemove={(key, id) => dispatch({ type: "evidence/remove", key, id })}
-          />
-        )}
         </>
         )}
       </PageFrame>

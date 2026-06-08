@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, tc, tl } from "../_lib/tokens";
@@ -379,29 +379,67 @@ function BasketTrendChart({
   color: string;
 }) {
   const [range, setRange] = useState<TrendKey>("30D");
+  // Measure the SVG wrapper so the chart fills its box EXACTLY. The previous
+  // version set the SVG to width:100% with no height, so the browser sized it
+  // from the viewBox aspect ratio — on a wide panel that made the SVG taller
+  // than the fixed 204px card and it spilled over the metric cards below. By
+  // driving the viewBox off the measured pixel width AND height, the SVG fills
+  // the wrapper 1:1 (no overflow, no distortion) at any panel width.
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [dim, setDim] = useState<{ w: number; h: number }>({ w: 600, h: 150 });
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const w = Math.max(160, Math.floor(e.contentRect.width));
+        const h = Math.max(90, Math.floor(e.contentRect.height));
+        setDim((p) => (p.w === w && p.h === h ? p : { w, h }));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const series = useMemo(() => {
-    if (range === "1D") return dayHistory && dayHistory.length > 2 ? dayHistory : history.slice(-2);
-    if (range === "7D") return history.slice(-7);
-    if (range === "30D") return history.slice(-30);
-    return history;
+    const raw =
+      range === "1D"
+        ? dayHistory && dayHistory.length > 2 ? dayHistory : history.slice(-2)
+        : range === "7D"
+          ? history.slice(-7)
+          : range === "30D"
+            ? history.slice(-30)
+            : history;
+    // Guard against malformed points: a non-finite or out-of-[0,1] value
+    // (NAV is a probability) would scale off the plot box and bleed below
+    // the card. Keep only valid probabilities; fall back to the raw slice
+    // if sanitising leaves too little to draw.
+    const clean = raw.filter((v) => Number.isFinite(v) && v > 0 && v <= 1);
+    return clean.length >= 2 ? clean : raw.length >= 2 ? raw : [raw[0] ?? 0, raw[0] ?? 0];
   }, [range, dayHistory, history]);
 
-  const W = 600, H = 196, PL = 44, PR = 10, PT = 10, PB = 22;
+  const W = dim.w, H = dim.h, PL = 44, PR = 10, PT = 10, PB = 22;
   const n = series.length;
   const lo = Math.min(...series), hi = Math.max(...series);
   const pad = (hi - lo) * 0.18 || 0.01;
   const yMin = Math.max(0, lo - pad), yMax = Math.min(1, hi + pad);
   const sx = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR);
-  const sy = (v: number) => PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
+  // Clamp every plotted y into the plot box so a stray point can never draw
+  // outside it (defence-in-depth alongside the clipPath in the SVG).
+  const sy = (v: number) => {
+    const y = PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
+    return Math.max(PT, Math.min(H - PB, y));
+  };
   const pts = series.map((v, i) => [sx(i), sy(v)] as [number, number]);
   const line = monotonePath(pts);
   const area = `${line} L ${sx(n - 1)} ${H - PB} L ${sx(0)} ${H - PB} Z`;
   const yTicks = [yMax, (yMax + yMin) / 2, yMin];
   const xLabels = trendXLabels(range);
+  const clipId = `bt-clip-${range}`;
 
   return (
-    <div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexShrink: 0 }}>
         {TREND_TABS.map((t) => {
           const on = t.key === range;
           return (
@@ -426,31 +464,46 @@ function BasketTrendChart({
           );
         })}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
-        {yTicks.map((v, i) => (
-          <g key={i}>
-            <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.55} />
-            <text x={PL - 7} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
-              {(v * 100).toFixed(1)}%
-            </text>
+      <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
+          height="100%"
+          preserveAspectRatio="none"
+          style={{ display: "block", position: "absolute", inset: 0 }}
+        >
+          <defs>
+            <clipPath id={clipId}>
+              <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} />
+            </clipPath>
+          </defs>
+          {yTicks.map((v, i) => (
+            <g key={i}>
+              <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.55} vectorEffect="non-scaling-stroke" />
+              <text x={PL - 7} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
+                {(v * 100).toFixed(1)}%
+              </text>
+            </g>
+          ))}
+          <g clipPath={`url(#${clipId})`}>
+            <path d={area} fill={color} opacity={0.12} />
+            <path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
           </g>
-        ))}
-        <path d={area} fill={color} opacity={0.12} />
-        <path d={line} fill="none" stroke={color} strokeWidth="2" />
-        {[0, 0.5, 1].map((f, i) => (
-          <text
-            key={i}
-            x={PL + f * (W - PL - PR)}
-            y={H - 6}
-            textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
-            fill={C.textMuted}
-            fontFamily={FM}
-            fontSize="9.5"
-          >
-            {xLabels[i]}
-          </text>
-        ))}
-      </svg>
+          {[0, 0.5, 1].map((f, i) => (
+            <text
+              key={i}
+              x={PL + f * (W - PL - PR)}
+              y={H - 6}
+              textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
+              fill={C.textMuted}
+              fontFamily={FM}
+              fontSize="9.5"
+            >
+              {xLabels[i]}
+            </text>
+          ))}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -611,7 +664,7 @@ const BASKET_CSS = `
   .basket-nav { text-align: right; display: grid; gap: 3px; }
   .basket-nav strong { font-family: ${FD}; font-size: 30px; line-height: 1; font-weight: 520; font-variant-numeric: tabular-nums; }
   .basket-nav em { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; }
-  .basket-chart { height: 204px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; padding: 8px 10px; display: grid; align-items: center; }
+  .basket-chart { height: 216px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; padding: 10px 12px; overflow: hidden; }
   .basket-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .basket-metric-cell { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; padding: 12px; display: grid; gap: 7px; min-height: 72px; align-content: center; }
   .basket-metric-cell strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; font-weight: 620; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -80,3 +80,7 @@ init-vaults.log
 .claude/
 .distribution-positions.json
 backend/.distribution-positions.json
+
+# Runtime distribution state (regenerated)
+backend/.distribution-positions.json
+backend/.distribution-pools.json

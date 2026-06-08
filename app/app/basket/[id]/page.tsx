@@ -9,9 +9,7 @@ import { C, FS, FD, FM, EASE, tc } from "../../_lib/tokens";
 import { bundleById, type Bundle } from "../../_lib/bundles";
 import type { LiveBasket, LiveMarket, WindowKey } from "../../_lib/live-baskets";
 import { useLiveBaskets } from "../../_lib/use-live-baskets";
-import { useSandbox, evidenceKey } from "../../_lib/demo-state";
-import { EvidenceDropzone } from "../../_components/EvidenceDropzone";
-import { uploadReceipts } from "../../_lib/receipts-client";
+import { useSandbox } from "../../_lib/demo-state";
 import {
   fetchOrderbooks,
   quoteBidSideImpact,
@@ -25,7 +23,8 @@ import {
   useUsdcBalance,
   explorerTxUrl,
 } from "../../_lib/wallet-bridge";
-import { IS_SUI } from "../../_lib/chain";
+import { IS_SUI, friendlyWalletError } from "../../_lib/chain";
+import { ConnectModal } from "@mysten/dapp-kit";
 import {
   depositIntoBundle,
   redeemFromBundle,
@@ -696,11 +695,6 @@ function BasketBuyPanel({
   // Actual tokens from the vault's issue_price_bps, set once prepare resolves.
   // Replaces the pre-estimate (tokensOut) which uses the stale DB NAV.
   const [confirmedTokensOut, setConfirmedTokensOut] = useState<number | null>(null);
-  // Supporting documents (receipts / invoices) the user attaches to this buy.
-  // Uploaded to the receipt store after the on-chain deposit confirms, then
-  // surfaced on the Portfolio as this position's verification / audit trail.
-  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
-  const [evidenceMemo, setEvidenceMemo] = useState<string>("");
 
   // Vault's on-chain issue price, fee, and state — declared here; effect
   // runs after resolvedBundleUuid is declared below.
@@ -951,49 +945,11 @@ function BasketBuyPanel({
           nav: navPrice,
           tokensOut: actualTokens,
         });
-        // Attach any supporting documents to this position's audit trail. The
-        // deposit already succeeded — an upload hiccup must not fail the trade,
-        // so this is best-effort and surfaces only as a non-blocking warning.
-        if (evidenceFiles.length > 0) {
-          try {
-            const items = await uploadReceipts(
-              evidenceFiles,
-              {
-                walletAddress: wallet.address ?? undefined,
-                contextType: "basket",
-                contextId: bundle.id,
-                digest: result.signature,
-              },
-              evidenceMemo.trim() || undefined,
-            );
-            dispatch({
-              type: "evidence/attach",
-              key: evidenceKey("basket", bundle.id),
-              items,
-            });
-            setEvidenceFiles([]);
-            setEvidenceMemo("");
-          } catch (e) {
-            setTxError(
-              `Deposit confirmed, but a document failed to upload: ${(e as Error).message}`,
-            );
-          }
-        }
         void usdc.refresh();
         void pbuBalances.refresh();
       } catch (err) {
         setTxStage("idle");
-        if (err instanceof DepositError) {
-          setTxError(err.message);
-        } else if (err instanceof Error) {
-          setTxError(
-            /user rejected/i.test(err.message)
-              ? "Transaction was rejected in your wallet."
-              : err.message,
-          );
-        } else {
-          setTxError(String(err));
-        }
+        setTxError(err instanceof DepositError ? err.message : friendlyWalletError(err));
       }
     } else {
       if (!canSell) return;
@@ -1021,17 +977,7 @@ function BasketBuyPanel({
         void pbuBalances.refresh();
       } catch (err) {
         setTxStage("idle");
-        if (err instanceof DepositError) {
-          setTxError(err.message);
-        } else if (err instanceof Error) {
-          setTxError(
-            /user rejected/i.test(err.message)
-              ? "Transaction was rejected in your wallet."
-              : err.message,
-          );
-        } else {
-          setTxError(String(err));
-        }
+        setTxError(err instanceof DepositError ? err.message : friendlyWalletError(err));
       }
     }
   }
@@ -1215,6 +1161,7 @@ function BasketBuyPanel({
             bookStatus={bookStatus}
             topLegCount={topLegs.length}
             hasAmount={hasAmount}
+            unitLabel={bundle.id}
           />
         ) : (
           <SellSection
@@ -1233,60 +1180,76 @@ function BasketBuyPanel({
             accent={accent}
             bookStatus={bookStatus}
             topLegCount={topLegs.length}
+            unitLabel={bundle.id}
           />
-        )}
-
-        {/* Brex-style supporting documents — attach receipts or invoices that
-            back this deposit. Optional; becomes the position's audit trail. */}
-        {mode === "buy" && (
-          <div style={{ marginTop: 4 }}>
-            <EvidenceDropzone
-              files={evidenceFiles}
-              onChange={setEvidenceFiles}
-              memo={evidenceMemo}
-              onMemoChange={setEvidenceMemo}
-              disabled={txBusy}
-            />
-          </div>
         )}
 
         {/* Single primary action. Wallet connection is implicit: the
             button triggers the picker only when the user actually tries
             to submit. No "Connect Wallet" label in sight until needed. */}
-        <button
-          type="button"
-          onClick={handlePrimary}
-          disabled={!buttonActive}
-          style={{
-            width: "100%",
-            height: 44,
-            padding: "0 16px",
-            borderRadius: 10,
-            border: "none",
-            background: buttonActive
-              ? `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`
-              : `${accent}22`,
-            color: buttonActive ? "#001814" : C.textMuted,
-            fontFamily: FD,
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-            cursor: buttonActive ? "pointer" : "not-allowed",
-            transition: `transform 0.15s ${EASE}, box-shadow 0.15s ${EASE}`,
-            boxShadow: buttonActive
-              ? `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`
-              : "none",
-          }}
-          onMouseEnter={(e) => {
-            if (!buttonActive) return;
-            (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-          }}
-        >
-          {buttonLabel}
-        </button>
+        {!appConnected ? (
+          // Disconnected: open the wallet picker on click (instead of a silent
+          // no-op). Once connected, the real Buy/Sell button renders.
+          <ConnectModal
+            trigger={
+              <button
+                type="button"
+                style={{
+                  width: "100%",
+                  height: 44,
+                  padding: "0 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`,
+                  color: "#001814",
+                  fontFamily: FD,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  cursor: "pointer",
+                  boxShadow: `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`,
+                }}
+              >
+                Connect a wallet to {mode === "buy" ? "buy" : "sell"}
+              </button>
+            }
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={handlePrimary}
+            disabled={!buttonActive}
+            style={{
+              width: "100%",
+              height: 44,
+              padding: "0 16px",
+              borderRadius: 10,
+              border: "none",
+              background: buttonActive
+                ? `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`
+                : `${accent}22`,
+              color: buttonActive ? "#001814" : C.textMuted,
+              fontFamily: FD,
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              cursor: buttonActive ? "pointer" : "not-allowed",
+              transition: `transform 0.15s ${EASE}, box-shadow 0.15s ${EASE}`,
+              boxShadow: buttonActive
+                ? `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`
+                : "none",
+            }}
+            onMouseEnter={(e) => {
+              if (!buttonActive) return;
+              (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
+            }}
+          >
+            {buttonLabel}
+          </button>
+        )}
 
         {/* Tx result strip: error toast on failure / rejection, or a
             network-aware explorer link on success. We surface the signature
@@ -1424,6 +1387,7 @@ function BasketBuyPanel({
  */
 function BuySection({
   connected,
+  unitLabel,
   amount,
   setAmount,
   usdcAmount,
@@ -1439,6 +1403,7 @@ function BuySection({
   hasAmount,
 }: {
   connected: boolean;
+  unitLabel: string;
   amount: string;
   setAmount: (v: string) => void;
   usdcAmount: number;
@@ -1593,7 +1558,7 @@ function BuySection({
           >
             <span>You receive</span>
             <span style={{ color: accent, fontWeight: 600 }}>
-              {tokensOut.toFixed(2)} PBU units
+              {tokensOut.toFixed(2)} {unitLabel}
             </span>
           </div>
           <div
@@ -1634,6 +1599,7 @@ function BuySection({
  */
 function SellSection({
   connected,
+  unitLabel,
   heldQty,
   avgCost,
   navPrice,
@@ -1650,6 +1616,7 @@ function SellSection({
   topLegCount,
 }: {
   connected: boolean;
+  unitLabel: string;
   heldQty: number;
   avgCost: number;
   navPrice: number;
@@ -1704,7 +1671,7 @@ function SellSection({
             <span>
               Held{" "}
               <span style={{ color: C.textSecondary }}>
-                {heldQty.toFixed(2)} PBU units
+                {heldQty.toFixed(2)} {unitLabel}
               </span>
               {hasPosition && (
                 <span style={{ color: C.textMuted, marginLeft: 8 }}>
@@ -1772,7 +1739,7 @@ function SellSection({
               marginLeft: 4,
             }}
           >
-            PBU
+            {unitLabel}
           </span>
         </div>
       </div>
@@ -2196,6 +2163,11 @@ function DetailChart({
   const last = pts[pts.length - 1];
   const lastVal = data[data.length - 1];
   const gradId = `detail-fill-${color.replace("#", "")}`;
+  // The live-value callout sits in the SAME right-hand gutter as the y-axis
+  // tick labels (both at x ≈ W - padR + 8), so when the current NAV lands on a
+  // gridline value the two numbers stack ("93.9%" over "94.0%"). Compute the
+  // callout's y up front so we can drop any tick label that would collide.
+  const calloutY = Math.max(padT + 10, last.y - 8);
 
   return (
     <>
@@ -2235,9 +2207,11 @@ function DetailChart({
             );
           })}
 
-          {/* y-axis labels */}
+          {/* y-axis labels — skip any that would collide with the live-value
+              callout (same gutter), so "93.9%" and "94.0%" never stack. */}
           {yTicks.map((t, i) => {
             const y = padT + (1 - (t - yMin) / yRange) * plotH;
+            if (Math.abs(y + 3 - (calloutY + 3)) < 12) return null;
             return (
               <text
                 key={`yl-${i}`}
@@ -2291,7 +2265,7 @@ function DetailChart({
           <circle cx={last.x} cy={last.y} r={8} fill={color} opacity={0.18} />
           <text
             x={last.x + 8}
-            y={Math.max(padT + 10, last.y - 8)}
+            y={calloutY}
             fill={color}
             fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
             fontSize={11}

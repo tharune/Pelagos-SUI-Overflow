@@ -3,16 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
-import { fromBase64 } from "@mysten/sui/utils";
-import { suiExplorerTxUrl } from "./chain";
+import { suiExplorerTxUrl, SUI_NETWORK } from "./chain";
 import { BACKEND_URL } from "./tokens";
 
 export interface WalletSigner {
   connected: boolean;
   address: string | null;
-  /** Sign + execute a backend-built transaction (base64 tx bytes) with the
-   *  connected wallet; resolves to the on-chain digest. */
-  signAndExecute: (txBytesB64: string) => Promise<string>;
+  /** Build (in the wallet), sign + execute a backend-prepared UNBUILT
+   *  transaction (serialized JSON) with the connected wallet; resolves to the
+   *  on-chain digest. */
+  signAndExecute: (txJson: string) => Promise<string>;
 }
 
 /**
@@ -24,9 +24,23 @@ export function useWalletSigner(): WalletSigner {
   const { mutateAsync } = useSignAndExecuteTransaction();
 
   const signAndExecute = useCallback(
-    async (txBytesB64: string): Promise<string> => {
-      const tx = Transaction.from(fromBase64(txBytesB64));
-      const res = await mutateAsync({ transaction: tx });
+    async (txJson: string): Promise<string> => {
+      // The backend sends an UNBUILT transaction (serialized JSON). The connected
+      // wallet builds it with its own gas coin, signs, and executes — the
+      // standard dapp-kit flow that works for EVERY wallet type: seed-phrase,
+      // hardware, and zkLogin / social login (Slush-with-Google). Nothing is
+      // pre-built on our side, so no wallet ever has to re-process a fully-built
+      // transaction (the failure mode that broke zkLogin signing).
+      const tx = Transaction.from(txJson);
+      // Pass the chain explicitly (e.g. "sui:testnet"). Some wallets — notably
+      // zkLogin / social-login (Slush-with-Google) — need to be told which chain
+      // to build the gas + sign against; without it their signer can fail with
+      // an opaque error. This also guards against a wallet whose active network
+      // differs from the dApp's.
+      const res = await mutateAsync({
+        transaction: tx,
+        chain: `sui:${SUI_NETWORK}`,
+      });
       return res.digest;
     },
     [mutateAsync],

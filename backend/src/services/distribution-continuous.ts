@@ -18,7 +18,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Transaction } from '@mysten/sui/transactions';
-import { toBase64 } from '@mysten/sui/utils';
 import { getSuiClient, signerAddress } from './predict/sui';
 import { mintMockUsdc } from './mock-usdc';
 import { discoverDistributionCandidates, type DistributionCandidate } from './distribution';
@@ -286,7 +285,30 @@ interface Pool {
   seeded_usdc: number; // additional liquidity seeded this session
   k: number; // fixed L2-norm constant, calibrated at pool creation
 }
-const pools = new Map<string, Pool>();
+
+// Pools are file-backed (alongside positions). Without this, a backend restart
+// would re-seed every pool with a fresh random backing — so a position opened
+// before the restart would unwind (close-before-settle) against a DIFFERENT
+// pool than it was sized against, corrupting the slippage charged on the sell.
+// Persisting the backing + calibrated k keeps both the buy (open/cap) and the
+// sell (close/slippage) sides quoting against the same liquidity across runs.
+const POOL_STORE_FILE = path.join(process.cwd(), '.distribution-pools.json');
+function loadPools(): Map<string, Pool> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(POOL_STORE_FILE, 'utf8')) as Record<string, Pool>;
+    return new Map(Object.entries(raw));
+  } catch {
+    return new Map();
+  }
+}
+const pools = loadPools();
+function savePools(): void {
+  try {
+    fs.writeFileSync(POOL_STORE_FILE, JSON.stringify(Object.fromEntries(pools)));
+  } catch {
+    /* best effort */
+  }
+}
 
 /** Calibrate k so sigma_min(base) == SIGMA_MIN_FRAC * sigma (then it falls as b grows). */
 function calibrateK(base: number, sigma: number): number {
@@ -304,6 +326,7 @@ function ensurePool(id: string, base: number, sigma: number): Pool {
     const total = base + seeded;
     p = { base_usdc: base, seeded_usdc: seeded, k: calibrateK(total, sigma) };
     pools.set(id, p);
+    savePools();
   }
   return p;
 }
@@ -328,6 +351,7 @@ export function seedLiquidity(id: string, amountUsdc: number): { market_id: stri
   const p = pools.get(id) ?? ensurePool(id, 50_000, 1);
   p.seeded_usdc += amount;
   pools.set(id, p);
+  savePools();
   return { market_id: id, pool_liquidity_usdc: p.base_usdc + p.seeded_usdc, seeded_usdc: p.seeded_usdc };
 }
 
@@ -712,16 +736,23 @@ export async function prepareContinuousOpen(args: {
   tx.transferObjects([payment], tx.pure.address(treasury));
   tx.setSender(args.owner);
 
-  const bytes = await tx.build({ client });
+  // Return the UNBUILT transaction (serialized, no gas resolved) so the wallet
+  // builds + signs + executes it itself — broadly compatible with every wallet
+  // type including zkLogin/social (Slush-with-Google). A throwaway build is used
+  // only for the server-side dry-run.
+  const serialized = await tx.toJSON();
   let dry: PreparedOpen['dry_run'] = { ok: false, status: 'unknown' };
   try {
+    const probe = Transaction.from(serialized);
+    probe.setSender(args.owner);
+    const bytes = await probe.build({ client });
     const dr = await client.dryRunTransactionBlock({ transactionBlock: bytes });
     dry = { ok: dr.effects?.status.status === 'success', status: dr.effects?.status.status ?? 'unknown', error: dr.effects?.status.error };
   } catch (e) {
     dry = { ok: false, status: 'dry_run_error', error: (e as Error).message };
   }
 
-  return { tx_bytes: toBase64(bytes), sender: args.owner, collateral_usdc: quote.collateral_required_usdc, treasury, quote, dry_run: dry };
+  return { tx_bytes: serialized, sender: args.owner, collateral_usdc: quote.collateral_required_usdc, treasury, quote, dry_run: dry };
 }
 
 async function digestSucceeded(digest: string): Promise<boolean> {
@@ -877,8 +908,11 @@ export async function closeContinuousPosition(args: { owner: string; positionId:
   const fMass = quote.market_pdf.reduce((s, v) => s + v * dx, 0) || 1;
   const mark = quote.trade_curve.reduce((s, v, i) => s + v * (quote.market_pdf[i] / fMass) * dx, 0);
 
-  // Round-trip AMM cost: price impact vs pool backing + the maker fee.
-  const pool = poolBacking(pos.market_id, 50_000, pos.market_sigma);
+  // Round-trip AMM cost: price impact vs pool backing + the maker fee. Use the
+  // market's real base (and the persisted pool) so the sell quotes against the
+  // SAME liquidity the buy was sized against, even across a backend restart.
+  const mkt = getContinuousMarket(pos.market_id);
+  const pool = poolBacking(pos.market_id, mkt?.pool_liquidity_usdc ?? 50_000, pos.market_sigma);
   const utilization = pos.collateral_usdc / (pool || 1);
   const impactFrac = Math.min(0.2, 0.5 * utilization);
   const slippage = pos.collateral_usdc * impactFrac * 0.5;

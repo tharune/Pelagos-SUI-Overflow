@@ -6,9 +6,10 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Header, PageFrame } from "../../_components/Header";
 import { MetricTile } from "../../_components/charts";
 import { C, FS, FD, FM, EASE, trancheColor, tc, fmtUsd, lightenColor } from "../../_lib/tokens";
-import { IS_SUI } from "../../_lib/chain";
+import { IS_SUI, friendlyWalletError } from "../../_lib/chain";
 import { bundleById, type Bundle } from "../../_lib/bundles";
 import type { LiveBasket, LiveMarket } from "../../_lib/live-baskets";
+import { TIER_TARGET_NAV } from "../../_lib/live-baskets";
 import { useLiveBaskets, formatYieldPct } from "../../_lib/use-live-baskets";
 import { useSandbox } from "../../_lib/demo-state";
 import { mergePpnVaults, mergeTranches } from "../../_lib/ppn-hydrate";
@@ -33,6 +34,7 @@ import {
   useUsdcBalance,
   explorerTxUrl,
 } from "../../_lib/wallet-bridge";
+import { ConnectModal } from "@mysten/dapp-kit";
 import {
   fetchPpnPortfolio,
   fetchTrancheSellRfq,
@@ -365,20 +367,20 @@ export default function TrancheDetail() {
                   sub="ask per token"
                 />
                 <MetricTile
-                  label="FAIR VALUE"
-                  value={`$${selected.fairPrice.toFixed(3)}`}
-                  sub="risk-neutral payoff"
+                  label="MAX PAYOUT"
+                  value="$1.00"
+                  sub="face per unit"
                 />
                 <MetricTile
-                  label="ANY PAYOUT CHANCE"
-                  value={`${(selected.attachProbability * 100).toFixed(1)}%`}
-                  sub="tranche pays anything"
+                  label="UPSIDE"
+                  value={`${(1 / Math.max(selected.marketPrice, 0.0001)).toFixed(1)}x`}
+                  sub="cost to face"
                 />
                 <MetricTile
-                  label="FULL PAYOUT CHANCE"
-                  value={`${(selected.fullPayProbability * 100).toFixed(1)}%`}
-                  color={C.green}
-                  sub="tranche pays face"
+                  label="YIELD"
+                  value={formatYieldPct(selected.expectedApyPct)}
+                  color={selected.expectedApyPct >= 0 ? C.green : C.red}
+                  sub="APY to maturity"
                 />
               </div>
             </div>
@@ -678,31 +680,70 @@ function DistributionChart({
           strokeLinecap="round"
         />
 
-        {/* NAV line — solid teal, only visible element on top of the
-            density besides the curve itself. Dashed attachment lines
-            removed; the slice fills already show the boundaries. */}
-        <line
-          x1={xOf(mu)}
-          x2={xOf(mu)}
-          y1={padT}
-          y2={padT + plotH}
-          stroke={C.tealLight}
-          strokeWidth={1.4}
-          opacity={0.85}
-        />
-
-        {/* NAV label above the line. */}
-        <text
-          x={xOf(mu)}
-          y={padT - 6}
-          textAnchor="middle"
-          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-          fontSize={10}
-          fill={C.tealLight}
-          fontWeight={500}
-        >
-          NAV {(mu * 100).toFixed(1)}%
-        </text>
+        {/* NAV (solid teal — current weighted probability) + tier-target guide
+            (dashed amber — the archetype NAV each tier is pinned to: HIGH 95% /
+            MID 50% / LOW 5%). When the two labels would overlap (NAV and target
+            close together), they separate HORIZONTALLY — the lower value's label
+            extends left, the higher's extends right — so they never stack. */}
+        {(() => {
+          const navX = xOf(mu);
+          const tierTarget = TIER_TARGET_NAV[stats.tier];
+          const targetVal = tierTarget ?? 0;
+          const showTarget = tierTarget != null && targetVal >= lo && targetVal <= hi;
+          const targetX = xOf(targetVal);
+          const close = showTarget && Math.abs(targetX - navX) < 84;
+          const targetLeft = targetX <= navX;
+          const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
+          return (
+            <g>
+              {showTarget && (
+                <>
+                  <line
+                    x1={targetX}
+                    x2={targetX}
+                    y1={padT}
+                    y2={padT + plotH}
+                    stroke={C.amber}
+                    strokeWidth={1.3}
+                    strokeDasharray="4 3"
+                    opacity={0.85}
+                  />
+                  <text
+                    x={close ? (targetLeft ? targetX - 6 : targetX + 6) : targetX}
+                    y={padT - 6}
+                    textAnchor={close ? (targetLeft ? "end" : "start") : "middle"}
+                    fontFamily={mono}
+                    fontSize={10}
+                    fill={C.amber}
+                    fontWeight={500}
+                  >
+                    Target {(targetVal * 100).toFixed(0)}%
+                  </text>
+                </>
+              )}
+              <line
+                x1={navX}
+                x2={navX}
+                y1={padT}
+                y2={padT + plotH}
+                stroke={C.tealLight}
+                strokeWidth={1.4}
+                opacity={0.9}
+              />
+              <text
+                x={close ? (targetLeft ? navX + 6 : navX - 6) : navX}
+                y={padT - 6}
+                textAnchor={close ? (targetLeft ? "start" : "end") : "middle"}
+                fontFamily={mono}
+                fontSize={10}
+                fill={C.tealLight}
+                fontWeight={500}
+              >
+                NAV {(mu * 100).toFixed(1)}%
+              </text>
+            </g>
+          );
+        })()}
 
         {/* X-axis ticks: the visible window edges (lo, hi) plus the two
             attachment points K1 and K2 so the bucket boundaries are
@@ -1282,17 +1323,7 @@ function TrancheBuyPanel({
       // is a no-op. Same fix as handleDeposit on /app/ppn.
     } catch (err) {
       setTxStage("idle");
-      if (err instanceof PpnError) {
-        setTxError(err.message);
-      } else if (err instanceof Error) {
-        setTxError(
-          /user rejected/i.test(err.message)
-            ? "Transaction was rejected in your wallet."
-            : err.message,
-        );
-      } else {
-        setTxError(String(err));
-      }
+      setTxError(err instanceof PpnError ? err.message : friendlyWalletError(err));
     }
   }
 
@@ -1374,23 +1405,15 @@ function TrancheBuyPanel({
       setTxSignature(lastDigest);
       void usdc.refresh();
     } catch (err) {
-      if (err instanceof PpnError) {
-        setSellError(err.message);
-      } else if (err instanceof Error) {
-        setSellError(
-          /user rejected/i.test(err.message)
-            ? "Transaction was rejected in your wallet."
-            : err.message,
-        );
-      } else {
-        setSellError(String(err));
-      }
+      setSellError(err instanceof PpnError ? err.message : friendlyWalletError(err));
     } finally {
       setSellBusy(false);
     }
   }
 
-  const buttonLabel = !hasAmount
+  const buttonLabel = !appConnected
+    ? "Connect a wallet to buy"
+    : !hasAmount
     ? "Enter an amount"
     : liquidityBlocked
       ? `Insufficient liquidity — max $${Math.round(capacityUsdc).toLocaleString()}`
@@ -1407,7 +1430,11 @@ function TrancheBuyPanel({
                 : txStage === "done"
                   ? "✓ Tranche opened"
                   : `Buy ${selected.kind} tranche`;
+  // IMPORTANT: gate on appConnected. Without it the button rendered bright +
+  // clickable while disconnected, but handlePrimary early-returns on !canSubmit
+  // (which requires a connection) — so clicking did nothing, silently.
   const buttonActive =
+    appConnected &&
     hasAmount &&
     !insufficient &&
     !liquidityBlocked &&
@@ -1717,42 +1744,72 @@ function TrancheBuyPanel({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handlePrimary}
-          disabled={!buttonActive}
-          style={{
-            width: "100%",
-            height: 44,
-            padding: "0 14px",
-            borderRadius: 12,
-            border: "none",
-            background: buttonActive
-              ? `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`
-              : `${accent}22`,
-            color: buttonActive ? "#001814" : C.textMuted,
-            fontFamily: FD,
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-            cursor: buttonActive ? "pointer" : "not-allowed",
-            transition: `transform 0.15s ${EASE}, box-shadow 0.15s ${EASE}`,
-            boxShadow: buttonActive
-              ? `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`
-              : "none",
-            textTransform: "capitalize",
-          }}
-          onMouseEnter={(e) => {
-            if (!buttonActive) return;
-            (e.currentTarget as HTMLElement).style.transform =
-              "translateY(-1px)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-          }}
-        >
-          {buttonLabel}
-        </button>
+        {!appConnected ? (
+          // Disconnected: the button OPENS THE WALLET PICKER (dapp-kit's
+          // ConnectModal) instead of silently doing nothing. Works for every
+          // wallet type. Once connected, the real Buy button renders below.
+          <ConnectModal
+            trigger={
+              <button
+                type="button"
+                style={{
+                  width: "100%",
+                  height: 44,
+                  padding: "0 14px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`,
+                  color: "#001814",
+                  fontFamily: FD,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  cursor: "pointer",
+                  boxShadow: `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`,
+                }}
+              >
+                Connect a wallet to buy
+              </button>
+            }
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={handlePrimary}
+            disabled={!buttonActive}
+            style={{
+              width: "100%",
+              height: 44,
+              padding: "0 14px",
+              borderRadius: 12,
+              border: "none",
+              background: buttonActive
+                ? `linear-gradient(135deg, ${accent} 0%, ${accent}dd 100%)`
+                : `${accent}22`,
+              color: buttonActive ? "#001814" : C.textMuted,
+              fontFamily: FD,
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              cursor: buttonActive ? "pointer" : "not-allowed",
+              transition: `transform 0.15s ${EASE}, box-shadow 0.15s ${EASE}`,
+              boxShadow: buttonActive
+                ? `0 10px 24px ${accent}33, inset 0 0 0 1px ${accent}55`
+                : "none",
+              textTransform: "capitalize",
+            }}
+            onMouseEnter={(e) => {
+              if (!buttonActive) return;
+              (e.currentTarget as HTMLElement).style.transform =
+                "translateY(-1px)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
+            }}
+          >
+            {buttonLabel}
+          </button>
+        )}
 
         <button
           type="button"

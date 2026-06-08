@@ -3,7 +3,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, fmtUsd, BACKEND_URL } from "../_lib/tokens";
-import { IS_SUI } from "../_lib/chain";
+import { IS_SUI, friendlyWalletError } from "../_lib/chain";
+import { ConnectModal } from "@mysten/dapp-kit";
 import { BUNDLES, bundleById } from "../_lib/bundles";
 import { useSandbox } from "../_lib/demo-state";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
@@ -412,12 +413,16 @@ export default function PpnPage() {
   // Fan the basket sleeve across the strategy's basket + the next-best live
   // basket of the same tier, and the curve sleeve across its signal + two other
   // top markets — so deployment is genuinely multi-position, never one market.
+  // Pass up to 3 distinct baskets + 3 distribution markets as candidates. The
+  // backend allocator picks 3–9 total positions (baskets + tranche bands +
+  // distribution legs) from these, so feeding it the headroom lets a build
+  // genuinely fan out rather than topping out at one or two markets.
   const deployBaskets = useMemo(() => {
     const primary = selectedStrategy?.basket?.id;
     const extras = liveBaskets
       .map((b) => b.id)
       .filter((id) => id && id !== primary);
-    return [primary, ...extras].filter(Boolean).slice(0, 2) as string[];
+    return [primary, ...extras].filter(Boolean).slice(0, 3) as string[];
   }, [selectedStrategy?.basket?.id, liveBaskets]);
   const deployDistributions = useMemo(() => {
     const primary = selectedStrategy?.distribution?.title;
@@ -485,9 +490,7 @@ export default function PpnPage() {
       }, 1800);
     } catch (err) {
       setTxStage("idle");
-      if (err instanceof PpnError) setTxError(err.message);
-      else if (err instanceof Error) setTxError(/user rejected/i.test(err.message) ? "Transaction was rejected in your wallet." : err.message);
-      else setTxError(String(err));
+      setTxError(err instanceof PpnError ? err.message : friendlyWalletError(err));
     }
   }
 
@@ -506,14 +509,7 @@ export default function PpnPage() {
   }
 
   function handleExitError(rowKey: string, err: unknown) {
-    const message =
-      err instanceof PpnError
-        ? err.message
-        : err instanceof Error
-          ? /user rejected/i.test(err.message)
-            ? "Transaction was rejected in your wallet."
-            : err.message
-          : String(err);
+    const message = err instanceof PpnError ? err.message : friendlyWalletError(err);
     setRedeemError((prev) => ({ ...prev, [rowKey]: message }));
   }
 
@@ -871,6 +867,14 @@ export default function PpnPage() {
                 {[
                   ["Gross collateral", dep > 0 ? fmtUsd(dep, 2) : "-"],
                   ["Open fees", dep > 0 ? fmtUsd(totalOpenFee, 2) : "15 bps"],
+                  // Blended across every product the note unwinds at once —
+                  // floor vault + basket + tranche + distribution legs.
+                  [
+                    "Exit fees · all products",
+                    allocation?.exit
+                      ? `${dep > 0 ? `${fmtUsd(allocation.exit.est_fee_usdc, 2)} · ` : ""}${Math.round(allocation.exit.blended_fee_bps)} bps`
+                      : "blended",
+                  ],
                   ["Net deployed", dep > 0 ? fmtUsd(netDeposit, 2) : "-"],
                   ["Vault principal", dep > 0 ? fmtUsd(vaultAmt, 2) : "-"],
                   ["Basket upside", dep > 0 ? fmtUsd(basketAmt, 2) : "-"],
@@ -883,9 +887,21 @@ export default function PpnPage() {
                 ))}
               </div>
 
-              <button className="ppn-deploy" type="button" onClick={handleDeposit} disabled={deployDisabled}>
-                {deployLabel}
-              </button>
+              {!appConnected ? (
+                // Disconnected: clicking opens the wallet picker rather than
+                // silently failing. The real deploy button renders once connected.
+                <ConnectModal
+                  trigger={
+                    <button className="ppn-deploy" type="button">
+                      Connect a wallet to deploy
+                    </button>
+                  }
+                />
+              ) : (
+                <button className="ppn-deploy" type="button" onClick={handleDeposit} disabled={deployDisabled}>
+                  {deployLabel}
+                </button>
+              )}
               {txError && <div className="ppn-error">{txError}</div>}
               {txSignature && (
                 <a className="ppn-success" href={explorerTxUrl(txSignature)} target="_blank" rel="noopener noreferrer">

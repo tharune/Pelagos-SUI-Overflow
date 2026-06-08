@@ -738,26 +738,28 @@ function synthIntradayHistory(
 
 function synthHistory(finalNav: number, days: number, seedId: string): number[] {
   const rng = seededRng(seedId);
-  const out: number[] = [];
-  // Mean-reverting walk so the series always lands on `finalNav` at the
-  // most-recent point. Band scales with tier so high-tier baskets (0.90)
-  // don't jitter into the low tier's (0.05) territory, and low-tier
-  // baskets stay in a tight probability-space band instead of getting
-  // clipped to the [0.01, 0.99] floor every few steps.
+  // Band scales with tier so high-tier baskets (0.90) don't jitter into the
+  // low tier's (0.05) territory, and low-tier baskets stay in a tight
+  // probability-space band instead of getting clipped to the floor.
   const band = Math.max(0.01, Math.min(0.06, finalNav * 0.12));
-  // Start the walk 1.5× a band away from target so there's actually some
-  // visible drift into `finalNav`, then mean-revert.
-  let v = Math.max(0.005, Math.min(0.995, finalNav + (rng() - 0.5) * band * 1.5));
+  // Walk BACKWARD from the live NAV (anchor first, then reverse) so the
+  // most-recent point is EXACTLY `finalNav` and the series eases into it.
+  // The previous forward walk + hard final-anchor produced an end-of-series
+  // cliff (the walk could be ~0.99 the step before the 0.945 anchor), which
+  // rendered as a vertical drop that bled below the chart. A backward walk
+  // is continuous at the anchor by construction — no cliff. A gentle pull
+  // toward `finalNav` keeps the whole series in a realistic band around the
+  // current level rather than drifting away over 365 steps.
+  const rev: number[] = [Number(finalNav.toFixed(4))];
+  let v = finalNav;
   for (let i = 0; i < days; i++) {
-    const pull = (finalNav - v) * 0.08;
-    const noise = (rng() - 0.5) * band * 0.55;
+    const pull = (finalNav - v) * 0.05;
+    const noise = (rng() - 0.5) * band * 0.5;
     v = Math.max(0.005, Math.min(0.995, v + pull + noise));
-    out.push(Number(v.toFixed(4)));
+    rev.push(Number(v.toFixed(4)));
   }
-  // Anchor the final point exactly at the live NAV so the detail chart's
-  // "current value" marker lines up with the NAV tile above it.
-  out.push(Number(finalNav.toFixed(4)));
-  return out;
+  rev.reverse();
+  return rev;
 }
 
 function formatResolutionDate(daysLeft: number): string {

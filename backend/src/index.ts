@@ -23,7 +23,6 @@ import { hedgeRoutes } from './routes/hedge';
 import portfolioRoutes from './routes/portfolio';
 import vaultRoutes from './routes/vaults';
 import { devRoutes } from './routes/dev';
-import { receiptRoutes } from './routes/receipts';
 import { suiRoutes } from './routes/sui';
 import { predictRoutes } from './routes/predict';
 import { distributionRoutes } from './routes/distribution';
@@ -80,9 +79,7 @@ app.use(cors({
 // NOTE: app.options('*', cors()) removed  -  Express 4.22 path-to-regexp rejects the bare '*' pattern.
 // cors() middleware above still handles preflight automatically.
 
-// 16mb ceiling: receipt/invoice uploads (POST /api/receipts) carry the file as
-// base64, which inflates an 8mb file to ~11mb. Default 100kb would 413 them.
-app.use(express.json({ limit: '16mb' }));
+app.use(express.json());
 
 // Catch malformed JSON bodies  -  express.json() throws SyntaxError via next(err);
 // surface as 400 Bad Request instead of falling through to the 500 handler.
@@ -213,7 +210,6 @@ app.use('/api/hedge', hedgeRoutes);
 app.use('/api/vaults', vaultRoutes);
 app.use('/api/portfolio', portfolioLimiter, portfolioRoutes);
 app.use('/api/dev', devRoutes);
-app.use('/api/receipts', receiptRoutes);
 app.use('/api/sui', suiRoutes);
 app.use('/api/predict', predictRoutes);
 app.use('/api/distribution', distributionRoutes);

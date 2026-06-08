@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { monotonePath } from "../_lib/curve";
-import { suiExplorerTxUrl } from "../_lib/chain";
+import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
+import { ConnectModal } from "@mysten/dapp-kit";
 import { useWalletSigner, useActiveWalletAddress, useUsdcBalance } from "../_lib/wallet-bridge";
 import {
   fetchContinuousMarkets,
@@ -30,6 +31,17 @@ const fmtVal = (unit: string, v: number) =>
 // Compact USD for volume / pool depth: $26.8M, $172.0K.
 const compact = (v: number) =>
   v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`;
+
+// Default trader view: a mild conviction LONG of the market's own forecast —
+// the mean unchanged, the spread tightened ~20% (clamped to the slider range).
+// This makes "buy where we are right now" a real, openable position on load
+// (you're concentrating mass at the current expected outcome). Dragging σ back
+// to exactly the market's σ reaches g == f — the one degenerate, zero-payoff
+// point — and only there does the open button read "move your view off the
+// market". Every other point along the curve is buyable.
+function convictionSigma(m: ContinuousMarket): number {
+  return Math.min(m.sigma_max, Math.max(m.sigma_min, m.sigma * 0.8));
+}
 
 // Clean a market question into a short name for the sidebar.
 function marketName(m: ContinuousMarket): string {
@@ -240,7 +252,7 @@ export default function DistributionPage() {
         if (markets[0]) {
           setMarketId(markets[0].id);
           setMu(markets[0].mu);
-          setSigma(markets[0].sigma);
+          setSigma(convictionSigma(markets[0]));
         }
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -250,7 +262,7 @@ export default function DistributionPage() {
   const selectMarket = useCallback((m: ContinuousMarket) => {
     setMarketId(m.id);
     setMu(m.mu);
-    setSigma(m.sigma);
+    setSigma(convictionSigma(m));
     setQuote(null);
     setResult(null);
     setError(null);
@@ -315,7 +327,7 @@ export default function DistributionPage() {
       refreshPositions();
       usdc.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyWalletError(e));
     } finally {
       setBusy(false);
       setStage(null);
@@ -332,7 +344,7 @@ export default function DistributionPage() {
       refreshPositions();
       usdc.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyWalletError(e));
     } finally {
       setSettling(null);
     }
@@ -349,7 +361,7 @@ export default function DistributionPage() {
       refreshPositions();
       usdc.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyWalletError(e));
     } finally {
       setClosing(null);
     }
@@ -457,8 +469,8 @@ export default function DistributionPage() {
                       )}
                     </div>
                   </div>
-                  <button onClick={() => market && (setMu(market.mu), setSigma(market.sigma))} className="dc-reset">
-                    Reset to market
+                  <button onClick={() => market && (setMu(market.mu), setSigma(convictionSigma(market)))} className="dc-reset">
+                    Reset view
                   </button>
                 </div>
 
@@ -523,9 +535,19 @@ export default function DistributionPage() {
                 </div>
               )}
 
-              <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
-                {busy ? stage ?? "Submitting…" : !wallet.connected ? "Connect wallet to trade" : flat ? "Move your view off the market" : `Open position · lock ${quote ? usd(quote.collateral_required_usdc) : ""}`}
-              </button>
+              {!wallet.connected ? (
+                <ConnectModal
+                  trigger={
+                    <button className="dc-open" style={{ marginTop: 18, cursor: "pointer" }}>
+                      Connect a wallet to trade
+                    </button>
+                  }
+                />
+              ) : (
+                <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
+                  {busy ? stage ?? "Submitting…" : flat ? "Move your view off the market" : `Open position · lock ${quote ? usd(quote.collateral_required_usdc) : ""}`}
+                </button>
+              )}
 
               {result && (
                 <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.green }}>

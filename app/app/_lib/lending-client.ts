@@ -159,7 +159,7 @@ export function useLendingSnapshot(): {
       cancelled = true;
       clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   return { snapshot, loading, error, refresh: load };

@@ -12,7 +12,6 @@ import type { LiveBasket, LiveMarket } from "../../_lib/live-baskets";
 import { TIER_TARGET_NAV } from "../../_lib/live-baskets";
 import { useLiveBaskets, formatYieldPct } from "../../_lib/use-live-baskets";
 import { useSandbox } from "../../_lib/demo-state";
-import { mergePpnVaults, mergeTranches } from "../../_lib/ppn-hydrate";
 import {
   fetchOrderbooks,
   quoteSideImpact,
@@ -36,7 +35,6 @@ import {
 } from "../../_lib/wallet-bridge";
 import { ConnectModal } from "@mysten/dapp-kit";
 import {
-  fetchPpnPortfolio,
   fetchTrancheSellRfq,
   ppnDeposit,
   ppnRedeem,

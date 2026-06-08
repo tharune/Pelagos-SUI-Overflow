@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
-import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
+import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { monotonePath } from "../_lib/curve";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";

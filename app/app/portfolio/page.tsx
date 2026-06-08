@@ -305,27 +305,6 @@ export default function PortfolioPage() {
     (sum, p) => sum + (Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0),
     0,
   );
-  // On-chain NAV lookup for a backend bundle id (UUID). We key `pbuBalances`
-  // off the same UUIDs the backend returns, and the live feed is keyed off
-  // the PBU-TIER-WINDOW name, so we cross-reference via `bundleName`. The
-  // live feed wins when available — falling through to the balance's own
-  // cached NAV and then to the hydrated entry price means a single stale
-  // cell never produces a $0 position.
-  const navForOnchainBundle = React.useCallback(
-    (entry: { bundleId: string; bundleName: string; nav: number }): number => {
-      if (basketState.status === "ok") {
-        const live =
-          basketState.baskets.find((b) => b.id === entry.bundleName) ??
-          basketState.baskets.find((b) => b.id === entry.bundleId);
-        if (live) return live.nav;
-      }
-      const seed = bundleById(entry.bundleName) ?? bundleById(entry.bundleId);
-      if (seed) return seed.nav;
-      return entry.nav;
-    },
-    [basketState],
-  );
-
   // On-chain basket value used in the top-line total. We value each
   // bundle at the wallet's **cost basis** (avgCost × qty) whenever the
   // reducer has a hydrated position for that bundleId, and only fall

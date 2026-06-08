@@ -524,13 +524,13 @@ export default function PpnPage() {
     try {
       for (const id of vaultIds) {
         if (action === "withdraw") {
-          // eslint-disable-next-line no-await-in-loop
+           
           await ppnRedeem({ wallet, vaultId: id });
         } else if (action === "divest") {
-          // eslint-disable-next-line no-await-in-loop
+           
           await ppnDivest({ wallet, vaultId: id });
         } else {
-          // eslint-disable-next-line no-await-in-loop
+           
           await ppnCloseEarly({ wallet, vaultId: id });
         }
       }
@@ -550,7 +550,7 @@ export default function PpnPage() {
       const elapsed = Math.max(0, (renderNow - createdAt) / 86_400_000);
       const daysLeft = Math.max(0, maturityDays - Math.floor(elapsed));
       const vaultIds = note.allVaultIds ?? [note.id];
-      // eslint-disable-next-line no-await-in-loop
+       
       await runExit(note.id, vaultIds, daysLeft <= 0 ? "withdraw" : "close");
     }
   }
@@ -756,7 +756,7 @@ export default function PpnPage() {
                       <span>Score</span>
                       <span>Depth</span>
                     </div>
-                    {(distributionCandidates.length ? distributionCandidates : [null]).slice(0, 5).map((candidate, index) => (
+                    {(distributionCandidates.length ? distributionCandidates : [null]).slice(0, 5).map((candidate) => (
                       <div key={candidate?.id ?? "loading"}>
                         <span>{candidate?.title ?? "Loading markets"}</span>
                         <strong>{candidate ? candidate.launch_score.toFixed(1) : "-"}</strong>

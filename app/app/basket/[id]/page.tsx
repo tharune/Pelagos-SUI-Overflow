@@ -415,8 +415,6 @@ const SELL_ADVERSE_SQRT_K = 220;
 // k = 350 gives that curve when the volume proxy is floored at $100k,
 // which keeps thin baskets from reporting microscopic adverse fees
 // that would be pure arb for bigger tickets.
-const ADVERSE_BPS_BASE = 15;
-const ADVERSE_SQRT_K = 350;
 const ADVERSE_VOLUME_FLOOR = 100_000;
 
 /**

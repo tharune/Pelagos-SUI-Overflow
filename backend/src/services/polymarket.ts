@@ -241,6 +241,14 @@ export async function fetchMarkets(params: {
       if (data.length) marketsCache.set(key, { at: Date.now(), data });
       return data;
     })
+    .catch(() => {
+      // Never fail hard on a relay hiccup (a slow page can still trip the fetch
+      // timeout on a cold cache). Serve the last-good (possibly stale) cache so
+      // the UI keeps showing LIVE baskets instead of dropping to seeded; only
+      // return empty if we've never had a good fetch.
+      const stale = marketsCache.get(key);
+      return stale ? stale.data : [];
+    })
     .finally(() => marketsInFlight.delete(key));
   marketsInFlight.set(key, pending);
   return pending;

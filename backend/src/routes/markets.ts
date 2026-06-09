@@ -116,8 +116,13 @@ router.get('/', async (req: Request, res: Response) => {
     // cap. The full active-market universe is typically <5k, but we leave
     // generous headroom so the frontend can ask for "everything" and let
     // the backend terminate naturally when Gamma returns an empty page.
+    // Cap at 100 (one Gamma page). The Polymarket relay's body-transfer
+    // bandwidth is the bottleneck — larger pulls time out over the relay. 100
+    // top-by-volume markets are enough to build all 9 baskets, and capping here
+    // (rather than only client-side) means any client — including a stale cached
+    // bundle still asking for 1500 — gets the fast cached page instead of a 500.
     const rawLimit = parseInt(req.query.limit as string, 10) || 20;
-    const limit = Math.max(1, Math.min(20000, rawLimit));
+    const limit = Math.max(1, Math.min(100, rawLimit));
     const active = req.query.active !== 'false';
 
     const markets = await fetchMarkets({

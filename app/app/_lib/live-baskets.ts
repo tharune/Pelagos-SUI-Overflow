@@ -212,7 +212,11 @@ const TARGET_COMBOS: Array<[90 | 70 | 50, WindowKey]> = [
 // window) combo can't reach this floor after dedupe, we surface a
 // placeholder card instead. There is NO upper cap on basket size — every
 // non-correlated, liquid candidate that fits the tier is included.
-const MIN_BASKET_LEGS = 10;
+// Minimum legs before a (tier, window) combo counts as a real basket. Kept low
+// so the grid still fills from a THIN live pool (the Polymarket relay caps us at
+// ~100 markets per pull); with a richer pool every basket naturally grows well
+// past this floor since there is no upper cap.
+const MIN_BASKET_LEGS = 4;
 // Liquidity floor per constituent — lifetime Polymarket volume. Raising
 // this above the old $1K floor drops dead / joke / troll markets that
 // would otherwise pass the probability + window filters and dilute the

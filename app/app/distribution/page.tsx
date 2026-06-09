@@ -405,20 +405,25 @@ export default function DistributionPage() {
                       style={{ borderColor: on ? C.tealLight : C.border, background: on ? C.cardHover : "transparent" }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
-                        <span style={{ fontFamily: FD, fontSize: 14, color: C.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: FD, fontSize: 14, color: C.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {marketName(m)}
                         </span>
                         <span
                           style={{
                             flexShrink: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            height: 18,
                             fontFamily: FM,
                             fontSize: 9,
+                            lineHeight: 1,
                             letterSpacing: "0.06em",
                             textTransform: "uppercase",
+                            whiteSpace: "nowrap",
                             color: cat.color,
                             background: `${cat.color}1f`,
                             borderRadius: 999,
-                            padding: "2px 7px",
+                            padding: "0 8px",
                           }}
                         >
                           {cat.label}

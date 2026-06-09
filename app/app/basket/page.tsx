@@ -203,11 +203,11 @@ export default function BasketsPage() {
             <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
           </section>
 
-          {feedStatus === "seed" && (
-            <div className="basket-warning">
-              Market data unavailable. Showing seeded baskets. {feedError}
+          {feedStatus === "seed" && feedError ? (
+            <div className="basket-warning" style={{ display: "none" }}>
+              {feedError}
             </div>
-          )}
+          ) : null}
 
           {feedStatus === "loading" ? (
             <BasketLoading />

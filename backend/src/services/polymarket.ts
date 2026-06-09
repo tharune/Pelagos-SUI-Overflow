@@ -1,4 +1,5 @@
 import { PolymarketMarket, PolymarketEvent } from '../types';
+import { proxiedFetch } from './proxy';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 const CLOB_API = 'https://clob.polymarket.com';
@@ -64,7 +65,7 @@ const POLY_FETCH_HEADERS = {
 async function fetchWithRetry(url: string, retries = 1): Promise<Response | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, {
+      const response = await proxiedFetch(url, {
         headers: POLY_FETCH_HEADERS,
         // Hard timeout: Gamma's deep-offset pages currently hang for tens of
         // seconds. Without this, a single bad page stalls the whole backend.

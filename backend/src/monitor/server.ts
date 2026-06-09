@@ -8,13 +8,14 @@ import { supabase } from '../db/supabase';
 import { getModelManifest } from '../services/correlation';
 import { metrics } from '../services/metrics';
 import { suiStatus } from '../services/sui';
+import { proxiedFetch } from '../services/proxy';
 
 const MONITOR_PORT = parseInt(process.env.MONITOR_PORT || '13102', 10);
 
 async function probePolymarket() {
   const t0 = Date.now();
   try {
-    const resp = await fetch('https://gamma-api.polymarket.com/markets?limit=1');
+    const resp = await proxiedFetch('https://gamma-api.polymarket.com/markets?limit=1');
     return {
       status: resp.ok ? 'ok' : 'error',
       latency_ms: Date.now() - t0,

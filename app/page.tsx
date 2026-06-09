@@ -157,7 +157,7 @@ function CurveTerminal({ candidate, ready }: { candidate: DistributionCandidate 
       <div className="lp-term-head">
         <div>
           <span className="lp-term-eyebrow">Distribution market</span>
-          <strong className="lp-term-name">{candidate?.title ?? "OpenAI IPO · closing market cap"}</strong>
+          <strong className="lp-term-name">{candidate?.title ?? "Sample distribution"}</strong>
         </div>
         <span className="lp-live">
           <i className={isLive ? "is-live" : ""} />
@@ -211,13 +211,6 @@ function CurveTerminal({ candidate, ready }: { candidate: DistributionCandidate 
           </g>
         )}
       </svg>
-
-      <div className="lp-readout">
-        <div><span className="k">Depth</span><span className="v">{shortUsd(candidate?.aggregate_depth_usd ?? 2_400_000)}</span></div>
-        <div><span className="k">Source</span><span className="v">Gamma + CLOB</span></div>
-        <div><span className="k">Quote</span><span className="v">USDC</span></div>
-        <div><span className="k">Bands</span><span className="v">{candidate?.band_count ?? 7}</span></div>
-      </div>
     </div>
   );
 }
@@ -916,14 +909,6 @@ export default function HomePage() {
 
           {/* ---------------- PRODUCT SHOWCASE (scroll-driven) ---------------- */}
           <section className="lp-section" id="products">
-            <div className="lp-head scroll-fade">
-              <div className="lp-eyebrow">Built on the same curve</div>
-              <h2>Three structured products, one probability engine</h2>
-              <p>
-                Distribution markets quote the curve directly, shown live above. These three reshape that
-                same curve into bundled, tranched, and principal-protected payoffs.
-              </p>
-            </div>
             <div className="lp-showcase">
               {SHOWCASE.map((item, i) => (
                 <FeatureRow key={item.id} item={item} index={i} />

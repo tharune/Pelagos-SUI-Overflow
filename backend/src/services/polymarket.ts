@@ -67,9 +67,13 @@ async function fetchWithRetry(url: string, retries = 1): Promise<Response | null
     try {
       const response = await proxiedFetch(url, {
         headers: POLY_FETCH_HEADERS,
-        // Hard timeout: Gamma's deep-offset pages currently hang for tens of
-        // seconds. Without this, a single bad page stalls the whole backend.
-        signal: AbortSignal.timeout(4000),
+        // Hard timeout: Gamma's deep-offset pages can hang for tens of seconds,
+        // and the relay hop adds latency on top. 4s was too tight — it aborted
+        // mid response-body stream over the relay (res.json() threw a
+        // TimeoutError -> HTTP 500). 15s is comfortably under the relay's own
+        // 25s upstream cap. (For relayed requests proxy.ts also enforces its
+        // own 15s budget, so this mainly covers the direct-access path.)
+        signal: AbortSignal.timeout(55000),
       });
       if (response.ok) return response;
       if (response.status >= 500 && attempt < retries) {
@@ -217,7 +221,11 @@ async function fetchMarketsRaw(params: {
 // pages. One fetch (≤60s old) is shared across all callers.
 const marketsCache = new Map<string, { at: number; data: PolymarketMarket[] }>();
 const marketsInFlight = new Map<string, Promise<PolymarketMarket[]>>();
-const MARKETS_CACHE_TTL_MS = 60_000;
+// Long TTL: the relay fetch costs ~40s, so a short TTL would let the cache go
+// stale and force slow re-fetches mid-session. 15 min keeps the live data warm
+// and stable (markets barely move at this granularity); the cron still refreshes
+// in the background.
+const MARKETS_CACHE_TTL_MS = 900_000;
 export async function fetchMarkets(params: {
   limit?: number;
   active?: boolean;

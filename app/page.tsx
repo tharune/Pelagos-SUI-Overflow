@@ -661,7 +661,12 @@ export default function HomePage() {
     };
   }, []);
 
-  const candidate = candidates[0] ?? null;
+  // Prefer a real bell-shaped distribution for the hero: a multi-band market
+  // (price-level / continuous outcome) reads as a normal curve, whereas a
+  // 2-outcome winner market is just two bars. Fall back to the top-ranked
+  // candidate when no multi-band market is live.
+  const candidate =
+    candidates.find((c) => (c.band_count ?? 0) >= 5) ?? candidates[0] ?? null;
   const bestVault = vaults[0] ?? null;
   const net = NOTIONAL * (1 - 0.0042);
   const vaultApy = bestVault?.apy ?? 0.0716;

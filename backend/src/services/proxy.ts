@@ -16,6 +16,13 @@
  * platform `fetch` — no behavior change.
  */
 
+// The relay adds a network hop AND fetches Polymarket itself, so a caller's
+// tight per-request timeout (tuned for DIRECT access — Pelagos uses ~4s) is too
+// aggressive over the relay and trips a `TimeoutError` -> HTTP 500. Relayed
+// requests get their own, longer budget instead (the relay caps its own
+// upstream fetch at 25s, so this stays under that).
+const RELAY_TIMEOUT_MS = 55_000;
+
 function relayTarget(url: string): string | null {
   const relay = process.env.POLYMARKET_RELAY_URL?.trim();
   if (!relay) return null;
@@ -42,6 +49,7 @@ export async function proxiedFetch(url: string, init?: RequestInit): Promise<Res
     console.log('[proxy] Polymarket requests routed via RELAY (POLYMARKET_RELAY_URL)');
     relayLogged = true;
   }
-  const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
-  return fetch(relayed, signal ? { signal } : undefined);
+  // Use a relay-appropriate timeout rather than the caller's tight direct-access
+  // signal — over the relay the original 4s budget trips a TimeoutError.
+  return fetch(relayed, { signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) });
 }

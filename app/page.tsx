@@ -621,8 +621,55 @@ const PIPE: Array<{ name: string; sub: string; Icon: (p: IconProps) => React.Rea
 
 /* ------------------------------------------------------------------ */
 
+/** A live continuous (Normal mu/sigma) forward, used to give the hero chart a
+ *  real bell-shaped distribution when the discrete-market pool has none. */
+type ContForward = { question?: string; underlying?: string; mu: number; sigma: number; volume_usd?: number };
+
+/** Synthesize a DistributionCandidate whose reference_curve is a Normal PDF
+ *  sampled across 7 bands — a clean bell — from a continuous forward market. */
+function bellFromForward(m: ContForward): DistributionCandidate {
+  const BANDS = 7;
+  const K = 2.2;
+  const sigma = m.sigma || Math.max(1e-6, Math.abs(m.mu) * 0.1);
+  const lo = m.mu - K * sigma;
+  const hi = m.mu + K * sigma;
+  const raw = Array.from({ length: BANDS }, (_, i) => {
+    const x = lo + ((hi - lo) * i) / (BANDS - 1);
+    const z = (x - m.mu) / sigma;
+    return Math.exp(-0.5 * z * z);
+  });
+  const sum = raw.reduce((a, b) => a + b, 0) || 1;
+  const curve = raw.map((v) => v / sum);
+  return {
+    id: `cont-${m.question ?? m.underlying ?? "fwd"}`,
+    title: m.question ?? m.underlying ?? "Price distribution",
+    category: "crypto",
+    category_confidence: 1,
+    distribution_fit: "high",
+    outcome_type: "price_level",
+    event_slug: null,
+    end_date_iso: null,
+    days_to_resolution: 7,
+    aggregate_volume_usd: m.volume_usd ?? 0,
+    aggregate_depth_usd: m.volume_usd && m.volume_usd > 0 ? m.volume_usd : 250_000,
+    avg_spread: null,
+    band_count: BANDS,
+    launch_score: 90,
+    launch_quality: "strong",
+    reasons: [],
+    pricing_source: "polymarket_gamma_clob",
+    clob_book_count: BANDS,
+    gamma_liquidity_count: BANDS,
+    bands: [],
+    reference_curve: curve,
+    liquidity_curve: curve,
+    fetched_at: new Date().toISOString(),
+  };
+}
+
 export default function HomePage() {
   const [candidates, setCandidates] = useState<DistributionCandidate[]>([]);
+  const [forward, setForward] = useState<ContForward | null>(null);
   const [vaults, setVaults] = useState<VaultSource[]>([]);
   const [chartReady, setChartReady] = useState(false);
 
@@ -643,6 +690,15 @@ export default function HomePage() {
       .finally(() => {
         if (!cancelled) setChartReady(true);
       });
+    fetch(`${BACKEND_URL}/api/distribution/continuous/markets`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (cancelled || !body) return;
+        const list = (body.markets ?? []) as ContForward[];
+        const best = list.find((m) => Number.isFinite(m.mu) && Number.isFinite(m.sigma) && m.sigma > 0) ?? null;
+        if (best) setForward(best);
+      })
+      .catch(() => {});
     fetch(`${BACKEND_URL}/api/vaults/yields`, { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
@@ -665,8 +721,15 @@ export default function HomePage() {
   // (price-level / continuous outcome) reads as a normal curve, whereas a
   // 2-outcome winner market is just two bars. Fall back to the top-ranked
   // candidate when no multi-band market is live.
+  // Hero distribution: prefer a real multi-band (bell-shaped) discrete market;
+  // otherwise synthesize a clean Normal bell from a live continuous forward
+  // (BTC/ETH price) so the chart always shows a real distribution rather than
+  // the flat two-outcome shape of a winner market.
   const candidate =
-    candidates.find((c) => (c.band_count ?? 0) >= 5) ?? candidates[0] ?? null;
+    candidates.find((c) => (c.band_count ?? 0) >= 5) ??
+    (forward ? bellFromForward(forward) : null) ??
+    candidates[0] ??
+    null;
   const bestVault = vaults[0] ?? null;
   const net = NOTIONAL * (1 - 0.0042);
   const vaultApy = bestVault?.apy ?? 0.0716;

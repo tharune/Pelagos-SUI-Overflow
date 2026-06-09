@@ -5,7 +5,7 @@ import { type PolymarketEvent, type PolymarketMarket } from '../types';
 
 const CLOB_API = 'https://clob.polymarket.com';
 const BOOK_CACHE_TTL_MS = 5_000;
-const CANDIDATE_CACHE_TTL_MS = 45_000;
+const CANDIDATE_CACHE_TTL_MS = 900_000;
 
 // Cap concurrent CLOB /book requests. A single discovery pass can ask for
 // hundreds of order books at once; without a gate that burst exhausts outbound
@@ -573,9 +573,13 @@ export async function discoverDistributionCandidates(params: {
     min_bands: 2,
   };
 
+  // Keep the fetch small: the Polymarket relay's body-transfer bandwidth is the
+  // bottleneck, so a single 100-market page (top by volume) is what completes in
+  // time. Shares the cache key with /api/markets?limit=100 so one relay round
+  // trip serves both the basket grid and distribution discovery.
   const [events, markets] = await Promise.all([
-    fetchEvents({ limit: 250, active: true }),
-    fetchMarkets({ limit: 1200, active: true, closed: false }),
+    fetchEvents({ limit: 100, active: true }),
+    fetchMarkets({ limit: 100, active: true, closed: false }),
   ]);
 
   const fallbackEvents = groupFallbackMarkets(markets);

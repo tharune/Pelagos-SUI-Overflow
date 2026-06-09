@@ -612,9 +612,11 @@ function recenterWeightsToTarget(
  * Returns a flat list of sided candidates: each underlying market yields
  * both its YES and NO candidate legs.
  */
-export async function fetchLiveMarkets(limit = 1_500): Promise<LiveMarket[]> {
-  // 1.5k active markets is ample to build 9 baskets and loads in ~1s; the old
-  // 20k pull paginated Gamma ~40x and routinely timed out -> "seeded" fallback.
+export async function fetchLiveMarkets(limit = 100): Promise<LiveMarket[]> {
+  // The Polymarket relay's body-transfer bandwidth is the bottleneck, so we pull
+  // a single 100-market page (top by volume) — enough to build all 9 baskets via
+  // the Pass-3 rescue, and it shares the backend cache key with distribution
+  // discovery so the relay is hit once. (Larger pulls timed out -> seeded.)
   const url = `${BACKEND_URL}/api/markets?limit=${limit}&active=true`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {

@@ -881,6 +881,34 @@ export function buildLiveBaskets(candidates: LiveMarket[]): BasketSlot[] {
       }
     }
 
+    // Pass 3 (cross-tier rescue): a combo can still starve when earlier,
+    // higher-tier baskets GLOBALLY claimed the underlying markets it needs —
+    // most often LOW-SHORT, whose long-shot legs are exactly the NO sides of
+    // the high-probability short markets that HIGH-SHORT already took (so the
+    // whole LOW-SHORT card was dropping out of the grid). Top up from the FULL
+    // candidate pool, ignoring the cross-tier `claimedUnderlying` claim. The
+    // per-basket underlying/event/topic dedupe below still prevents correlated
+    // legs WITHIN this basket (a market only ever contributes one side here),
+    // so every (tier, window) of the 3×3 grid surfaces a real basket.
+    if (legs.length < MIN_BASKET_LEGS) {
+      const rescue: Array<{ m: LiveMarket; s: number }> = [];
+      for (const m of candidates) {
+        const s = fitScore(m, tier, win);
+        if (s !== null) rescue.push({ m, s });
+      }
+      rescue.sort((a, b) => b.s - a.s);
+      for (const { m } of rescue) {
+        if (takenUnderlying.has(m.underlyingId)) continue;
+        if (m.eventId && takenEvents.has(m.eventId)) continue;
+        if (m.topicKey && takenTopics.has(m.topicKey)) continue;
+        legs.push(m);
+        takenUnderlying.add(m.underlyingId);
+        if (m.eventId) takenEvents.add(m.eventId);
+        if (m.topicKey) takenTopics.add(m.topicKey);
+        if (legs.length >= MIN_BASKET_LEGS) break;
+      }
+    }
+
     if (legs.length < MIN_BASKET_LEGS) {
       out.push({
         kind: "placeholder",

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
+import { proxiedFetch } from './services/proxy';
 import { bundleRoutes } from './routes/bundles';
 import { navRoutes } from './routes/nav';
 import { depositRoutes } from './routes/deposit';
@@ -166,7 +167,7 @@ app.get('/api/health', async (_req, res) => {
   // Check Polymarket API
   try {
     const start = Date.now();
-    const resp = await fetch('https://gamma-api.polymarket.com/markets?limit=1');
+    const resp = await proxiedFetch('https://gamma-api.polymarket.com/markets?limit=1');
     services.polymarket.latency_ms = Date.now() - start;
     if (!resp.ok) {
       services.polymarket.status = 'error';

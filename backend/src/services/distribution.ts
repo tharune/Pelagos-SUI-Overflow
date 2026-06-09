@@ -1,4 +1,5 @@
 import { fetchEvents, fetchMarkets } from './polymarket';
+import { proxiedFetch } from './proxy';
 import { assessQuality, classifyCategory, type Category } from './nlp';
 import { type PolymarketEvent, type PolymarketMarket } from '../types';
 
@@ -238,7 +239,7 @@ async function fetchBook(tokenId: string | null): Promise<CachedBook | null> {
   if (cached && Date.now() - cached.fetched_at < BOOK_CACHE_TTL_MS) return cached;
   await acquireBookSlot();
   try {
-    const response = await fetch(`${CLOB_API}/book?token_id=${encodeURIComponent(tokenId)}`, {
+    const response = await proxiedFetch(`${CLOB_API}/book?token_id=${encodeURIComponent(tokenId)}`, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Mozilla/5.0 (compatible; pelagos-backend/1.0)',

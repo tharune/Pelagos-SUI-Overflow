@@ -11,6 +11,7 @@ import {
 } from '../services/market-filter';
 import { Category } from '../services/nlp';
 import { metrics } from '../services/metrics';
+import { proxiedFetch } from '../services/proxy';
 
 const router = Router();
 
@@ -42,7 +43,7 @@ async function fetchBook(tokenId: string): Promise<CachedBook | null> {
     return cached;
   }
   try {
-    const r = await fetch(`${CLOB_API}/book?token_id=${encodeURIComponent(tokenId)}`, {
+    const r = await proxiedFetch(`${CLOB_API}/book?token_id=${encodeURIComponent(tokenId)}`, {
       headers: { Accept: 'application/json' },
     });
     if (!r.ok) return null;

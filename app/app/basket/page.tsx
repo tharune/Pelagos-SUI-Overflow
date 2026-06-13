@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, tc, tl } from "../_lib/tokens";
@@ -379,6 +379,21 @@ function BasketTrendChart({
   color: string;
 }) {
   const [range, setRange] = useState<TrendKey>("30D");
+  // Size the SVG to its container so it fills the fixed-height .basket-chart box
+  // instead of deriving its height from the width (a fixed viewBox + width:100%
+  // and no height made the chart taller than the box and clip at wider panels).
+  // We measure the rendered width and pin the height.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [boxW, setBoxW] = useState(600);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setBoxW(Math.max(300, Math.round(el.getBoundingClientRect().width)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const series = useMemo(() => {
     if (range === "1D") return dayHistory && dayHistory.length > 2 ? dayHistory : history.slice(-2);
     if (range === "7D") return history.slice(-7);
@@ -386,7 +401,7 @@ function BasketTrendChart({
     return history;
   }, [range, dayHistory, history]);
 
-  const W = 600, H = 196, PL = 44, PR = 10, PT = 10, PB = 22;
+  const W = boxW, H = 152, PL = 44, PR = 10, PT = 10, PB = 22;
   const n = series.length;
   const lo = Math.min(...series), hi = Math.max(...series);
   const pad = (hi - lo) * 0.18 || 0.01;
@@ -400,7 +415,7 @@ function BasketTrendChart({
   const xLabels = trendXLabels(range);
 
   return (
-    <div>
+    <div ref={wrapRef}>
       <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
         {TREND_TABS.map((t) => {
           const on = t.key === range;
@@ -426,7 +441,7 @@ function BasketTrendChart({
           );
         })}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: "block" }}>
         {yTicks.map((v, i) => (
           <g key={i}>
             <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.55} />

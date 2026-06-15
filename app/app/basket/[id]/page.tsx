@@ -33,7 +33,8 @@ import {
   DepositError,
 } from "../../_lib/deposit-client";
 import { usePbuBalances } from "../../_lib/portfolio-client";
-import { groupVirtualByUiBundle } from "../../_lib/virtual-positions";
+import { groupVirtualByUiBundle, clearVirtualPositionsByUiBundleId } from "../../_lib/virtual-positions";
+import { MmDeskBid } from "../../_components/MmDeskBid";
 import { fetchVaultPrice } from "../../../lib/api";
 
 type ResolvedBasket =
@@ -1233,6 +1234,26 @@ function BasketBuyPanel({
             accent={accent}
             bookStatus={bookStatus}
             topLegCount={topLegs.length}
+          />
+        )}
+
+        {/* Secondary-market exit: the protocol market-maker quotes a simulated
+            bid (per-product spread below par) for the held position; accepting
+            it records the exit to History. No on-chain MM rail on Sui. */}
+        {mode === "sell" && (
+          <MmDeskBid
+            productType="basket"
+            bundleId={bundle.id}
+            walletAddress={activeAddress || null}
+            sizeUsdc={heldQty}
+            disabled={!appConnected}
+            onSold={() => {
+              if (activeAddress && resolvedBundleUuid) {
+                clearVirtualPositionsByUiBundleId(activeAddress, resolvedBundleUuid, bundle.id);
+              }
+              setSellQtyInput("");
+              void usdc.refresh();
+            }}
           />
         )}
 

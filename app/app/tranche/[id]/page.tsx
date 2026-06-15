@@ -9,6 +9,7 @@ import { C, FS, FD, FM, EASE, trancheColor, tc, fmtUsd, lightenColor } from "../
 import { IS_SUI } from "../../_lib/chain";
 import { bundleById, type Bundle } from "../../_lib/bundles";
 import type { LiveBasket, LiveMarket } from "../../_lib/live-baskets";
+import { TIER_TARGET_NAV } from "../../_lib/live-baskets";
 import { useLiveBaskets, formatYieldPct } from "../../_lib/use-live-baskets";
 import { useSandbox } from "../../_lib/demo-state";
 import { mergePpnVaults, mergeTranches } from "../../_lib/ppn-hydrate";
@@ -22,7 +23,6 @@ import {
   computeBasketStats,
   quoteTranchesFromStats,
   quoteTrancheOrder,
-  betaShapeMatching,
   type BasketStats,
   type TrancheQuote,
   type TrancheKind,
@@ -365,20 +365,20 @@ export default function TrancheDetail() {
                   sub="ask per token"
                 />
                 <MetricTile
-                  label="FAIR VALUE"
-                  value={`$${selected.fairPrice.toFixed(3)}`}
-                  sub="risk-neutral payoff"
+                  label="MAX PAYOUT"
+                  value="$1.00"
+                  sub="face per unit"
                 />
                 <MetricTile
-                  label="ANY PAYOUT CHANCE"
-                  value={`${(selected.attachProbability * 100).toFixed(1)}%`}
-                  sub="tranche pays anything"
+                  label="UPSIDE"
+                  value={`${(1 / Math.max(selected.marketPrice, 0.0001)).toFixed(1)}x`}
+                  sub="cost to face"
                 />
                 <MetricTile
-                  label="FULL PAYOUT CHANCE"
-                  value={`${(selected.fullPayProbability * 100).toFixed(1)}%`}
-                  color={C.green}
-                  sub="tranche pays face"
+                  label="YIELD"
+                  value={formatYieldPct(selected.expectedApyPct)}
+                  color={selected.expectedApyPct >= 0 ? C.green : C.red}
+                  sub="APY to maturity"
                 />
               </div>
             </div>
@@ -514,30 +514,30 @@ function DistributionChart({
   const plotW = Math.max(1, W - padL - padR);
   const plotH = Math.max(1, H - padT - padB);
 
-  // Beta(α,β) shape whose first two moments match the basket. The
-  // Normal approximation we used previously produces the same bell
-  // shape for every basket since its tail always extends; Beta is
-  // bounded to [0,1] and bends correctly toward the mean.
-  const shape = betaShapeMatching(mu, Math.max(1e-6, sigma));
+  // Render a moment-matched NORMAL (Gaussian) density — a smooth hump centred at
+  // μ with spread σ, clipped to the plot window. We previously used a moment-
+  // matched Beta, but Beta turns boundary-lopsided for extreme baskets: it
+  // diverges to ∞ at x=0 for a low-probability basket (μ≈3% → a 1px spike + flat
+  // line) and crams against x=1 for a high-probability one (μ≈94% → a curve
+  // mashed into the right edge). A clipped Normal stays smooth and FILLS the
+  // window for every basket while still encoding the basket's real (μ, σ).
+  const shape = (x: number) =>
+    Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
 
-  // Sample 400 points across the full axis so the skew on HIGH / LOW
-  // baskets renders smoothly.
+  // Sample across the window. A Gaussian's peak is at μ with no boundary
+  // singularity, so the global max IS the true peak — normalise by it directly.
   const N = 400;
-  const pts: Array<{ x: number; y: number; val: number }> = [];
+  const pts: Array<{ x: number; y: number; val: number; d: number }> = [];
   let maxD = 0;
   for (let i = 0; i <= N; i++) {
     const val = lo + (span * i) / N;
     const d = shape(val);
-    pts.push({
-      x: padL + (plotW * i) / N,
-      y: 0,
-      val,
-    });
+    pts.push({ x: padL + (plotW * i) / N, y: 0, val, d });
     if (d > maxD) maxD = d;
   }
+  const normDenom = Math.max(1e-9, maxD);
   for (const p of pts) {
-    const d = shape(p.val);
-    p.y = padT + (1 - d / Math.max(1e-9, maxD)) * plotH;
+    p.y = padT + (1 - Math.min(1, p.d / normDenom)) * plotH;
   }
 
   // Convert an outcome value to an x-coordinate in the plot.
@@ -599,7 +599,7 @@ function DistributionChart({
             textTransform: "uppercase",
           }}
         >
-          Outcome distribution · Beta(α, β) moment-matched
+          Outcome distribution · Normal moment-matched
         </span>
         <span
           style={{
@@ -678,31 +678,70 @@ function DistributionChart({
           strokeLinecap="round"
         />
 
-        {/* NAV line — solid teal, only visible element on top of the
-            density besides the curve itself. Dashed attachment lines
-            removed; the slice fills already show the boundaries. */}
-        <line
-          x1={xOf(mu)}
-          x2={xOf(mu)}
-          y1={padT}
-          y2={padT + plotH}
-          stroke={C.tealLight}
-          strokeWidth={1.4}
-          opacity={0.85}
-        />
-
-        {/* NAV label above the line. */}
-        <text
-          x={xOf(mu)}
-          y={padT - 6}
-          textAnchor="middle"
-          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-          fontSize={10}
-          fill={C.tealLight}
-          fontWeight={500}
-        >
-          NAV {(mu * 100).toFixed(1)}%
-        </text>
+        {/* NAV (solid teal — current weighted probability) + tier-target guide
+            (dashed amber — the archetype NAV each tier is pinned to: HIGH 95% /
+            MID 50% / LOW 5%). When the two labels would overlap they separate
+            HORIZONTALLY — the lower value's label extends left, the higher's
+            extends right — so they never stack. */}
+        {(() => {
+          const navX = xOf(mu);
+          const tierTarget = TIER_TARGET_NAV[stats.tier];
+          const targetVal = tierTarget ?? 0;
+          const showTarget = tierTarget != null && targetVal >= lo && targetVal <= hi;
+          const targetX = xOf(targetVal);
+          const close = showTarget && Math.abs(targetX - navX) < 84;
+          const targetLeft = targetX <= navX;
+          const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
+          return (
+            <g>
+              {showTarget && (
+                <>
+                  <line
+                    x1={targetX}
+                    x2={targetX}
+                    y1={padT}
+                    y2={padT + plotH}
+                    stroke={C.amber}
+                    strokeWidth={1.3}
+                    strokeDasharray="4 3"
+                    opacity={0.85}
+                  />
+                  <text
+                    x={close ? (targetLeft ? targetX - 6 : targetX + 6) : targetX}
+                    y={padT - 6}
+                    textAnchor={close ? (targetLeft ? "end" : "start") : "middle"}
+                    fontFamily={mono}
+                    fontSize={10}
+                    fill={C.amber}
+                    fontWeight={500}
+                  >
+                    Target {(targetVal * 100).toFixed(0)}%
+                  </text>
+                </>
+              )}
+              <line
+                x1={navX}
+                x2={navX}
+                y1={padT}
+                y2={padT + plotH}
+                stroke={C.tealLight}
+                strokeWidth={1.4}
+                opacity={0.9}
+              />
+              <text
+                x={close ? (targetLeft ? navX + 6 : navX - 6) : navX}
+                y={padT - 6}
+                textAnchor={close ? (targetLeft ? "start" : "end") : "middle"}
+                fontFamily={mono}
+                fontSize={10}
+                fill={C.tealLight}
+                fontWeight={500}
+              >
+                NAV {(mu * 100).toFixed(1)}%
+              </text>
+            </g>
+          );
+        })()}
 
         {/* X-axis ticks: the visible window edges (lo, hi) plus the two
             attachment points K1 and K2 so the bucket boundaries are

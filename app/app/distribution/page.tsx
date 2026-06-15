@@ -31,6 +31,17 @@ const fmtVal = (unit: string, v: number) =>
 const compact = (v: number) =>
   v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`;
 
+// Default trader view: a mild conviction LONG of the market's own forecast —
+// the mean unchanged, the spread tightened ~20% (clamped to the slider range).
+// This makes "buy where we are right now" a real, openable position on load
+// (you're concentrating mass at the current expected outcome). Dragging σ back
+// to exactly the market's σ reaches g == f — the one degenerate, zero-payoff
+// point — and only there does the open button read "move your view off the
+// market". Every other point along the curve is buyable.
+function convictionSigma(m: ContinuousMarket): number {
+  return Math.min(m.sigma_max, Math.max(m.sigma_min, m.sigma * 0.8));
+}
+
 // Clean a market question into a short name for the sidebar.
 function marketName(m: ContinuousMarket): string {
   const q = m.question.replace(/\?+$/, "").trim();
@@ -56,9 +67,24 @@ function categoryMeta(c: string): { label: string; color: string } {
 }
 
 // ---------------------------------------------------------------------------
+/** Normal probability density — mirrors the backend quoteCore so the live chart
+ *  matches the authoritative quote. */
+function normalPdf(x: number, mu: number, sigma: number): number {
+  const s = Math.max(sigma, 1e-9);
+  const z = (x - mu) / s;
+  return Math.exp(-0.5 * z * z) / (s * Math.sqrt(2 * Math.PI));
+}
+
+/** Just the fields DistChart renders — lets us feed it a locally-computed,
+ *  fully-live frame instead of the debounced backend quote. */
+type ChartData = Pick<
+  ContinuousQuote,
+  "x" | "market_pdf" | "target_pdf" | "trade_curve" | "market_mu" | "target_mu" | "unit"
+>;
+
 // Chart: the two continuous Normal curves (market f vs your view g) + payoff.
 // ---------------------------------------------------------------------------
-function DistChart({ quote }: { quote: ContinuousQuote }) {
+function DistChart({ quote }: { quote: ChartData }) {
   const W = 760;
   const HP = 210; // distributions panel
   const HB = 96; // payoff panel
@@ -240,7 +266,7 @@ export default function DistributionPage() {
         if (markets[0]) {
           setMarketId(markets[0].id);
           setMu(markets[0].mu);
-          setSigma(markets[0].sigma);
+          setSigma(convictionSigma(markets[0]));
         }
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -250,7 +276,7 @@ export default function DistributionPage() {
   const selectMarket = useCallback((m: ContinuousMarket) => {
     setMarketId(m.id);
     setMu(m.mu);
-    setSigma(m.sigma);
+    setSigma(convictionSigma(m));
     setQuote(null);
     setResult(null);
     setError(null);
@@ -278,6 +304,42 @@ export default function DistributionPage() {
       if (quoteTimer.current) window.clearTimeout(quoteTimer.current);
     };
   }, [market, mu, sigma, collateral]);
+
+  // Fully-local live chart frame. The backend quote is debounced (network), and
+  // its grid expands to include your view — so driving the chart off it makes the
+  // axis, market curve f, and guide lines snap only on pause. Instead we replicate
+  // the backend quoteCore chart math here (grid + densities + L2 payoff) so the
+  // whole frame moves continuously as you drag. Priced $ numbers still come from
+  // the debounced quote.
+  const displayQuote = useMemo<ChartData | null>(() => {
+    if (!market) return null;
+    const muM = market.mu;
+    const sigM = Math.max(market.sigma, 1e-9);
+    const muT = mu;
+    const sigT = Math.max(sigma, 1e-9);
+    // Grid spans ±4σ of whichever of market / your-view reaches furthest, floored
+    // at 0 for non-negative markets — identical to the backend, so the curve stays
+    // framed as it slides to either end of the slider range.
+    let lo = Math.min(muM - 4 * sigM, muT - 4 * sigT);
+    const hi = Math.max(muM + 4 * sigM, muT + 4 * sigT);
+    if (muM > 0 && muT > 0) lo = Math.max(lo, 0);
+    const N = 121;
+    const dx = (hi - lo) / (N - 1) || 1;
+    const x = Array.from({ length: N }, (_, i) => lo + i * dx);
+    const market_pdf = x.map((xi) => normalPdf(xi, muM, sigM));
+    const rawG = x.map((xi) => normalPdf(xi, muT, sigT));
+    // Payoff shape = L2-normalized g − L2-normalized f (matches backend trade_curve).
+    const l2 = (a: number[]) => Math.max(Math.sqrt(a.reduce((s, v) => s + v * v * dx, 0)), 1e-9);
+    const fU = market_pdf.map((v) => v / l2(market_pdf));
+    const gU = rawG.map((v) => v / l2(rawG));
+    const trade_curve = gU.map((v, i) => v - fU[i]);
+    // Display-only cap: keep a very narrow conviction from dwarfing f's auto-scale.
+    const peakF = Math.max(...market_pdf, 1e-12);
+    const peakG = Math.max(...rawG, 1e-12);
+    const gScale = peakG > 4 * peakF ? (4 * peakF) / peakG : 1;
+    const target_pdf = rawG.map((v) => v * gScale);
+    return { x, market_pdf, target_pdf, trade_curve, market_mu: muM, target_mu: muT, unit: market.unit };
+  }, [market, mu, sigma]);
 
   // Positions for the active wallet.
   const refreshPositions = useCallback(() => {
@@ -376,7 +438,7 @@ export default function DistributionPage() {
 
         <div className="dc-grid">
           {/* ---- left: market list + your view controls ---- */}
-          <aside style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <aside style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
             <div style={PANEL}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <div className="dc-cap">Markets · top liquidity</div>
@@ -393,7 +455,7 @@ export default function DistributionPage() {
                       style={{ borderColor: on ? C.tealLight : C.border, background: on ? C.cardHover : "transparent" }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
-                        <span style={{ fontFamily: FD, fontSize: 14, color: C.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: FD, fontSize: 14, color: C.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {marketName(m)}
                         </span>
                         <span
@@ -457,8 +519,8 @@ export default function DistributionPage() {
                       )}
                     </div>
                   </div>
-                  <button onClick={() => market && (setMu(market.mu), setSigma(market.sigma))} className="dc-reset">
-                    Reset to market
+                  <button onClick={() => market && (setMu(market.mu), setSigma(convictionSigma(market)))} className="dc-reset">
+                    Reset view
                   </button>
                 </div>
 
@@ -497,7 +559,7 @@ export default function DistributionPage() {
                   </div>
                 )}
               </div>
-              {quote ? <DistChart quote={quote} /> : <div style={{ height: 300 }} />}
+              {displayQuote ? <DistChart quote={displayQuote} /> : <div style={{ height: 300 }} />}
             </div>
 
             <div style={PANEL}>
@@ -526,6 +588,12 @@ export default function DistributionPage() {
               <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
                 {busy ? stage ?? "Submitting…" : !wallet.connected ? "Connect wallet to trade" : flat ? "Move your view off the market" : `Open position · lock ${quote ? usd(quote.collateral_required_usdc) : ""}`}
               </button>
+
+              {wallet.connected && quote && !flat && usdc.uiAmount < quote.collateral_required_usdc && (
+                <div style={{ marginTop: 12, fontFamily: FM, fontSize: 11.5, color: C.amber }}>
+                  Need {usd(quote.collateral_required_usdc)} test mUSDC to open — you have {usd(usdc.uiAmount)}.
+                </div>
+              )}
 
               {result && (
                 <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.green }}>
@@ -623,9 +691,9 @@ export default function DistributionPage() {
         .dc-grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 30px; align-items: start; }
         @media (max-width: 900px) { .dc-grid { grid-template-columns: 1fr; } }
         .dc-cap { font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: ${C.textMuted}; }
-        .dc-market-scroll { display: grid; gap: 8px; margin-top: 12px; max-height: 296px; overflow-y: auto; padding-right: 2px; scrollbar-width: none; -ms-overflow-style: none; }
+        .dc-market-scroll { display: grid; gap: 8px; margin-top: 12px; max-height: 296px; overflow-y: auto; overflow-x: hidden; padding-right: 2px; scrollbar-width: none; -ms-overflow-style: none; }
         .dc-market-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
-        .dc-market { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 12px 14px; border: 0.5px solid ${C.border}; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color 0.15s ${EASE}, background 0.15s ${EASE}; }
+        .dc-market { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; padding: 12px 14px; border: 0.5px solid ${C.border}; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color 0.15s ${EASE}, background 0.15s ${EASE}; }
         .dc-market:hover { border-color: ${C.borderHover}; }
         .dc-num { width: 100%; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 10px 12px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; outline: none; }
         .dc-num:focus { border-color: ${C.tealLight}; }

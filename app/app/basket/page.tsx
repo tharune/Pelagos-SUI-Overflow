@@ -414,7 +414,7 @@ function BasketTrendChart({
     // (NAV is a probability) would scale off the plot box and bleed below
     // the card. Keep only valid probabilities; fall back to the raw slice
     // if sanitising leaves too little to draw.
-    const clean = raw.filter((v) => Number.isFinite(v) && v > 0 && v <= 1);
+    const clean = raw.filter((v) => Number.isFinite(v) && v >= 0 && v <= 1);
     return clean.length >= 2 ? clean : raw.length >= 2 ? raw : [raw[0] ?? 0, raw[0] ?? 0];
   }, [range, dayHistory, history]);
 

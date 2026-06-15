@@ -47,62 +47,166 @@ function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
   return d.join(" ");
 }
 
-function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
-  const width = 520;
-  const height = 128;
-  const padX = 6;
-  const padY = 18;
-  // A funded account with movement gets a real curve; a flat / empty account
-  // gets a calm baseline that reads as "no activity yet" — not a broken line.
-  const hasMotion = value > 0.01 && Math.abs(pnl) >= 0.01;
-  const base = Math.max(value - pnl, 1);
-  const drift = Math.max(Math.abs(pnl), base * 0.012);
-  const values = hasMotion
-    ? [
-        base - drift * 0.85,
-        base - drift * 0.32,
-        base - drift * 0.5,
-        base + pnl * 0.22,
-        base + pnl * 0.5,
-        base + pnl * 0.82,
-        value,
-      ].map((v) => Math.max(0, v))
-    : [value, value, value, value, value, value, value];
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const isFlat = Math.abs(max - min) < 0.0001;
-  const range = Math.max(1, max - min);
-  const x = (index: number) => padX + (index / (values.length - 1)) * (width - padX * 2);
-  // Flat → seat the baseline ~62% down so the gradient reads as a quiet floor.
-  const y = (point: number) => (isFlat ? height * 0.62 : padY + (1 - (point - min) / range) * (height - padY * 2));
-  const pts = values.map((point, index): [number, number] => [x(index), y(point)]);
+const DAY_MS = 86_400_000;
+const ACCOUNT_TF = [
+  { key: "1D", label: "1D", ms: DAY_MS, n: 24, x: ["24h ago", "12h", "now"] },
+  { key: "7D", label: "7D", ms: 7 * DAY_MS, n: 28, x: ["7d ago", "3d", "now"] },
+  { key: "30D", label: "30D", ms: 30 * DAY_MS, n: 30, x: ["30d ago", "15d", "now"] },
+  { key: "1Y", label: "1Y", ms: 365 * DAY_MS, n: 48, x: ["1y ago", "6m", "now"] },
+] as const;
+type AccountTfKey = (typeof ACCOUNT_TF)[number]["key"];
+
+// A real net-value timeline is event-driven: it only moves when money actually
+// moves (realized P&L from a settle/redeem) or as a yield position accrues. We
+// reconstruct it from those real events instead of fabricating a price wobble.
+type ValueEvent = { t: number; delta: number };          // realized P&L, at its tx time
+type ValueAccrual = { startMs: number; ratePerDay: number; maxDays: number };
+
+function accruedBy(accruals: ValueAccrual[], tMs: number): number {
+  let s = 0;
+  for (const a of accruals) {
+    const days = Math.min(Math.max(0, (tMs - a.startMs) / DAY_MS), a.maxDays);
+    s += a.ratePerDay * days;
+  }
+  return s;
+}
+
+// True net-value series for a window. The right edge is the live value; walking
+// back from it we undo realized P&L booked after each sample and the yield
+// accrued since it — so the curve is flat where nothing happened (no fake wobble)
+// and steps / slopes exactly where real events occurred. The pre-funding ramp is
+// intentionally omitted (we anchor to the current funded value).
+function buildValueSeries(
+  value: number,
+  tf: (typeof ACCOUNT_TF)[number],
+  events: ValueEvent[],
+  accruals: ValueAccrual[],
+  nowMs: number,
+): number[] {
+  const start = nowMs - tf.ms;
+  const accruedNow = accruedBy(accruals, nowMs);
+  const out: number[] = [];
+  for (let i = 0; i < tf.n; i++) {
+    const t = start + (tf.ms * i) / (tf.n - 1);
+    const realizedAfter = events.reduce((s, e) => (e.t > t ? s + e.delta : s), 0);
+    out.push(Math.max(0, value - (accruedNow - accruedBy(accruals, t)) - realizedAfter));
+  }
+  out[tf.n - 1] = value;
+  return out;
+}
+
+const fmtAxisUsd = (v: number): string =>
+  v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(0)}`;
+
+function AccountValueChart({
+  value,
+  pnl,
+  events,
+  accruals,
+  nowMs,
+}: {
+  value: number;
+  pnl: number;
+  events: ValueEvent[];
+  accruals: ValueAccrual[];
+  nowMs: number;
+}) {
+  const [tf, setTf] = useState<AccountTfKey>("1D");
+  const cfg = ACCOUNT_TF.find((t) => t.key === tf) ?? ACCOUNT_TF[2];
+  const series = React.useMemo(
+    () => buildValueSeries(value, cfg, events, accruals, nowMs),
+    [value, cfg, events, accruals, nowMs],
+  );
+
+  const W = 560, H = 244, PL = 52, PR = 14, PT = 16, PB = 26;
+  const n = series.length;
+  const lo = Math.min(...series), hi = Math.max(...series);
+  const dataSpan = hi - lo;
+  const isFlat = dataSpan < 0.0001;
+  const pad = dataSpan > 0 ? dataSpan * 0.22 : Math.max(value * 0.01, 1);
+  const yMin = Math.max(0, lo - pad), yMax = hi + pad;
+  const sx = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR);
+  const sy = (v: number) => PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
+  const pts = series.map((v, i): [number, number] => [sx(i), sy(v)]);
   const line = smoothLine(pts);
-  const area = `${line} L ${x(values.length - 1).toFixed(1)} ${height} L ${x(0).toFixed(1)} ${height} Z`;
+  const area = `${line} L ${sx(n - 1).toFixed(1)} ${(H - PB).toFixed(1)} L ${sx(0).toFixed(1)} ${(H - PB).toFixed(1)} Z`;
   const stroke = pnl >= 0 ? C.tealLight : C.coral;
   const end = pts[pts.length - 1];
+  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="128" aria-label="Account value trend">
-      <defs>
-        <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.12" : "0.22"} />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#portfolioValueFill)" />
-      <path
-        d={line}
-        fill="none"
-        stroke={stroke}
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeOpacity={isFlat ? 0.7 : 1}
-        style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
-      />
-      <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
-      <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
-    </svg>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 12 }}>
+        {ACCOUNT_TF.map((t) => {
+          const on = t.key === tf;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTf(t.key)}
+              style={{
+                padding: "4px 11px",
+                borderRadius: 7,
+                border: `0.5px solid ${on ? C.borderHover : C.border}`,
+                background: on ? C.cardHover : "transparent",
+                color: on ? C.textPrimary : C.textMuted,
+                fontFamily: FM,
+                fontSize: 11,
+                cursor: "pointer",
+                transition: `all 0.15s ${EASE}`,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} aria-label="Account value trend" style={{ display: "block" }}>
+        <defs>
+          <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.1" : "0.2"} />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} />
+            <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
+              {fmtAxisUsd(v)}
+            </text>
+          </g>
+        ))}
+        <path d={area} fill="url(#portfolioValueFill)" />
+        <path
+          d={line}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeOpacity={isFlat ? 0.7 : 1}
+          style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
+        />
+        <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
+        <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
+        {cfg.x.map((lbl, i) => (
+          <text
+            key={i}
+            x={PL + (i / 2) * (W - PL - PR)}
+            y={H - 6}
+            textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
+            fill={C.textMuted}
+            fontFamily={FM}
+            fontSize="9.5"
+          >
+            {lbl}
+          </text>
+        ))}
+      </svg>
+      <div style={{ fontFamily: FM, fontSize: 9, color: C.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right", marginTop: 2 }}>
+        Live · realized P&L + yield accrual
+      </div>
+    </div>
   );
 }
 
@@ -309,6 +413,40 @@ export default function PortfolioPage() {
   const displayPnl = walletReady
     ? onchainBasketPnl + ppnAccruedYield + trancheAccruedYield
     : 0;
+
+  // Real, timestamped inputs for the net-value chart (no fabricated history):
+  //  - realized P&L from settled distribution positions, booked at settle time;
+  //  - linear yield accrual from PPN + tranche positions (same math as the
+  //    headline ppn/trancheAccruedYield above), so the curve's right edge agrees
+  //    with the live total.
+  const valueEvents = React.useMemo<ValueEvent[]>(() => {
+    const evs: ValueEvent[] = [];
+    for (const p of distPositions) {
+      if (!p.settled || !p.settled_at) continue;
+      const payoff = Number.isFinite(p.payoff_usdc as number)
+        ? (p.payoff_usdc as number)
+        : (Number(p.net_usdc) || 0) - (Number(p.collateral_usdc) || 0);
+      if (Number.isFinite(payoff) && Math.abs(payoff) > 1e-9) evs.push({ t: p.settled_at, delta: payoff });
+    }
+    return evs;
+  }, [distPositions]);
+  const valueAccruals = React.useMemo<ValueAccrual[]>(() => {
+    const acc: ValueAccrual[] = [];
+    for (const v of effectivePpnVaults) {
+      const principal = Number.isFinite(v.principal) ? v.principal : 0;
+      const apy = Number.isFinite(v.apy) ? v.apy : 0;
+      const maxDays = Number.isFinite(v.maturityDays) ? (v.maturityDays as number) : 0;
+      const startMs = Number.isFinite(v.createdAt) ? (v.createdAt as number) : renderNow;
+      if (principal > 0 && apy > 0) acc.push({ startMs, ratePerDay: principal * (apy / 100 / 365), maxDays });
+    }
+    for (const p of effectiveTranches) {
+      if (p.apy == null || p.createdAt == null || p.maturityDays == null) continue;
+      const principal = p.qty * p.avgCost;
+      if (principal > 0 && p.apy > 0)
+        acc.push({ startMs: p.createdAt, ratePerDay: principal * (p.apy / 100 / 365), maxDays: p.maturityDays });
+    }
+    return acc;
+  }, [effectivePpnVaults, effectiveTranches, renderNow]);
 
   // Hydrate basket positions from Supabase whenever the wallet connects
   // or changes. The reducer is in-memory only, so without this the portfolio
@@ -520,7 +658,9 @@ export default function PortfolioPage() {
     },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
-  const fundedProductCount = productRows.filter((row) => row.value > 0.000001).length;
+  // Share of net account value actually deployed into products (vs sitting in USDC).
+  const deployedValue = Math.max(0, displayTotal - liveUsdc);
+  const deployedPct = displayTotal > 0 ? (deployedValue / displayTotal) * 100 : 0;
   const accountLabel = walletReady
     ? `Sui testnet · ${appWalletAddress ? shortAddress(appWalletAddress) : "local signer"}`
     : "Wallet not connected";
@@ -655,7 +795,7 @@ export default function PortfolioPage() {
                 {accountLabel}
               </div>
               <div className="portfolio-value-chart">
-                <AccountValueChart value={displayTotal} pnl={displayPnl} />
+                <AccountValueChart value={displayTotal} pnl={displayPnl} events={valueEvents} accruals={valueAccruals} nowMs={renderNow} />
               </div>
             </div>
 
@@ -667,8 +807,8 @@ export default function PortfolioPage() {
                 </div>
               </div>
               <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Funded</div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{fundedProductCount}</div>
+                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Deployed</div>
+                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{deployedPct.toFixed(1)}%</div>
               </div>
               <div>
                 <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Network</div>

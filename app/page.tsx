@@ -516,6 +516,59 @@ function ProtectedViz({ caption }: { caption: string }) {
   );
 }
 
+/* Distribution Markets — you don't bet a single yes/no point, you trade a whole
+   continuous view of where a number lands. Two bell curves over the same outcome
+   axis: the market's implied distribution (muted) and your sharper view (bold),
+   with your μ marker and the ±σ band you're trading. */
+function DistributionViz({ caption }: { caption: string }) {
+  const baseY = cPlotB;
+  const span = cPlotW;
+  const N = 72;
+  const gauss = (muFrac: number, sigFrac: number, peakY: number): Array<[number, number]> => {
+    const pts: Array<[number, number]> = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const z = (t - muFrac) / sigFrac;
+      const dens = Math.exp(-0.5 * z * z);
+      pts.push([cPlotL + t * span, baseY - dens * (baseY - peakY)]);
+    }
+    return pts;
+  };
+  const market = gauss(0.44, 0.22, cPlotT + 92);
+  const view = gauss(0.58, 0.13, cPlotT + 12);
+  const muX = cPlotL + 0.58 * span;
+  const sigLo = cPlotL + (0.58 - 0.13) * span;
+  const sigHi = cPlotL + (0.58 + 0.13) * span;
+  const fillId = "dist-fill";
+  const areaD = `${smoothPath(view)} L ${view[view.length - 1][0].toFixed(1)} ${baseY} L ${view[0][0].toFixed(1)} ${baseY} Z`;
+  return (
+    <svg viewBox={`0 0 ${CW} ${CH}`} className="feat-chart" role="img" aria-label={caption}>
+      <defs>
+        <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.2" />
+          <stop offset="100%" stopColor={C.tealLight} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {/* outcome axis */}
+      <line x1={cPlotL} x2={cPlotR} y1={baseY} y2={baseY} stroke={C.border} strokeWidth="1" />
+      {/* the ±σ band you're trading */}
+      <rect x={sigLo} y={cPlotT} width={sigHi - sigLo} height={baseY - cPlotT} fill={C.tealLight} fillOpacity="0.05" />
+      {/* your μ */}
+      <line x1={muX} x2={muX} y1={cPlotT} y2={baseY} stroke={C.tealLight} strokeWidth="1.5" strokeOpacity="0.5" strokeDasharray="5 5" className="feat-dash" />
+      <text x={muX} y={cPlotT - 6} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9" letterSpacing="0.1em">YOUR μ</text>
+      {/* market-implied distribution (muted) */}
+      <path d={smoothPath(market)} fill="none" stroke={C.tealLight} strokeWidth="1.8" strokeOpacity="0.3" strokeLinecap="round" strokeLinejoin="round" className="feat-line" pathLength={1} />
+      {/* your sharper view (bold + area) */}
+      <path d={areaD} fill={`url(#${fillId})`} className="feat-area" />
+      <path d={smoothPath(view)} fill="none" stroke={C.tealLight} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="feat-line" style={{ animationDelay: "0.18s" }} pathLength={1} />
+      {/* σ ticks */}
+      <text x={sigLo} y={baseY + 16} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5">μ−σ</text>
+      <text x={sigHi} y={baseY + 16} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5">μ+σ</text>
+      <text x={(cPlotL + cPlotR) / 2} y={CH - 9} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5" letterSpacing="0.05em">{caption}</text>
+    </svg>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 
 type SurfaceId = "distribution" | "basket" | "risk" | "ppn";
@@ -580,6 +633,17 @@ const SHOWCASE: Showcase[] = [
     caption: "Note floored at 95% while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor (95%)", dashed: true, op: 0.75 }],
   },
+  {
+    id: "distribution",
+    eyebrow: "Curve trade",
+    title: "Distribution Markets",
+    href: "/app/distribution",
+    Icon: IconCurve,
+    lead: "Trade your whole view of where a number lands — a continuous curve, not a single yes/no.",
+    specs: ["Set your own μ and σ", "Trade your curve against the market's", "Continuous payout, settles on Sui"],
+    caption: "Your sharper view vs the market's implied distribution",
+    legend: [{ name: "Your view" }, { name: "Market", op: 0.3 }, { name: "μ", dashed: true, op: 0.6 }],
+  },
 ];
 
 function FeatureRow({ item, index }: { item: Showcase; index: number }) {
@@ -593,6 +657,7 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
         {item.id === "basket" && <BasketChart caption={item.caption} />}
         {item.id === "risk" && <WaterfallViz caption={item.caption} />}
         {item.id === "ppn" && <ProtectedViz caption={item.caption} />}
+        {item.id === "distribution" && <DistributionViz caption={item.caption} />}
         <div className="feat-legend">
           {item.legend.map((l) => (
             <span key={l.name}>
@@ -796,12 +861,14 @@ export default function HomePage() {
 
           /* ---- flow pipeline (connected schematic) ---- */
           .lp-pipe { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; margin-top: 56px; position: relative; }
-          .lp-pipe::before { content: ""; position: absolute; top: 25px; left: 12%; right: 12%; height: 1px; background: linear-gradient(90deg, ${C.tealLight}00, ${C.tealLight}5a 12%, ${C.tealLight}28 88%, ${C.tealLight}00); }
-          .pipe-stage { position: relative; }
+          /* connector runs through the node-row centre (node sits below the index eyebrow). */
+          .lp-pipe::before { content: ""; position: absolute; top: 55px; left: 12%; right: 12%; height: 1px; background: linear-gradient(90deg, ${C.tealLight}00, ${C.tealLight}5a 12%, ${C.tealLight}28 88%, ${C.tealLight}00); }
+          .pipe-stage { position: relative; display: flex; flex-direction: column; align-items: flex-start; }
+          /* step index — left-aligned eyebrow above the node, so number / node / name / sub all share one left edge. */
+          .pipe-idx { display: block; height: 14px; line-height: 14px; margin-bottom: 16px; color: ${C.tealLight}; opacity: 0.8; font-family: ${FM}; font-size: 12px; letter-spacing: 0.24em; }
           .pipe-node { position: relative; z-index: 1; width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; border: 0.5px solid ${C.tealLight}40; background: ${C.surface}; color: ${C.tealLight}; box-shadow: 0 0 0 6px ${C.bg}, 0 8px 22px ${C.tealLight}14; }
           .pipe-name { color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; margin-top: 20px; }
           .pipe-sub { color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.04em; margin-top: 7px; }
-          .pipe-idx { position: absolute; top: 0; right: 0; color: ${C.textMuted}; opacity: 0.55; font-family: ${FM}; font-size: 11px; letter-spacing: 0.1em; }
 
           /* ---- closing (single spec-sheet panel) ---- */
           .lp-close { display: grid; grid-template-columns: 0.86fr 1.14fr; border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.cardGradient}; overflow: hidden; }
@@ -941,10 +1008,10 @@ export default function HomePage() {
             <div className="lp-pipe">
               {PIPE.map((p, i) => (
                 <div className="pipe-stage" key={p.name}>
+                  <span className="pipe-idx">0{i + 1}</span>
                   <div className="pipe-node"><p.Icon size={19} /></div>
                   <div className="pipe-name">{p.name}</div>
                   <div className="pipe-sub">{p.sub}</div>
-                  <span className="pipe-idx">0{i + 1}</span>
                 </div>
               ))}
             </div>

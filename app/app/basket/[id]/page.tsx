@@ -1672,7 +1672,11 @@ function SellSection({
   topLegCount: number;
 }) {
   const hasPosition = heldQty > 0;
-  const unrealized = hasPosition ? heldQty * (navPrice - avgCost) : 0;
+  // Only show unrealized PnL when we actually have a cost basis. A real on-chain
+  // deposit has no in-session avgCost (avgCost === 0), and `heldQty * navPrice`
+  // would then render the WHOLE position value as a bogus gain.
+  const hasCostBasis = hasPosition && avgCost > 0;
+  const unrealized = hasCostBasis ? heldQty * (navPrice - avgCost) : 0;
   return (
     <>
       <div
@@ -1691,6 +1695,8 @@ function SellSection({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "baseline",
+            flexWrap: "wrap",
+            gap: "4px 16px",
             fontFamily: FM,
             fontSize: 10,
             letterSpacing: "0.14em",
@@ -1699,16 +1705,23 @@ function SellSection({
             fontWeight: 500,
           }}
         >
-          <span>Quantity</span>
+          <span style={{ whiteSpace: "nowrap" }}>Quantity</span>
           {connected && (
-            <span>
-              Held{" "}
+            <span
+              style={{
+                whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: 8,
+              }}
+            >
+              <span>Held</span>
               <span style={{ color: C.textSecondary }}>
                 {heldQty.toFixed(2)} PBU units
               </span>
-              {hasPosition && (
-                <span style={{ color: C.textMuted, marginLeft: 8 }}>
-                  ({unrealized >= 0 ? "+" : ""}${unrealized.toFixed(2)})
+              {hasCostBasis && (
+                <span style={{ color: unrealized >= 0 ? accent : C.red }}>
+                  {unrealized >= 0 ? "+" : ""}${unrealized.toFixed(2)}
                 </span>
               )}
             </span>
@@ -2196,6 +2209,10 @@ function DetailChart({
   const last = pts[pts.length - 1];
   const lastVal = data[data.length - 1];
   const gradId = `detail-fill-${color.replace("#", "")}`;
+  // The live-value callout sits in the SAME right-hand gutter as the y-axis tick
+  // labels, so when the current NAV lands on a gridline value the two numbers
+  // stack. Compute the callout's y up front so we can drop any colliding tick.
+  const calloutY = Math.max(padT + 10, last.y - 8);
 
   return (
     <>
@@ -2235,9 +2252,11 @@ function DetailChart({
             );
           })}
 
-          {/* y-axis labels */}
+          {/* y-axis labels — skip any that would collide with the live-value
+              callout (same gutter), so the two percentages never stack. */}
           {yTicks.map((t, i) => {
             const y = padT + (1 - (t - yMin) / yRange) * plotH;
+            if (Math.abs(y + 3 - (calloutY + 3)) < 12) return null;
             return (
               <text
                 key={`yl-${i}`}
@@ -2291,7 +2310,7 @@ function DetailChart({
           <circle cx={last.x} cy={last.y} r={8} fill={color} opacity={0.18} />
           <text
             x={last.x + 8}
-            y={Math.max(padT + 10, last.y - 8)}
+            y={calloutY}
             fill={color}
             fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
             fontSize={11}

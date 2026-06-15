@@ -18,6 +18,9 @@ function toPts(input: Pt[] | Array<[number, number]>): Pt[] {
 /** Monotone tangents for each point given strictly-increasing xs. */
 export function monotoneTangents(xs: number[], ys: number[]): number[] {
   const n = xs.length;
+  // A tangent per point needs at least two points to define a slope; fewer
+  // would index slope[-1]/slope[undefined] and poison the bezier math with NaN.
+  if (n < 2) return n === 1 ? [0] : [];
   const dx: number[] = [];
   const slope: number[] = [];
   for (let i = 0; i < n - 1; i++) {

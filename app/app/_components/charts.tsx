@@ -58,6 +58,9 @@ export function Sparkline({
     c.style.height = height + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, renderWidth, height);
+    // Need >= 2 points to draw a line; bail cleanly on empty/single data
+    // (Math.min(...[]) is Infinity and pts[last] would be undefined → crash).
+    if (!data || data.length < 2) return;
     const min = Math.min(...data);
     const max = Math.max(...data);
     const range = max - min || 0.01;

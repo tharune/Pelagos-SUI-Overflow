@@ -32,7 +32,8 @@ import {
   DepositError,
 } from "../../_lib/deposit-client";
 import { usePbuBalances } from "../../_lib/portfolio-client";
-import { groupVirtualByUiBundle } from "../../_lib/virtual-positions";
+import { groupVirtualByUiBundle, clearVirtualPositionsByUiBundleId } from "../../_lib/virtual-positions";
+import { MmDeskBid } from "../../_components/MmDeskBid";
 import { fetchVaultPrice } from "../../../lib/api";
 
 type ResolvedBasket =
@@ -1182,6 +1183,26 @@ function BasketBuyPanel({
           />
         )}
 
+        {/* Secondary-market exit: the protocol market-maker quotes a simulated
+            bid (per-product spread below par) for the held position; accepting
+            it records the exit to History. No on-chain MM rail on Sui. */}
+        {mode === "sell" && (
+          <MmDeskBid
+            productType="basket"
+            bundleId={bundle.id}
+            walletAddress={activeAddress || null}
+            sizeUsdc={heldQty}
+            disabled={!appConnected}
+            onSold={() => {
+              if (activeAddress && resolvedBundleUuid) {
+                clearVirtualPositionsByUiBundleId(activeAddress, resolvedBundleUuid, bundle.id);
+              }
+              setSellQtyInput("");
+              void usdc.refresh();
+            }}
+          />
+        )}
+
         {/* Single primary action. Wallet connection is implicit: the
             button triggers the picker only when the user actually tries
             to submit. No "Connect Wallet" label in sight until needed. */}
@@ -1637,7 +1658,11 @@ function SellSection({
   topLegCount: number;
 }) {
   const hasPosition = heldQty > 0;
-  const unrealized = hasPosition ? heldQty * (navPrice - avgCost) : 0;
+  // Only show unrealized PnL when we actually have a cost basis. A real on-chain
+  // deposit has no in-session avgCost (avgCost === 0), and `heldQty * navPrice`
+  // would then render the WHOLE position value as a bogus gain.
+  const hasCostBasis = hasPosition && avgCost > 0;
+  const unrealized = hasCostBasis ? heldQty * (navPrice - avgCost) : 0;
   return (
     <>
       <div
@@ -1656,6 +1681,8 @@ function SellSection({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "baseline",
+            flexWrap: "wrap",
+            gap: "4px 16px",
             fontFamily: FM,
             fontSize: 10,
             letterSpacing: "0.14em",
@@ -1664,16 +1691,23 @@ function SellSection({
             fontWeight: 500,
           }}
         >
-          <span>Quantity</span>
+          <span style={{ whiteSpace: "nowrap" }}>Quantity</span>
           {connected && (
-            <span>
-              Held{" "}
+            <span
+              style={{
+                whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: 8,
+              }}
+            >
+              <span>Held</span>
               <span style={{ color: C.textSecondary }}>
                 {heldQty.toFixed(2)} {unitLabel}
               </span>
-              {hasPosition && (
-                <span style={{ color: C.textMuted, marginLeft: 8 }}>
-                  ({unrealized >= 0 ? "+" : ""}${unrealized.toFixed(2)})
+              {hasCostBasis && (
+                <span style={{ color: unrealized >= 0 ? accent : C.red }}>
+                  {unrealized >= 0 ? "+" : ""}${unrealized.toFixed(2)}
                 </span>
               )}
             </span>

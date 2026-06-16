@@ -44,49 +44,76 @@ function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
   return d.join(" ");
 }
 
+const DAY_MS = 86_400_000;
 const ACCOUNT_TF = [
-  { key: "1D", label: "1D", drift: 0.004, vol: 0.0018, n: 24, x: ["24h ago", "12h", "now"] },
-  { key: "7D", label: "7D", drift: 0.019, vol: 0.0042, n: 28, x: ["7d ago", "3d", "now"] },
-  { key: "30D", label: "30D", drift: 0.055, vol: 0.0085, n: 30, x: ["30d ago", "15d", "now"] },
-  { key: "1Y", label: "1Y", drift: 0.165, vol: 0.022, n: 48, x: ["1y ago", "6m", "now"] },
+  { key: "1D", label: "1D", ms: DAY_MS, n: 24, x: ["24h ago", "12h", "now"] },
+  { key: "7D", label: "7D", ms: 7 * DAY_MS, n: 28, x: ["7d ago", "3d", "now"] },
+  { key: "30D", label: "30D", ms: 30 * DAY_MS, n: 30, x: ["30d ago", "15d", "now"] },
+  { key: "1Y", label: "1Y", ms: 365 * DAY_MS, n: 48, x: ["1y ago", "6m", "now"] },
 ] as const;
 type AccountTfKey = (typeof ACCOUNT_TF)[number]["key"];
 
-// Deterministic hash-noise in [0,1). Stable across renders (no Math.random),
-// so the curve doesn't jitter every time the 1s P&L tick re-renders the page.
-function hashNoise(i: number, seed: number): number {
-  const v = Math.sin(i * 12.9898 + seed * 78.233) * 43758.5453;
-  return v - Math.floor(v);
+// A real net-value timeline is event-driven: it only moves when money actually
+// moves (realized P&L from a settle/redeem) or as a yield position accrues. We
+// reconstruct it from those real events instead of fabricating a price wobble.
+type ValueEvent = { t: number; delta: number };          // realized P&L, at its tx time
+type ValueAccrual = { startMs: number; ratePerDay: number; maxDays: number };
+
+function accruedBy(accruals: ValueAccrual[], tMs: number): number {
+  let s = 0;
+  for (const a of accruals) {
+    const days = Math.min(Math.max(0, (tMs - a.startMs) / DAY_MS), a.maxDays);
+    s += a.ratePerDay * days;
+  }
+  return s;
 }
 
-// Build the net-value series for a window. The right edge is pinned to the real
-// current value; the left edge sits `drift` below it (a longer window implies
-// more growth). A sin-weighted wobble adds organic movement that vanishes at
-// both anchors, so the endpoints stay exact. Labelled "Illustrative" in the UI
-// because we don't yet persist a real per-account value history.
-function buildValueSeries(value: number, tf: (typeof ACCOUNT_TF)[number]): number[] {
-  if (value <= 0.01) return Array.from({ length: tf.n }, () => 0);
-  const start = value * (1 - tf.drift);
-  const seed = tf.key.length + tf.n;
+// True net-value series for a window. The right edge is the live value; walking
+// back from it we undo realized P&L booked after each sample and the yield
+// accrued since it — so the curve is flat where nothing happened (no fake wobble)
+// and steps / slopes exactly where real events occurred. The pre-funding ramp is
+// intentionally omitted (we anchor to the current funded value).
+function buildValueSeries(
+  value: number,
+  tf: (typeof ACCOUNT_TF)[number],
+  events: ValueEvent[],
+  accruals: ValueAccrual[],
+  nowMs: number,
+): number[] {
+  const start = nowMs - tf.ms;
+  const accruedNow = accruedBy(accruals, nowMs);
   const out: number[] = [];
   for (let i = 0; i < tf.n; i++) {
-    const t = i / (tf.n - 1);
-    const trend = start + (value - start) * t;
-    const wobble = (hashNoise(i, seed) - 0.5) * 2 * value * tf.vol * Math.sin(t * Math.PI);
-    out.push(Math.max(0, trend + wobble));
+    const t = start + (tf.ms * i) / (tf.n - 1);
+    const realizedAfter = events.reduce((s, e) => (e.t > t ? s + e.delta : s), 0);
+    out.push(Math.max(0, value - (accruedNow - accruedBy(accruals, t)) - realizedAfter));
   }
-  out[0] = start;
-  out[out.length - 1] = value;
+  out[tf.n - 1] = value;
   return out;
 }
 
 const fmtAxisUsd = (v: number): string =>
   v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(0)}`;
 
-function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
+function AccountValueChart({
+  value,
+  pnl,
+  events,
+  accruals,
+  nowMs,
+}: {
+  value: number;
+  pnl: number;
+  events: ValueEvent[];
+  accruals: ValueAccrual[];
+  nowMs: number;
+}) {
   const [tf, setTf] = useState<AccountTfKey>("30D");
   const cfg = ACCOUNT_TF.find((t) => t.key === tf) ?? ACCOUNT_TF[2];
-  const series = React.useMemo(() => buildValueSeries(value, cfg), [value, cfg]);
+  const series = React.useMemo(
+    () => buildValueSeries(value, cfg, events, accruals, nowMs),
+    [value, cfg, events, accruals, nowMs],
+  );
 
   const W = 560, H = 244, PL = 52, PR = 14, PT = 16, PB = 26;
   const n = series.length;
@@ -173,6 +200,9 @@ function AccountValueChart({ value, pnl }: { value: number; pnl: number }) {
           </text>
         ))}
       </svg>
+      <div style={{ fontFamily: FM, fontSize: 9, color: C.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right", marginTop: 2 }}>
+        Live · realized P&L + yield accrual
+      </div>
     </div>
   );
 }
@@ -359,6 +389,40 @@ export default function PortfolioPage() {
   const displayPnl = walletReady
     ? onchainBasketPnl + ppnAccruedYield + trancheAccruedYield
     : 0;
+
+  // Real, timestamped inputs for the net-value chart (no fabricated history):
+  //  - realized P&L from settled distribution positions, booked at settle time;
+  //  - linear yield accrual from PPN + tranche positions (same math as the
+  //    headline ppn/trancheAccruedYield above), so the curve's right edge agrees
+  //    with the live total.
+  const valueEvents = React.useMemo<ValueEvent[]>(() => {
+    const evs: ValueEvent[] = [];
+    for (const p of distPositions) {
+      if (!p.settled || !p.settled_at) continue;
+      const payoff = Number.isFinite(p.payoff_usdc as number)
+        ? (p.payoff_usdc as number)
+        : (Number(p.net_usdc) || 0) - (Number(p.collateral_usdc) || 0);
+      if (Number.isFinite(payoff) && Math.abs(payoff) > 1e-9) evs.push({ t: p.settled_at, delta: payoff });
+    }
+    return evs;
+  }, [distPositions]);
+  const valueAccruals = React.useMemo<ValueAccrual[]>(() => {
+    const acc: ValueAccrual[] = [];
+    for (const v of effectivePpnVaults) {
+      const principal = Number.isFinite(v.principal) ? v.principal : 0;
+      const apy = Number.isFinite(v.apy) ? v.apy : 0;
+      const maxDays = Number.isFinite(v.maturityDays) ? (v.maturityDays as number) : 0;
+      const startMs = Number.isFinite(v.createdAt) ? (v.createdAt as number) : renderNow;
+      if (principal > 0 && apy > 0) acc.push({ startMs, ratePerDay: principal * (apy / 100 / 365), maxDays });
+    }
+    for (const p of effectiveTranches) {
+      if (p.apy == null || p.createdAt == null || p.maturityDays == null) continue;
+      const principal = p.qty * p.avgCost;
+      if (principal > 0 && p.apy > 0)
+        acc.push({ startMs: p.createdAt, ratePerDay: principal * (p.apy / 100 / 365), maxDays: p.maturityDays });
+    }
+    return acc;
+  }, [effectivePpnVaults, effectiveTranches, renderNow]);
 
   // Hydrate basket positions from Supabase whenever the wallet connects
   // or changes. The reducer is in-memory only, so without this the portfolio
@@ -704,7 +768,7 @@ export default function PortfolioPage() {
                 {fmtUsd(displayTotal, 2)}
               </div>
               <div className="portfolio-value-chart">
-                <AccountValueChart value={displayTotal} pnl={displayPnl} />
+                <AccountValueChart value={displayTotal} pnl={displayPnl} events={valueEvents} accruals={valueAccruals} nowMs={renderNow} />
               </div>
             </div>
 

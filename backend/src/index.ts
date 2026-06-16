@@ -23,6 +23,7 @@ import { lendingRoutes } from './routes/lending';
 import { hedgeRoutes } from './routes/hedge';
 import portfolioRoutes from './routes/portfolio';
 import vaultRoutes from './routes/vaults';
+import mmRoutes from './routes/mm';
 import { devRoutes } from './routes/dev';
 import { suiRoutes } from './routes/sui';
 import { predictRoutes } from './routes/predict';
@@ -214,6 +215,7 @@ app.use('/api/dev', devRoutes);
 app.use('/api/sui', suiRoutes);
 app.use('/api/predict', predictRoutes);
 app.use('/api/distribution', distributionRoutes);
+app.use('/api/mm', mmRoutes);
 
 // Root redirect to API docs
 app.get('/', (_req, res) => res.redirect('/api/docs'));

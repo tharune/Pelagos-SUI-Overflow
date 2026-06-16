@@ -1,7 +1,7 @@
 # Multi-stage build for Railway / any container platform.
 # Stage 1: install all deps + compile TypeScript.
 # Stage 2: ship only production deps + compiled JS.
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npx tsc
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # Re-install only production deps (smaller final image).

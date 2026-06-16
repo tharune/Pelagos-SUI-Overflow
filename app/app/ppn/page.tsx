@@ -240,6 +240,7 @@ export default function PpnPage() {
   const [txError, setTxError] = useState<string | null>(null);
   const [txSignature, setTxSignature] = useState<string | null>(null);
   const [redeemBusyId, setRedeemBusyId] = useState<string | null>(null);
+  const [redeemBusyAction, setRedeemBusyAction] = useState<"withdraw" | "divest" | "close" | null>(null);
   const [redeemError, setRedeemError] = useState<Record<string, string>>({});
   const [vaultSources, setVaultSources] = useState<VaultSource[]>([]);
   const [apyLoading, setApyLoading] = useState(true);
@@ -516,6 +517,7 @@ export default function PpnPage() {
   async function runExit(rowKey: string, vaultIds: string[], action: "withdraw" | "divest" | "close") {
     if (!appConnected || redeemBusyId) return;
     setRedeemBusyId(rowKey);
+    setRedeemBusyAction(action);
     setRedeemError((prev) => {
       const next = { ...prev };
       delete next[rowKey];
@@ -539,6 +541,7 @@ export default function PpnPage() {
       handleExitError(rowKey, err);
     } finally {
       setRedeemBusyId(null);
+      setRedeemBusyAction(null);
     }
   }
 
@@ -811,13 +814,13 @@ export default function PpnPage() {
                           </div>
                           <div className="ppn-position-actions">
                             <button type="button" disabled={!appConnected || busy || !matured} onClick={() => runExit(note.id, vaultIds, "withdraw")}>
-                              Withdraw
+                              {busy && redeemBusyAction === "withdraw" ? "Withdrawing…" : "Withdraw"}
                             </button>
                             <button type="button" disabled={!appConnected || busy} onClick={() => runExit(note.id, vaultIds, "divest")}>
-                              Divest
+                              {busy && redeemBusyAction === "divest" ? "Divesting…" : "Divest"}
                             </button>
                             <button type="button" disabled={!appConnected || busy} onClick={() => runExit(note.id, vaultIds, "close")}>
-                              Close
+                              {busy && redeemBusyAction === "close" ? "Closing…" : "Close"}
                             </button>
                           </div>
                         </div>

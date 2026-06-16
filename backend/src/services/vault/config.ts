@@ -15,7 +15,7 @@ export const VAULT = {
   adminCapId: process.env.VAULT_ADMIN_CAP_ID ?? '',
   usdcType:
     process.env.MOCK_USDC_TYPE ??
-    '0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af::mock_usdc::MOCK_USDC',
+    '0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45::mock_usdc::MOCK_USDC',
   usdcDecimals: Number(process.env.MOCK_USDC_DECIMALS ?? 6),
 } as const;
 

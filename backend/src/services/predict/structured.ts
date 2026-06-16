@@ -39,6 +39,13 @@ import { previewRange } from './index';
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / probability fixed-point
 const CONTRACT_UNIT = 1_000_000n; // 1e6 raw = 1 contract = $1 payout
 
+// Protocol mint bounds are [min_ask, max_ask] ≈ [1%, 99%]; get_range_trade_amounts
+// will PRICE bands outside that (so they look "tradeable") but mint_range aborts
+// in assert_mintable_ask. Keep a safety margin for post-trade slippage so every
+// bucket we surface as tradeable will actually mint.
+const MIN_MINTABLE_PRICE = 0.02; // 2%
+const MAX_MINTABLE_PRICE = 0.98; // 98%
+
 export interface GridOracle {
   oracle_id: string;
   expiry: number | string;
@@ -209,7 +216,10 @@ export async function previewStrip(args: {
           sender: args.sender,
         });
         const c = BigInt(u.mint_cost);
-        return { b, unitCost: c, tradeable: c > 0n };
+        const prob = Number(c) / Number(CONTRACT_UNIT);
+        // Mintable only if the per-contract ask sits inside the protocol's bounds.
+        const mintable = c > 0n && prob >= MIN_MINTABLE_PRICE && prob <= MAX_MINTABLE_PRICE;
+        return { b, unitCost: c, tradeable: mintable };
       } catch {
         return { b, unitCost: 0n, tradeable: false };
       }

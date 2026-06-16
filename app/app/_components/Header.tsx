@@ -14,6 +14,7 @@ const NAV_LEFT = [
   { id: "tranche",   label: "Risk Slices",    href: "/app/tranche" },
   { id: "ppn",       label: "Protected Notes", href: "/app/ppn" },
   { id: "distribution", label: "Distribution Markets", href: "/app/distribution" },
+  { id: "predict",   label: "DeepBook Predict", href: "/app/predict" },
   { id: "docs",      label: "About",          href: "/app/docs" },
 ];
 

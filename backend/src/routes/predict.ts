@@ -196,6 +196,63 @@ router.post('/preview', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/predict/quote?asset=BTC&quantity=1000000&is_up=true
+ *
+ * One-call live SIMULATION: finds the active oracle, snaps the strike to the grid
+ * near the live forward price, and prices the trade on-chain via devInspect (no
+ * funds, no signer). Returns the resolved market + mint_cost / redeem_payout —
+ * the canonical "proper simulation result" the UI renders. Strike selection is the
+ * fiddly part (off-grid / off-band strikes abort in pricing_config), so the server
+ * does it here instead of trusting the client to pick a valid strike.
+ */
+router.get('/quote', async (req: Request, res: Response) => {
+  try {
+    const asset = String(req.query.asset ?? 'BTC').toUpperCase();
+    const qtyStr = String(req.query.quantity ?? '1000000');
+    if (!/^\d+$/.test(qtyStr) || BigInt(qtyStr) <= 0n) {
+      throw new Error('quantity (positive u64 raw, 6dp) is required');
+    }
+    const quantity = BigInt(qtyStr);
+    const isUp = req.query.is_up !== 'false';
+
+    const oracle = await predict.findActiveOracle(asset);
+    if (!oracle) return res.status(404).json({ error: `no active ${asset} oracle from the indexer` });
+
+    // Snap the strike to the grid near the live forward price (else pricing aborts).
+    let target: number | undefined;
+    try {
+      const price = await predict.predictServer.oraclePriceLatest(oracle.oracle_id);
+      for (const k of ['price', 'forward', 'spot', 'mark', 'underlying_price']) {
+        const n = Number((price as Record<string, unknown>)[k]);
+        if (Number.isFinite(n) && n > 0) {
+          target = n;
+          break;
+        }
+      }
+    } catch {
+      /* fall back to grid base inside snapStrikeToGrid */
+    }
+    const strike = predict.snapStrikeToGrid(oracle, target);
+    const key = { oracleId: oracle.oracle_id, expiry: oracle.expiry, strike, isUp };
+    const preview = await predict.previewTrade({ key, quantity });
+
+    res.json({
+      asset,
+      oracle_id: oracle.oracle_id,
+      expiry: oracle.expiry,
+      strike: String(strike),
+      is_up: isUp,
+      quantity: quantity.toString(),
+      mint_cost: preview.mint_cost,
+      redeem_payout: preview.redeem_payout,
+      dusdc_decimals: PREDICT.dusdcDecimals,
+    });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Simulations (devInspect, no signer required)
 // ---------------------------------------------------------------------------

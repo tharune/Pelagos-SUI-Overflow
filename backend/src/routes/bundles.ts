@@ -59,15 +59,27 @@ router.get('/', async (req: Request, res: Response) => {
       bundles = bundles.filter((b) => b.status === s);
     }
 
-    // Fetch live Polymarket basket NAVs and vault prices in parallel.
-    // vault price  = what the program charges per token (shown as $0.56 etc.)
-    // polymarket_nav = live weighted probability from Polymarket (shown as 51.9% etc.)
-    const [polyNAVs] = await Promise.all([getPolymarketBasketNAVs()]);
+    // Live Polymarket basket NAVs are an OPTIONAL informational overlay
+    // (polymarket_nav). The real NAV comes from the DB legs via calculateNAV,
+    // so a slow/timed-out geo-bypass relay must NOT take down the whole list —
+    // degrade gracefully to DB-only NAV instead of 500ing the bundles page.
+    // Cap how long the page waits on the live overlay: if the relay can't answer
+    // the heavy basket-NAV query within a few seconds, return DB NAV immediately
+    // rather than blocking the whole bundles response for the full relay timeout.
+    const polyPromise = getPolymarketBasketNAVs().catch((err) => {
+      console.warn('GET /api/bundles: live Polymarket NAVs unavailable, serving DB NAV only:', (err as Error)?.message);
+      return new Map();
+    });
+    const polyNAVs = await Promise.race([
+      polyPromise,
+      new Promise<Map<string, never>>((resolve) => setTimeout(() => resolve(new Map()), 4000)),
+    ]);
 
     const enriched = await Promise.all(
       bundles.map(async (bundle) => {
         const legs = await getLegsByBundleId(bundle.id);
-        const vaultPrice = await getVaultPrice(bundle.id);
+        // On-chain vault read is optional too — don't let a slow Sui RPC 500 the list.
+        const vaultPrice = await getVaultPrice(bundle.id).catch(() => null);
         const polyData = polyNAVs.get(bundle.name);
         // nav = real leg-weighted NAV (consistent across every endpoint).
         // polymarket_nav / vault_price are separate informational fields.

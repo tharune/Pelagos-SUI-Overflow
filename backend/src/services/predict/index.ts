@@ -6,6 +6,7 @@ import { getSuiClient, getSigner, signerAddress } from './sui';
 import {
   addCreateManager,
   addDeposit,
+  addGetRangeTradeAmounts,
   addGetTradeAmounts,
   addMint,
   addMintRange,
@@ -259,6 +260,32 @@ export async function previewTrade(args: {
   }
   const values = lastReturnValues(res.results);
   if (values.length < 2) throw new Error('previewTrade: expected two u64 return values');
+  return {
+    mint_cost: bcs.u64().parse(Uint8Array.from(values[0])),
+    redeem_payout: bcs.u64().parse(Uint8Array.from(values[1])),
+    sender,
+  };
+}
+
+/**
+ * Preview a vertical RANGE trade via `get_range_trade_amounts` using devInspect.
+ * Same fund-free, signer-free live read as previewTrade, for a (lower, higher] band.
+ */
+export async function previewRange(args: {
+  key: RangeKeyParams;
+  quantity: bigint;
+  sender?: string;
+}): Promise<{ mint_cost: string; redeem_payout: string; sender: string }> {
+  const client = getSuiClient();
+  const sender = args.sender ?? signerAddress() ?? FALLBACK_SENDER;
+  const tx = new Transaction();
+  addGetRangeTradeAmounts(tx, { key: args.key, quantity: args.quantity });
+  const res = await client.devInspectTransactionBlock({ sender, transactionBlock: tx });
+  if (res.effects.status.status !== 'success') {
+    throw new Error(`previewRange devInspect failed: ${res.effects.status.error}`);
+  }
+  const values = lastReturnValues(res.results);
+  if (values.length < 2) throw new Error('previewRange: expected two u64 return values');
   return {
     mint_cost: bcs.u64().parse(Uint8Array.from(values[0])),
     redeem_payout: bcs.u64().parse(Uint8Array.from(values[1])),

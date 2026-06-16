@@ -2,12 +2,21 @@
  * Pelagos structured-product engine over DeepBook Predict (testnet).
  *
  * Turns a continuous μ/σ "view" into a strip of on-grid Predict RANGE positions,
- * prices each bucket live off the SVI surface (devInspect, no funds), and builds
- * NON-CUSTODIAL PTBs (unsigned `tx.toJSON()` for the user's wallet) for:
+ * prices each bucket with REAL market-maker pricing AND slippage taken straight
+ * from the protocol (NOT linear/invented), and builds NON-CUSTODIAL PTBs
+ * (unsigned `tx.toJSON()` for the user's wallet) for:
  *   - mint a range strip (Distribution Markets / Tranches / PPN upside)
  *   - redeem a range bucket (live or permissionless after settlement)
  *   - PLP supply / withdraw  (PPN floor = "be the house")
  *   - create a PredictManager (first-open)
+ *
+ * REAL PRICING + SLIPPAGE: every bucket is priced via on-chain
+ * `get_range_trade_amounts(quantity)` (devInspect) AT ITS ACTUAL QUANTITY. The
+ * protocol prices against post-trade vault state, so the cost it returns already
+ * includes the market-maker spread + the slippage from the liability the order
+ * adds. We surface BOTH sides: the ask (mint cost) and the bid (redeem-now
+ * payout), plus the per-bucket slippage (cost vs the marginal 1-contract price)
+ * and the round-trip spread. Nothing here is fabricated.
  *
  * Custody: the user's wallet owns the PredictManager and signs. The backend only
  * builds the unsigned tx and dry-runs a throwaway copy (mirrors vault/index.ts).
@@ -74,7 +83,6 @@ export interface StripBucket {
 /**
  * Slice a Normal(μ,σ) view (raw 1e9 strike units) into `n` contiguous on-grid
  * buckets spanning ±`spanSigma`·σ, weighted by the Normal mass each covers.
- * Buckets are de-duplicated and guaranteed lower<higher on the oracle's grid.
  */
 export function buildStripBuckets(
   o: GridOracle,
@@ -103,14 +111,24 @@ export function buildStripBuckets(
 }
 
 export interface PricedBucket extends StripBucket {
-  unit_price: number; // implied prob-in-band (mint_cost per $1 contract), 0..1
-  quantity: string; // raw protocol qty (1e6 = 1 contract)
-  cost_raw: string; // dUSDC 1e6
-  max_payout_raw: string; // dUSDC 1e6 ( = quantity )
   lower_usd: number;
   higher_usd: number;
   /** false when the band prices outside the protocol's [min_ask,max_ask] bounds. */
   tradeable: boolean;
+  /** marginal per-1-contract ask probability (0..1), no size impact. */
+  unit_price: number;
+  quantity: string; // raw protocol qty (1e6 = 1 contract)
+  /** ASK side — REAL mint cost at `quantity` incl. spread + slippage (dUSDC 1e6). */
+  mint_cost_raw: string;
+  /** BID side — REAL redeem-now payout at `quantity` incl. spread (dUSDC 1e6). */
+  redeem_value_raw: string;
+  max_payout_raw: string; // = quantity (settles $1/contract if in band)
+  /** mint_cost − unit_price·quantity: the slippage/convexity over the marginal price. */
+  slippage_raw: string;
+  /** mint_cost − redeem_value: the round-trip MM spread at this size. */
+  spread_raw: string;
+  /** effective fill probability = mint_cost / quantity (0..1). */
+  avg_price: number;
 }
 
 export interface StripQuote {
@@ -121,15 +139,53 @@ export interface StripQuote {
   n: number;
   budget_raw: string;
   buckets: PricedBucket[];
-  total_cost_raw: string;
-  total_max_payout_raw: string;
-  /** crude EV proxy: Σ weightᵢ·payoutᵢ − cost (informational). */
+  total_cost_raw: string; // Σ ask (what you pay now)
+  total_redeem_value_raw: string; // Σ bid (what you'd get redeeming now)
+  total_max_payout_raw: string; // Σ quantity (max if everything settles in-band)
+  total_slippage_raw: string; // Σ slippage over marginal
+  round_trip_spread_raw: string; // total_cost − total_redeem_value
+  /** EV under the user's own Normal view: Σ weightᵢ·payoutᵢ − cost. */
   expected_value_raw: string;
 }
 
+interface UnitInfo {
+  b: StripBucket;
+  unitCost: bigint;
+  tradeable: boolean;
+}
+
+/** REAL per-bucket (ask, bid) at the given quantities via devInspect (post-trade priced). */
+async function priceAtQuantities(
+  oracle: GridOracle,
+  units: UnitInfo[],
+  qtys: bigint[],
+  sender?: string,
+): Promise<Array<{ mint: bigint; redeem: bigint; ok: boolean }>> {
+  return Promise.all(
+    units.map(async (x, i) => {
+      const q = qtys[i];
+      if (!x.tradeable || q <= 0n) return { mint: 0n, redeem: 0n, ok: false };
+      try {
+        const r = await previewRange({
+          key: { oracleId: oracle.oracle_id, expiry: String(oracle.expiry), lowerStrike: x.b.lower, higherStrike: x.b.higher },
+          quantity: q,
+          sender,
+        });
+        return { mint: BigInt(r.mint_cost), redeem: BigInt(r.redeem_payout), ok: true };
+      } catch {
+        return { mint: 0n, redeem: 0n, ok: false };
+      }
+    }),
+  );
+}
+
 /**
- * Price a strip: allocate `budgetRaw` (dUSDC) across buckets by Normal weight,
- * size each bucket's quantity from its live per-contract cost (devInspect).
+ * Price a strip with REAL MM pricing + slippage (both sides):
+ *  1. marginal per-contract ask for each bucket (sizing + slippage reference),
+ *  2. size quantity ∝ Normal weight so payout mirrors the view,
+ *  3. re-price each bucket AT its actual quantity (real post-trade cost = spread +
+ *     slippage) and read the bid (redeem) side too,
+ *  4. one budget correction so total real cost ≈ budget.
  */
 export async function previewStrip(args: {
   oracle: GridOracle;
@@ -143,59 +199,78 @@ export async function previewStrip(args: {
   const { oracle, muRaw, sigmaRaw, n, budgetRaw } = args;
   const raw = buildStripBuckets(oracle, muRaw, sigmaRaw, n, args.spanSigma);
 
-  // Pass 1: price each bucket per-contract via devInspect. Far-from-ATM bands can
-  // abort in the protocol's spread/ask-bounds check (EAskPriceOutOfBounds); those
-  // are marked untradeable and excluded from sizing rather than failing the strip.
-  const unit: Array<{ b: StripBucket; unitCost: bigint; tradeable: boolean }> = [];
-  for (const b of raw) {
-    try {
-      const u = await previewRange({
-        key: { oracleId: oracle.oracle_id, expiry: String(oracle.expiry), lowerStrike: b.lower, higherStrike: b.higher },
-        quantity: CONTRACT_UNIT,
-        sender: args.sender,
-      });
-      const c = BigInt(u.mint_cost);
-      unit.push({ b, unitCost: c, tradeable: c > 0n });
-    } catch {
-      unit.push({ b, unitCost: 0n, tradeable: false });
-    }
-  }
+  // (1) marginal per-contract ask (resilient: out-of-bounds bands -> untradeable).
+  const units: UnitInfo[] = await Promise.all(
+    raw.map(async (b) => {
+      try {
+        const u = await previewRange({
+          key: { oracleId: oracle.oracle_id, expiry: String(oracle.expiry), lowerStrike: b.lower, higherStrike: b.higher },
+          quantity: CONTRACT_UNIT,
+          sender: args.sender,
+        });
+        const c = BigInt(u.mint_cost);
+        return { b, unitCost: c, tradeable: c > 0n };
+      } catch {
+        return { b, unitCost: 0n, tradeable: false };
+      }
+    }),
+  );
 
-  // Pass 2: size each TRADEABLE bucket's QUANTITY proportional to its Normal
-  // weight, scaled so total mint cost ≈ budget. This makes the payoff profile
-  // mirror the user's view (most payout where they're most confident), instead of
-  // letting cheap OTM bands soak the budget into huge lottery notionals.
-  //   qtyᵢ = K·weightᵢ ,  K = budget·CONTRACT_UNIT / Σ(unitCostⱼ·weightⱼ)
-  const denom = unit
+  // (2) size quantity ∝ Normal weight, scaled so Σ(marginal cost) ≈ budget.
+  const denom = units
     .filter((x) => x.tradeable && x.unitCost > 0n)
     .reduce((s, x) => s + Number(x.unitCost) * x.b.weight, 0);
   const K = denom > 0 ? (Number(budgetRaw) * Number(CONTRACT_UNIT)) / denom : 0;
-  const priced: PricedBucket[] = [];
-  let totalCost = 0n;
-  let totalPayout = 0n;
-  for (const { b, unitCost, tradeable } of unit) {
-    let quantity = 0n;
-    let cost = 0n;
-    if (tradeable && unitCost > 0n && K > 0) {
-      quantity = BigInt(Math.max(0, Math.floor(K * b.weight)));
-      cost = (unitCost * quantity) / CONTRACT_UNIT;
+  let qtys = units.map((x) => (x.tradeable && K > 0 ? BigInt(Math.max(0, Math.floor(K * x.b.weight))) : 0n));
+
+  // (3) REAL cost (ask) + redeem (bid) at the actual quantities.
+  let real = await priceAtQuantities(oracle, units, qtys, args.sender);
+  let totalMint = real.reduce((s, r) => s + r.mint, 0n);
+
+  // (4) one correction so real total cost ≈ budget (slippage shifts it off the marginal estimate).
+  if (totalMint > 0n) {
+    const ratio = Number(budgetRaw) / Number(totalMint);
+    if (Math.abs(ratio - 1) > 0.05) {
+      qtys = qtys.map((q) => BigInt(Math.max(0, Math.floor(Number(q) * ratio))));
+      real = await priceAtQuantities(oracle, units, qtys, args.sender);
+      totalMint = real.reduce((s, r) => s + r.mint, 0n);
     }
-    totalCost += cost;
-    totalPayout += quantity;
-    priced.push({
+  }
+
+  const buckets: PricedBucket[] = [];
+  let totalRedeem = 0n;
+  let totalPayout = 0n;
+  let totalSlip = 0n;
+  let evNum = 0;
+  for (let i = 0; i < units.length; i++) {
+    const { b, unitCost, tradeable } = units[i];
+    const q = qtys[i];
+    const r = real[i];
+    const live = tradeable && r.ok && q > 0n;
+    const mintCost = live ? r.mint : 0n;
+    const redeem = live ? r.redeem : 0n;
+    const marginal = (unitCost * q) / CONTRACT_UNIT; // cost if priced at the 1-contract marginal
+    const slippage = mintCost > marginal ? mintCost - marginal : 0n;
+    totalRedeem += redeem;
+    totalPayout += live ? q : 0n;
+    totalSlip += slippage;
+    evNum += b.weight * Number(live ? q : 0n);
+    buckets.push({
       ...b,
-      tradeable,
-      unit_price: Number(unitCost) / Number(CONTRACT_UNIT),
-      quantity: quantity.toString(),
-      cost_raw: cost.toString(),
-      max_payout_raw: quantity.toString(),
       lower_usd: Number(b.lower) / PRICE_SCALE,
       higher_usd: Number(b.higher) / PRICE_SCALE,
+      tradeable: live,
+      unit_price: Number(unitCost) / Number(CONTRACT_UNIT),
+      quantity: (live ? q : 0n).toString(),
+      mint_cost_raw: mintCost.toString(),
+      redeem_value_raw: redeem.toString(),
+      max_payout_raw: (live ? q : 0n).toString(),
+      slippage_raw: slippage.toString(),
+      spread_raw: (mintCost > redeem ? mintCost - redeem : 0n).toString(),
+      avg_price: q > 0n && live ? Number(mintCost) / Number(q) : 0,
     });
   }
-  // EV proxy under the user's own Normal view: Σ weightᵢ·payoutᵢ − cost.
-  const evNum = priced.reduce((s, b) => s + b.weight * Number(b.max_payout_raw), 0);
-  const ev = BigInt(Math.round(evNum)) - totalCost;
+  const ev = BigInt(Math.round(evNum)) - totalMint;
   return {
     oracle_id: oracle.oracle_id,
     expiry: String(oracle.expiry),
@@ -203,9 +278,12 @@ export async function previewStrip(args: {
     sigma_usd: sigmaRaw / PRICE_SCALE,
     n,
     budget_raw: budgetRaw.toString(),
-    buckets: priced,
-    total_cost_raw: totalCost.toString(),
+    buckets,
+    total_cost_raw: totalMint.toString(),
+    total_redeem_value_raw: totalRedeem.toString(),
     total_max_payout_raw: totalPayout.toString(),
+    total_slippage_raw: totalSlip.toString(),
+    round_trip_spread_raw: (totalMint > totalRedeem ? totalMint - totalRedeem : 0n).toString(),
     expected_value_raw: ev.toString(),
   };
 }
@@ -290,6 +368,7 @@ export async function prepareMintStrip(args: {
     const coin = await prepareDusdc(tx, args.owner, args.depositRaw);
     addDeposit(tx, args.managerId, coin);
   }
+  let live = 0;
   for (const b of args.buckets) {
     if (BigInt(b.quantity) <= 0n) continue;
     addMintRange(tx, {
@@ -297,9 +376,11 @@ export async function prepareMintStrip(args: {
       key: { oracleId: args.oracleId, expiry: String(args.expiry), lowerStrike: b.lower, higherStrike: b.higher },
       quantity: b.quantity,
     });
+    live++;
   }
+  if (live === 0) throw new Error('no positive-quantity buckets to mint');
   const prepared = await buildAndDryRun(tx, args.owner);
-  return { ...prepared, bucket_count: args.buckets.length };
+  return { ...prepared, bucket_count: live };
 }
 
 /** Redeem one range bucket (live or, after settlement, permissionless). */

@@ -66,13 +66,14 @@ router.get('/', async (req: Request, res: Response) => {
     // Cap how long the page waits on the live overlay: if the relay can't answer
     // the heavy basket-NAV query within a few seconds, return DB NAV immediately
     // rather than blocking the whole bundles response for the full relay timeout.
-    const polyPromise = getPolymarketBasketNAVs().catch((err) => {
+    type BasketNAVMap = Awaited<ReturnType<typeof getPolymarketBasketNAVs>>;
+    const polyPromise: Promise<BasketNAVMap> = getPolymarketBasketNAVs().catch((err) => {
       console.warn('GET /api/bundles: live Polymarket NAVs unavailable, serving DB NAV only:', (err as Error)?.message);
-      return new Map();
+      return new Map() as BasketNAVMap;
     });
     const polyNAVs = await Promise.race([
       polyPromise,
-      new Promise<Map<string, never>>((resolve) => setTimeout(() => resolve(new Map()), 4000)),
+      new Promise<BasketNAVMap>((resolve) => setTimeout(() => resolve(new Map() as BasketNAVMap), 4000)),
     ]);
 
     const enriched = await Promise.all(

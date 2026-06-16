@@ -22,7 +22,6 @@ import {
   computeBasketStats,
   quoteTranchesFromStats,
   quoteTrancheOrder,
-  betaShapeMatching,
   type BasketStats,
   type TrancheQuote,
   type TrancheKind,
@@ -514,30 +513,30 @@ function DistributionChart({
   const plotW = Math.max(1, W - padL - padR);
   const plotH = Math.max(1, H - padT - padB);
 
-  // Beta(α,β) shape whose first two moments match the basket. The
-  // Normal approximation we used previously produces the same bell
-  // shape for every basket since its tail always extends; Beta is
-  // bounded to [0,1] and bends correctly toward the mean.
-  const shape = betaShapeMatching(mu, Math.max(1e-6, sigma));
+  // Render a moment-matched NORMAL (Gaussian) density — a smooth hump centred at
+  // μ with spread σ, clipped to the plot window. We previously used a moment-
+  // matched Beta, but Beta turns boundary-lopsided for extreme baskets: it
+  // diverges to ∞ at x=0 for a low-probability basket (μ≈3% → a 1px spike + flat
+  // line) and crams against x=1 for a high-probability one (μ≈94% → a curve
+  // mashed into the right edge). A clipped Normal stays smooth and FILLS the
+  // window for every basket while still encoding the basket's real (μ, σ).
+  const shape = (x: number) =>
+    Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
 
-  // Sample 400 points across the full axis so the skew on HIGH / LOW
-  // baskets renders smoothly.
+  // Sample across the window. A Gaussian's peak is at μ with no boundary
+  // singularity, so the global max IS the true peak — normalise by it directly.
   const N = 400;
-  const pts: Array<{ x: number; y: number; val: number }> = [];
+  const pts: Array<{ x: number; y: number; val: number; d: number }> = [];
   let maxD = 0;
   for (let i = 0; i <= N; i++) {
     const val = lo + (span * i) / N;
     const d = shape(val);
-    pts.push({
-      x: padL + (plotW * i) / N,
-      y: 0,
-      val,
-    });
+    pts.push({ x: padL + (plotW * i) / N, y: 0, val, d });
     if (d > maxD) maxD = d;
   }
+  const normDenom = Math.max(1e-9, maxD);
   for (const p of pts) {
-    const d = shape(p.val);
-    p.y = padT + (1 - d / Math.max(1e-9, maxD)) * plotH;
+    p.y = padT + (1 - Math.min(1, p.d / normDenom)) * plotH;
   }
 
   // Convert an outcome value to an x-coordinate in the plot.
@@ -599,7 +598,7 @@ function DistributionChart({
             textTransform: "uppercase",
           }}
         >
-          Outcome distribution · Beta(α, β) moment-matched
+          Outcome distribution · Normal moment-matched
         </span>
         <span
           style={{

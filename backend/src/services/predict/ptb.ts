@@ -196,3 +196,20 @@ export function addGetTradeAmounts(
     arguments: [predict(tx), tx.object(args.key.oracleId), key, tx.pure.u64(args.quantity), clock(tx)],
   });
 }
+
+/**
+ * `predict::get_range_trade_amounts(predict, oracle, key, quantity, clock) -> (mint_cost, redeem_payout)`
+ * Read-only preview for a vertical RANGE (lower, higher]; intended for devInspect.
+ * fair_range = up(lower) - up(higher); the returned cost includes the same
+ * spread/utilization the on-chain mint_range charges (priced post-trade).
+ */
+export function addGetRangeTradeAmounts(
+  tx: Transaction,
+  args: { key: RangeKeyParams; quantity: number | string | bigint },
+): void {
+  const key = buildRangeKey(tx, args.key);
+  tx.moveCall({
+    target: predictTarget('predict', 'get_range_trade_amounts'),
+    arguments: [predict(tx), tx.object(args.key.oracleId), key, tx.pure.u64(args.quantity), clock(tx)],
+  });
+}

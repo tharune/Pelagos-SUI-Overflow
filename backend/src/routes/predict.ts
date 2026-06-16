@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import * as predict from '../services/predict';
+import * as structured from '../services/predict/structured';
 import { PREDICT } from '../services/predict/config';
 
 const router = Router();
@@ -397,6 +398,187 @@ router.post('/withdraw', async (req: Request, res: Response) => {
     );
   } catch (err) {
     sendError(res, err, writeStatus(err));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Structured products — NON-CUSTODIAL (returns unsigned tx_bytes for the wallet)
+// Shared engine for Distribution Markets, Tranches, PPN, and DeepBook baskets.
+// ---------------------------------------------------------------------------
+
+const PRICE_SCALE = 1_000_000_000; // 1e9 strike/forward scale
+
+/** Resolve a tradeable grid oracle (+ live forward) by oracle_id or by asset. */
+async function resolveGridOracle(
+  body: Record<string, unknown>,
+): Promise<structured.GridOracle & { forward_raw: number }> {
+  const oracleId = typeof body.oracle_id === 'string' ? body.oracle_id : undefined;
+  if (oracleId) {
+    if (!isObjectId(oracleId)) throw new Error('oracle_id must be 0x...');
+    const st = (await predict.predictServer.oracleState(oracleId)) as {
+      oracle?: { oracle_id: string; expiry: number; min_strike: number; tick_size: number };
+      latest_price?: { forward?: number; spot?: number };
+    };
+    if (!st.oracle) throw new Error(`oracle ${oracleId} not found`);
+    const fwd = Number(st.latest_price?.forward ?? st.latest_price?.spot ?? st.oracle.min_strike);
+    return { ...st.oracle, forward_raw: fwd };
+  }
+  const asset = String(body.asset ?? 'BTC').toUpperCase();
+  const o = await predict.findActiveOracle(asset);
+  if (!o) throw new Error(`no active ${asset} oracle`);
+  const p = (await predict.predictServer.oraclePriceLatest(o.oracle_id)) as {
+    forward?: number; spot?: number;
+  };
+  const fwd = Number(p.forward ?? p.spot ?? o.min_strike);
+  return {
+    oracle_id: o.oracle_id,
+    expiry: o.expiry,
+    min_strike: o.min_strike,
+    tick_size: o.tick_size,
+    forward_raw: fwd,
+  };
+}
+
+/** Strip pricing: a μ/σ view -> N on-grid Predict range buckets, priced live (devInspect). */
+router.post('/strip/preview', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    const o = await resolveGridOracle(body);
+    const muRaw =
+      body.mu_usd !== undefined ? Math.round(Number(body.mu_usd) * PRICE_SCALE)
+      : body.mu_raw !== undefined ? Number(body.mu_raw)
+      : o.forward_raw;
+    const sigmaRaw =
+      body.sigma_usd !== undefined ? Math.round(Number(body.sigma_usd) * PRICE_SCALE)
+      : body.sigma_raw !== undefined ? Number(body.sigma_raw)
+      : Math.max(o.tick_size, Math.round(o.forward_raw * 0.01)); // default σ = 1% of forward
+    if (!(sigmaRaw > 0)) throw new Error('sigma must be positive');
+    const n = Math.min(12, Math.max(1, Number(body.n ?? 6)));
+    const budgetRaw =
+      body.budget_raw !== undefined ? BigInt(String(body.budget_raw))
+      : body.budget_usd !== undefined
+        ? BigInt(Math.round(Number(body.budget_usd) * 10 ** PREDICT.dusdcDecimals))
+        : 0n;
+    if (budgetRaw <= 0n) throw new Error('budget_usd or budget_raw (positive) is required');
+    const spanSigma = body.span_sigma !== undefined ? Number(body.span_sigma) : 2;
+    const quote = await structured.previewStrip({
+      oracle: { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
+      muRaw,
+      sigmaRaw,
+      n,
+      budgetRaw,
+      spanSigma,
+      sender: typeof body.sender === 'string' ? body.sender : undefined,
+    });
+    res.json({ ...quote, forward_usd: o.forward_raw / PRICE_SCALE, dusdc_decimals: PREDICT.dusdcDecimals });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** First-open: create the user's PredictManager (wallet-signed). */
+router.post('/manager/prepare', async (req: Request, res: Response) => {
+  try {
+    const owner = (req.body as Record<string, unknown>).owner;
+    if (!isObjectId(owner)) throw new Error('owner (0x...) is required');
+    res.json(await structured.prepareCreateManager(owner));
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Open a range strip into the user's manager (wallet-signed; optional in-PTB deposit). */
+router.post('/strip/open/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
+    if (!isObjectId(body.oracle_id)) throw new Error('oracle_id (0x...) is required');
+    if (body.expiry === undefined) throw new Error('expiry is required');
+    if (!Array.isArray(body.buckets) || body.buckets.length === 0) {
+      throw new Error('buckets[] is required');
+    }
+    const depositRaw = rawAmount(body, 'deposit_amount_raw', 'deposit_amount_ui') ?? undefined;
+    res.json(
+      await structured.prepareMintStrip({
+        owner: body.owner as string,
+        managerId: body.manager_id as string,
+        oracleId: body.oracle_id as string,
+        expiry: String(body.expiry),
+        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
+        depositRaw,
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Redeem one range bucket (live, or permissionless after settlement) — wallet-signed. */
+router.post('/range/redeem/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
+    if (!isObjectId(body.oracle_id)) throw new Error('oracle_id (0x...) is required');
+    for (const k of ['expiry', 'lower', 'higher', 'quantity']) {
+      if (body[k] === undefined) throw new Error(`${k} is required`);
+    }
+    res.json(
+      await structured.prepareRedeemRange({
+        owner: body.owner as string,
+        managerId: body.manager_id as string,
+        oracleId: body.oracle_id as string,
+        expiry: String(body.expiry),
+        lower: String(body.lower),
+        higher: String(body.higher),
+        quantity: String(body.quantity),
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** PPN floor / "be the house": supply dUSDC to the PLP vault — wallet-signed. */
+router.post('/lp/supply/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    const amountRaw = rawAmount(body, 'amount_raw', 'amount_ui');
+    if (!amountRaw) throw new Error('amount_raw or amount_ui (positive) is required');
+    res.json(await structured.preparePlpSupply({ owner: body.owner as string, amountRaw }));
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Withdraw from the PLP vault (burn PLP for dUSDC) — wallet-signed. */
+router.post('/lp/withdraw/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    const sharesRaw = body.shares_raw !== undefined ? BigInt(String(body.shares_raw)) : undefined;
+    res.json(
+      await structured.preparePlpWithdraw({
+        owner: body.owner as string,
+        plpCoinId: isObjectId(body.plp_coin_id) ? (body.plp_coin_id as string) : undefined,
+        sharesRaw,
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Confirm a wallet-executed Predict digest (manager / strip / redeem / LP). */
+router.post('/confirm', async (req: Request, res: Response) => {
+  try {
+    const digest = (req.body as Record<string, unknown>).digest;
+    if (typeof digest !== 'string' || !digest) throw new Error('digest is required');
+    res.json(await structured.confirmPredictDigest(digest));
+  } catch (err) {
+    sendError(res, err, 400);
   }
 });
 

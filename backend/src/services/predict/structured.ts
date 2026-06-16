@@ -421,6 +421,41 @@ export async function preparePlpSupply(args: { owner: string; amountRaw: bigint 
   return buildAndDryRun(tx, args.owner);
 }
 
+/**
+ * PPN open in ONE PTB: split the user's dUSDC into a FLOOR sleeve supplied to the
+ * PLP vault (principal-protection "be the house" yield) and an UPSIDE sleeve
+ * deposited into the manager and minted as a range strip. Non-custodial.
+ */
+export async function preparePpnOpen(args: {
+  owner: string;
+  managerId: string;
+  oracleId: string;
+  expiry: number | string;
+  buckets: Array<{ lower: string; higher: string; quantity: string }>;
+  floorRaw: bigint;
+  upsideRaw: bigint;
+}): Promise<PreparedTx & { floor_raw: string; upside_raw: string; bucket_count: number }> {
+  if (args.floorRaw <= 0n) throw new Error('floor must be positive');
+  const live = args.buckets.filter((b) => BigInt(b.quantity) > 0n);
+  if (live.length === 0) throw new Error('no positive-quantity upside buckets');
+  const tx = new Transaction();
+  const total = await prepareDusdc(tx, args.owner, args.floorRaw + args.upsideRaw);
+  // split the floor sleeve off; remainder is the upside sleeve
+  const [floorCoin] = tx.splitCoins(total, [tx.pure.u64(args.floorRaw)]);
+  const plp = addSupply(tx, floorCoin);
+  tx.transferObjects([plp], tx.pure.address(args.owner));
+  addDeposit(tx, args.managerId, total); // remaining (= upsideRaw) funds the strip
+  for (const b of live) {
+    addMintRange(tx, {
+      managerId: args.managerId,
+      key: { oracleId: args.oracleId, expiry: String(args.expiry), lowerStrike: b.lower, higherStrike: b.higher },
+      quantity: b.quantity,
+    });
+  }
+  const prepared = await buildAndDryRun(tx, args.owner);
+  return { ...prepared, floor_raw: args.floorRaw.toString(), upside_raw: args.upsideRaw.toString(), bucket_count: live.length };
+}
+
 /** Burn PLP for dUSDC back to the user (full balance unless sharesRaw given). */
 export async function preparePlpWithdraw(args: {
   owner: string;

@@ -1,0 +1,43 @@
+# Pelagos — Live Testnet Deployment (2026-06-16)
+
+Fresh from-scratch deployment under a dedicated wallet. Sui **testnet** (chain `4c78adac`).
+
+## Deployer / operator wallet
+- **Address:** `0xcad0f800f44a48360c01e9fa2d21e779bd829cb60e7220227ed16bb74d4d73e5`
+- Key in `backend/.env` (`SUI_PRIVATE_KEY`, gitignored) + CLI keystore. Funded with testnet SUI.
+
+## Pelagos packages (published this deploy)
+| Thing | ID |
+|---|---|
+| `pelagos_sui` package (mock_usdc + prediction_market) | `0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45` |
+| `mock_usdc::Faucet` (shared, permissionless mint) | `0xd1f67a0ec1d4b26631fcd1810f16bbc0fdf88a83cfe04c26ad400566528a07f0` |
+| `MOCK_USDC` type | `0x598434be…3e45::mock_usdc::MOCK_USDC` (6 dp) |
+| `prediction_market::AdminCap` | `0x0c14a699335427625eb7317cd16e758f201b8a0413d58fd0592b20e761597c4b` |
+| `pelagos_vault` package | `0xcaff49f849bdf83b2df754ffc7d43c07b19ee33c2395255185607b55802e2b19` |
+| `Vault<MOCK_USDC>` (shared) — baskets / freely-testable | `0x5fdc7d7a94d1dc7ae459b2e3f6760cb3b6745e6c3e4f2eed511da54bd0042d2d` |
+| `VaultAdminCap` (MOCK_USDC vault) | `0x177582ae9cb44b119835d224d4b8d2f14aac0157d41f0931b55ebef0f66ef348` |
+| `Vault<dUSDC>` (shared) — Predict-backed PPN/tranche wrappers | `0x9110df6651807391a65f060a5c1fb0cfecf3163ecb11d879e1aa552f1868c54a` |
+| `VaultAdminCap` (dUSDC vault) | `0xeecb761376a03d5d875846886905af59ebd418150666666102806e54fe7f843f` |
+
+## DeepBook Predict (Mysten testnet — we call it, don't deploy it)
+| Thing | ID |
+|---|---|
+| Predict package | `0xf5ea2b3749c65d6e56507cc35388719aadb28f9cab873696a2f8687f5c785138` |
+| Predict object (market root) | `0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a` |
+| dUSDC type (Predict quote, faucet-gated) | `0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC` |
+| Indexer | `https://predict-server.testnet.mystenlabs.com` |
+| dUSDC faucet (manual) | https://tally.so/r/Xx102L |
+
+## Collateral model
+- **dUSDC** — the ONLY asset DeepBook Predict accepts. Used for every Predict leg (distribution range strips, PLP supply for the PPN floor, Predict-backed tranches). Faucet-gated.
+- **MOCK_USDC** — freely mintable via the shared `Faucet` (`faucet`/`mint`, ≤1,000,000/call). Used for Pelagos's own contracts (Polymarket baskets, vault flows) so testing/demos are never bottlenecked. **Cannot** be a Predict quote (protocol AdminCap required to register a quote).
+
+## Verified on-chain this deploy
+- `pelagos_sui` + `pelagos_vault` published; both `sui move test` green (2/2 each).
+- mock_usdc `faucet` minted 1,000,000 mUSDC (CLI) + backend service minted +12,345 (digest `Gi1JgvinJLRi2tGNfi9UQx6zH82AmXF9zriDmuVMyGh4`) → balance 1,012,345 mUSDC.
+- `Vault<MOCK_USDC>` + `Vault<dUSDC>` created and shared.
+- Predict range pricing + strip MM pricing/slippage verified live via devInspect (no funds).
+
+## Pending (gated on dUSDC faucet grant)
+- Live Predict writes (mint range strip, PLP supply) — need dUSDC in a wallet.
+- Full end-to-end Predict E2E run.

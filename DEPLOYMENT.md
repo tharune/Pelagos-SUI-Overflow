@@ -38,6 +38,13 @@ Fresh from-scratch deployment under a dedicated wallet. Sui **testnet** (chain `
 - `Vault<MOCK_USDC>` + `Vault<dUSDC>` created and shared.
 - Predict range pricing + strip MM pricing/slippage verified live via devInspect (no funds).
 
-## Pending (gated on dUSDC faucet grant)
-- Live Predict writes (mint range strip, PLP supply) — need dUSDC in a wallet.
-- Full end-to-end Predict E2E run.
+## Live Predict E2E — VERIFIED on-chain (dUSDC granted 2026-06-16)
+Operator manager: `0x7806a6636dd9764ec017134241fbff6d630e8fa7f594661489aeb6226596c166`
+- `create_manager` ✅
+- **mint range strip** (Distribution) ✅ digest `Jz37mnMGCMxrAdo4zAJbhvWoAJV8oeS3CHDkJPnw7Mz` (deposit dUSDC + N×mint_range in one PTB)
+- **PLP supply** (PPN floor) ✅ digest `48LEWpyfHVtKyMcWjWxs2XXf5PEPEvbhVdLJjj4ZGT6k` → 9.98 PLP received
+- **mint + redeem range** (sell side, both ways) ✅ digests `5iu38GUZantoDrp8mW4pS8K7x9kTvFpYhpmGfJjh2ck3` (mint), `cAZAWhRVUfLWPeUzuDPdp3qtHsLBvBuLBiDimTLCHZ3` (redeem)
+- Indexer confirms: **4 range mints + 1 redeem**, PLP balance 9.98, wallet dUSDC 919 remaining.
+- Pricing: real MM ask/bid + slippage from `get_(range_)trade_amounts`; mintable-band filter ([2%,98%]) keeps every surfaced bucket actually mintable (sub-1% bands abort `assert_mintable_ask`).
+
+Remaining: seed larger pools when the 1M dUSDC grant lands; frontend wiring; settlement/redeem_permissionless keeper.

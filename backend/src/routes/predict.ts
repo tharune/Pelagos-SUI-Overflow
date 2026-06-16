@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import * as predict from '../services/predict';
 import * as structured from '../services/predict/structured';
+import * as products from '../services/predict/products';
 import { PREDICT } from '../services/predict/config';
 
 const router = Router();
@@ -577,6 +578,114 @@ router.post('/confirm', async (req: Request, res: Response) => {
     const digest = (req.body as Record<string, unknown>).digest;
     if (typeof digest !== 'string' || !digest) throw new Error('digest is required');
     res.json(await structured.confirmPredictDigest(digest));
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Products: PPN (PLP floor + range upside), Tranches, DeepBook baskets.
+// ---------------------------------------------------------------------------
+
+function sigmaFromBody(body: Record<string, unknown>, o: { tick_size: number; forward_raw: number }): number {
+  if (body.sigma_usd !== undefined) return Math.round(Number(body.sigma_usd) * PRICE_SCALE);
+  if (body.sigma_raw !== undefined) return Number(body.sigma_raw);
+  return Math.max(o.tick_size, Math.round(o.forward_raw * 0.005)); // default σ = 0.5% of forward
+}
+function budgetFromBody(body: Record<string, unknown>): bigint {
+  if (body.budget_raw !== undefined) return BigInt(String(body.budget_raw));
+  if (body.budget_usd !== undefined) return BigInt(Math.round(Number(body.budget_usd) * 10 ** PREDICT.dusdcDecimals));
+  throw new Error('budget_usd or budget_raw (positive) is required');
+}
+
+/** PPN quote: PLP floor + range-strip upside. */
+router.post('/ppn/quote', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    const o = await resolveGridOracle(body);
+    const budgetRaw = budgetFromBody(body);
+    if (budgetRaw <= 0n) throw new Error('budget must be positive');
+    const out = await products.quotePpn({
+      oracle: { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
+      forwardRaw: o.forward_raw,
+      budgetRaw,
+      floorPct: body.floor_pct !== undefined ? Number(body.floor_pct) : 0.8,
+      sigmaRaw: sigmaFromBody(body, o),
+      n: Math.min(12, Math.max(1, Number(body.n ?? 6))),
+      sender: typeof body.sender === 'string' ? body.sender : undefined,
+    });
+    res.json({ ...out, oracle_id: o.oracle_id, expiry: String(o.expiry), forward_usd: o.forward_raw / PRICE_SCALE });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** PPN open: PLP supply + range strip in one wallet-signed PTB. */
+router.post('/ppn/open/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
+    if (!isObjectId(body.oracle_id)) throw new Error('oracle_id (0x...) is required');
+    if (body.expiry === undefined) throw new Error('expiry is required');
+    if (!Array.isArray(body.buckets) || body.buckets.length === 0) throw new Error('buckets[] is required');
+    const floorRaw = rawAmount(body, 'floor_amount_raw', 'floor_amount_ui');
+    const upsideRaw = rawAmount(body, 'upside_amount_raw', 'upside_amount_ui');
+    if (!floorRaw || !upsideRaw) throw new Error('floor_amount_* and upside_amount_* are required');
+    res.json(
+      await structured.preparePpnOpen({
+        owner: body.owner as string,
+        managerId: body.manager_id as string,
+        oracleId: body.oracle_id as string,
+        expiry: String(body.expiry),
+        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
+        floorRaw,
+        upsideRaw,
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Tranche quote: senior/mezz/junior = the strip at 0.5σ / 1σ / 2σ width. */
+router.post('/tranche/quote', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    const o = await resolveGridOracle(body);
+    const out = await products.quoteTranches({
+      oracle: { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
+      forwardRaw: o.forward_raw,
+      budgetRaw: budgetFromBody(body),
+      sigmaRaw: sigmaFromBody(body, o),
+      n: Math.min(12, Math.max(1, Number(body.n ?? 6))),
+      sender: typeof body.sender === 'string' ? body.sender : undefined,
+    });
+    res.json({ ...out, oracle_id: o.oracle_id, expiry: String(o.expiry), forward_usd: o.forward_raw / PRICE_SCALE });
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** List the DeepBook structured baskets (replace the old 50% Polymarket basket). */
+router.get('/baskets', (_req: Request, res: Response) => {
+  res.json(products.DEEPBOOK_BASKETS);
+});
+
+/** Quote a named DeepBook basket. */
+router.post('/basket/quote', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (typeof body.basket_id !== 'string') throw new Error('basket_id is required');
+    const o = await resolveGridOracle(body);
+    const out = await products.quoteBasket({
+      oracle: { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
+      forwardRaw: o.forward_raw,
+      basketId: body.basket_id,
+      budgetRaw: budgetFromBody(body),
+      sender: typeof body.sender === 'string' ? body.sender : undefined,
+    });
+    res.json({ ...out, oracle_id: o.oracle_id, expiry: String(o.expiry), forward_usd: o.forward_raw / PRICE_SCALE });
   } catch (err) {
     sendError(res, err, 400);
   }

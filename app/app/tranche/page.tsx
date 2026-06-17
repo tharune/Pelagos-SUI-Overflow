@@ -15,9 +15,6 @@ const TIER_LABEL: Record<90 | 70 | 50, string> = {
   70: "Mid probability",
   50: "Low probability",
 };
-type HyBucket = "short" | "med" | "long";
-const HY_BUCKETS: HyBucket[] = ["short", "med", "long"];
-const HY_LABEL: Record<HyBucket, string> = { short: "Short", med: "Medium", long: "Long" };
 
 const TIER_BODY: Record<90 | 70 | 50, string> = {
   90: "High-probability baskets where the senior slice does most of the work.",
@@ -46,30 +43,6 @@ export default function TranchesPage() {
     return empty;
   }, [state]);
 
-  // Three cross-venue hybrid vaults — short / medium / long — each pairing a
-  // DeepBook BTC tenor with an event-basket tail of matching horizon.
-  const hybridBaskets = useMemo(() => {
-    const list = (state.status === "ok" && state.baskets.length > 0 ? state.baskets : (BUNDLES as unknown as LiveBasket[]));
-    const sorted = [...list].sort((a, b) => a.daysLeft - b.daysLeft);
-    const at = (i: number) => sorted[Math.max(0, Math.min(sorted.length - 1, i))] ?? null;
-    return { short: at(0), med: at(Math.floor(sorted.length / 2)), long: at(sorted.length - 1) };
-  }, [state]);
-
-  const [hyTenors, setHyTenors] = useState<Record<HyBucket, { oracleId: string; tenor: string } | null>>({ short: null, med: null, long: null });
-  useEffect(() => {
-    let alive = true;
-    fetchVolSurface("BTC")
-      .then((s) => {
-        const Y = 31_557_600;
-        const live = s.slices.filter((sl) => sl.t_years > 360 / Y).sort((a, b) => a.expiry - b.expiry);
-        if (!alive || live.length === 0) return;
-        const at = (i: number) => ({ oracleId: live[i].oracle_id, tenor: live[i].tenor_label });
-        setHyTenors({ short: at(0), med: at(Math.floor(live.length / 2)), long: at(live.length - 1) });
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
   return (
     <>
       <Header />
@@ -97,28 +70,6 @@ export default function TranchesPage() {
                 <strong>senior · mezz · junior</strong>
               </header>
               <DeepBookTranches onOpen={(oid) => router.push(`/app/tranche/db/${oid}`)} />
-            </section>
-
-            {/* ── Hybrid · cross-venue vaults ── */}
-            <section className="risk-tier">
-              <header className="risk-tier-head">
-                <div>
-                  <span style={{ color: C.violet }}>Hybrid · cross-venue vaults</span>
-                  <p>One waterfall over two venues: a DeepBook BTC strip + a Polymarket event tail. Senior leans on the BTC core; junior takes the event tail. Pick a horizon.</p>
-                </div>
-                <strong>3 vaults</strong>
-              </header>
-              <div className="risk-grid">
-                {HY_BUCKETS.map((bk) => {
-                  const t = hyTenors[bk];
-                  const basket = hybridBaskets[bk];
-                  return t && basket ? (
-                    <HybridTrancheCard key={bk} bucket={bk} oracleId={t.oracleId} tenor={t.tenor} basket={basket} onClick={() => router.push(`/app/tranche/db/hybrid-${bk}`)} />
-                  ) : (
-                    <CardSkeleton key={bk} count={1} />
-                  );
-                })}
-              </div>
             </section>
 
             {/* ── Polymarket event tiers ── */}
@@ -238,78 +189,6 @@ function TrancheStratCard({ t, forward, tenor, onClick }: { t: TrancheProfile; f
           <strong>${Math.round(forward).toLocaleString()}</strong>
           <b style={{ color: C.textMuted }}>BTC</b>
         </div>
-      </div>
-    </button>
-  );
-}
-
-// ── Hybrid cross-venue vault card (DeepBook BTC tenor + Polymarket event tail) ──
-function HybridTrancheCard({ bucket, oracleId, tenor, basket, onClick }: { bucket: HyBucket; oracleId: string; tenor: string; basket: LiveBasket; onClick: () => void }) {
-  const [db, setDb] = useState<TrancheProfile[] | null>(null);
-  useEffect(() => {
-    let alive = true;
-    trancheQuote({ asset: "BTC", oracle_id: oracleId, budget_usd: 100 })
-      .then((q) => { if (alive) setDb(q.tranches); })
-      .catch(() => { if (alive) setDb([]); });
-    return () => { alive = false; };
-  }, [oracleId]);
-
-  const pm = useMemo(() => {
-    try {
-      const s = computeBasketStats(basket.nav, basket.markets, basket.totalLegs, basket.daysLeft, basket.tier);
-      return quoteTranchesFromStats(s);
-    } catch { return [] as TrancheQuote[]; }
-  }, [basket]);
-
-  // Blend: senior leans on the BTC core (low vol), junior reaches the event tail.
-  // The figure is an indicative best-case return that combines the DeepBook
-  // band's realized payoff with the Polymarket leg's expected yield.
-  const rows = (["senior", "mezzanine", "junior"] as const).map((kind) => {
-    const dbT = db?.find((t) => (t.tranche === "mezz" ? "mezzanine" : t.tranche) === kind);
-    const pmT = pm.find((t) => t.kind === kind);
-    const dbMult = dbT ? Number(dbT.strip.realized_max_payout_raw) / Math.max(1, Number(dbT.strip.total_cost_raw)) : 0;
-    const pmApy = pmT ? pmT.expectedApyPct : 0;
-    // weight: senior leans BTC (70/30), junior leans event (30/70)
-    const wDb = kind === "senior" ? 0.7 : kind === "mezzanine" ? 0.5 : 0.3;
-    const blended = Math.max(0, (dbMult - 1) * 100 * wDb + pmApy * (1 - wDb));
-    return { kind, blended };
-  });
-
-  return (
-    <button className="risk-card risk-card--hybrid" type="button" onClick={onClick}>
-      <div className="risk-card-head">
-        <div>
-          <div className="risk-card-title">
-            <i style={{ background: C.violet }} />
-            <strong>HYBRID · {HY_LABEL[bucket]}</strong>
-          </div>
-          <div className="risk-meta">
-            <span>DeepBook {tenor}</span>
-            <span>+ Polymarket</span>
-            <span style={{ color: `${C.green}cc` }}>live</span>
-          </div>
-        </div>
-        <span className="risk-day">2-venue</span>
-      </div>
-
-      <div className="risk-band">
-        <div className="risk-band-track">
-          <div style={{ width: "55%", background: C.tealLight }} title="DeepBook BTC core" />
-          <div style={{ width: "45%", background: C.violet }} title="Polymarket event tail" />
-        </div>
-      </div>
-
-      <div className="risk-slice-list">
-        {(db && pm.length) ? rows.map((r) => (
-          <div className="risk-slice-row" key={r.kind}>
-            <div>
-              <span style={{ color: trancheColor(r.kind) }}>{r.kind}</span>
-              <em>{r.kind === "senior" ? "BTC-weighted" : r.kind === "junior" ? "event-weighted" : "balanced"}</em>
-            </div>
-            <strong style={{ color: C.textMuted, fontWeight: 400 }}>·</strong>
-            <b style={{ color: r.blended >= 50 ? C.green : r.blended >= 10 ? C.tealLight : C.textSecondary }}>{formatYieldPct(r.blended)}<em> blend</em></b>
-          </div>
-        )) : <RowSkeleton />}
       </div>
     </button>
   );

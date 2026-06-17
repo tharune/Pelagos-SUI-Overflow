@@ -30,7 +30,6 @@ import {
   Stat,
   StripStyles,
   openableBuckets,
-  dollars,
 } from "./strip-products";
 
 type Wallet = ReturnType<typeof useWalletSigner>;
@@ -62,9 +61,8 @@ export function DeepBookBaskets() {
   const [oracles, setOracles] = useState<Oracle[] | null>(null);
   const [tenorId, setTenorId] = useState<string | null>(null);
   const [recipes, setRecipes] = useState<BasketRecipe[]>([]);
-  const [budget, setBudget] = useState("100");
+  const [budget] = useState("100");
 
-  const [forward, setForward] = useState<number | null>(null);
   const [quotes, setQuotes] = useState<Record<string, StripQuote>>({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -110,7 +108,6 @@ export function DeepBookBaskets() {
       try {
         // One default preview resolves the live forward for this oracle.
         const base = await stripPreview({ oracle_id: tenorId, n: 4, budget_usd: budgetNum, sender: wallet.address ?? undefined }, ctrl.signal);
-        setForward(base.forward_usd);
         const priced = await Promise.all(
           recipes.map((r) =>
             stripPreview(
@@ -176,7 +173,7 @@ export function DeepBookBaskets() {
 
   return (
     <div className="db-wrap">
-      {/* tenor + budget controls */}
+      {/* tenor controls */}
       <div className="db-controls">
         <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
           <Cap>Expiry · live BTC tenors</Cap>
@@ -197,16 +194,6 @@ export function DeepBookBaskets() {
               ))
             )}
           </div>
-        </div>
-        <div style={{ display: "grid", gap: 7 }}>
-          <Cap>Budget (dUSDC)</Cap>
-          <input className="db-num" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
-        </div>
-        <div style={{ display: "grid", gap: 3 }}>
-          <Cap>Forward</Cap>
-          <span style={{ fontFamily: FD, fontSize: 18, fontWeight: 600, color: C.tealLight }}>
-            {forward ? dollars(forward) : loading ? "…" : "—"}
-          </span>
         </div>
       </div>
 

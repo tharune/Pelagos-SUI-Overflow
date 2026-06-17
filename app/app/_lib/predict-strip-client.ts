@@ -264,10 +264,11 @@ export const prepareTermBasketOpen = (b: {
 
 // ---- volatility desk ----
 export interface VolGreeks { delta_btc: number; gamma: number; vega_usd: number; theta_usd_day: number; position_value_usd: number; }
-export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; }
+export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; chain: "sui" | "cex" | "forward"; conf?: number; }
 export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_cost_usd: number; venue: string; }
 export interface VolQuote {
   side: "long" | "short"; oracle_id: string; expiry: string; forward_usd: number; atm_iv: number; t_years: number;
+  tenor_label: string; max_loss_usd: number;
   strip: StripQuote; greeks: VolGreeks; mark: BtcMark; hedge: HedgeQuote;
 }
 export interface VolDeskSurface extends VolSurface { realized_vol: number; rv_window_hours: number; rv_source: string; vol_risk_premium: number; }

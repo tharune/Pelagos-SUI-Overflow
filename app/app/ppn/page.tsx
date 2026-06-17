@@ -12,7 +12,7 @@ export default function PpnPage() {
       <Header />
       <PageFrame wide>
         <PageHead
-          eyebrow="DeepBook Predict · Protected Notes"
+          eyebrow="BTC · Protected Notes"
           title="Protected Notes"
           sub={
             <>

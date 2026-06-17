@@ -160,7 +160,7 @@ export default function PredictPage() {
       <PageFrame wide zoom={0.8}>
         <div style={{ marginBottom: 22 }}>
           <h1 style={{ fontFamily: FD, fontSize: 34, fontWeight: 600, letterSpacing: "-0.03em", color: C.textPrimary, margin: 0 }}>
-            DeepBook Predict
+            Prediction Markets
           </h1>
           <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 680, lineHeight: 1.6 }}>
             Sui&apos;s native on-chain prediction-market protocol. Price an UP/DOWN view on a live

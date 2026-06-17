@@ -384,40 +384,50 @@ export function assessBasketRisk(legs: LegMetadata[], weights: number[]): RiskAs
 
 export function getModelManifest() {
   const a = loadArtifacts();
+  // Whether the audited artifact bundle (correlation-deliverables/*.json) is
+  // actually present. When absent we must NOT present the defaults (precision 0,
+  // VaR 0, …) as if they were audited measurements — null them out so the
+  // manifest is honest about what's loaded vs assumed.
+  const present = Boolean(a.loaded_from);
+  const audited = <T>(v: T): T | null => (present ? v : null);
   return {
     version: a.version,
     loaded_from: a.loaded_from,
+    artifacts_present: present,
     audit: {
-      all_checks_passed: a.all_checks_passed,
-      classifier_precision: a.classifier_precision,
-      classifier_recall: a.classifier_recall,
+      all_checks_passed: present ? a.all_checks_passed : null,
+      classifier_precision: audited(a.classifier_precision),
+      classifier_recall: audited(a.classifier_recall),
       classifier_threshold: a.classifier_threshold,
-      walkforward_p_value: a.walkforward_p_value,
-      walkforward_mean_improvement: a.walkforward_mean_improvement,
-      training_rows: a.training_rows,
-      feature_count: a.feature_count,
+      walkforward_p_value: audited(a.walkforward_p_value),
+      walkforward_mean_improvement: audited(a.walkforward_mean_improvement),
+      training_rows: audited(a.training_rows),
+      feature_count: audited(a.feature_count),
     },
     optimization: {
       target_basket_size: a.target_basket_size,
-      audited_internal_corr: a.audited_internal_corr,
-      audited_random_baseline: a.audited_random_baseline,
+      audited_internal_corr: audited(a.audited_internal_corr),
+      audited_random_baseline: audited(a.audited_random_baseline),
     },
     risk: {
-      var_95: a.var_95,
-      var_99: a.var_99,
-      cvar_95: a.cvar_95,
-      cvar_99: a.cvar_99,
+      // var/cvar are audited Monte-Carlo outputs — null when the bundle is absent.
+      var_95: audited(a.var_95),
+      var_99: audited(a.var_99),
+      cvar_95: audited(a.cvar_95),
+      cvar_99: audited(a.cvar_99),
       horizon_days: a.horizon_days,
+      // sigma_daily is the per-leg daily-vol ASSUMPTION behind the projected tail.
       sigma_daily: a.sigma_daily,
-      monte_carlo_paths: a.monte_carlo_paths,
+      sigma_daily_is_assumption: !present,
+      monte_carlo_paths: audited(a.monte_carlo_paths),
     },
     runtime: {
       scoring_implementation: 'typescript-heuristic-v1',
       strategy: 'greedy_decorrelation + inverse-variance clamp',
-      guardrail_tolerance: 1.15,
-      note:
-        'Trained sklearn classifier lives in the production tarball and requires Python to invoke. ' +
-        'Runtime uses a conservative deterministic approximation that never admits a pair the classifier would flag.',
+      guardrail_tolerance: 1.25, // must match assessBasketRisk's `tolerance`
+      note: present
+        ? 'Audited artifacts loaded; runtime uses a conservative deterministic approximation of the trained classifier that never admits a pair the classifier would flag.'
+        : 'Audited artifact bundle not present in this deployment — audit/MC metrics are reported as null (not zero). The correlation gate runs a deterministic text/temporal heuristic; accept/reject is correlation-driven and independent of the sigma_daily assumption.',
     },
   };
 }

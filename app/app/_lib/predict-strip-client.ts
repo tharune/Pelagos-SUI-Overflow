@@ -246,6 +246,40 @@ export const preparePpnOpen = (b: {
 export const confirmPredict = (digest: string) =>
   post<{ ok: boolean; status: string; digest: string; explorer_url: string; created_manager_id?: string | null }>("/api/predict/confirm", { digest });
 
+// ---- term baskets (calendar bundles across BTC expiries) ----
+export interface TermBasketLeg {
+  oracle_id: string; expiry: string; tenor_label: string; t_years: number; forward_usd: number; weight: number; strip: StripQuote;
+}
+export interface TermBasketQuote {
+  basket: { id: string; name: string; description: string };
+  legs: TermBasketLeg[];
+  total_cost_raw: string; total_best_raw: string; round_trip_spread_raw: string; forward_usd: number; dusdc_decimals: number;
+}
+export const listTermBaskets = () => get<Array<{ id: string; name: string; description: string }>>("/api/predict/termbaskets");
+export const termBasketQuote = (b: { asset?: string; basket_id: string; budget_usd: number; sender?: string }) =>
+  post<TermBasketQuote>("/api/predict/termbasket/quote", b);
+export const prepareTermBasketOpen = (b: {
+  owner: string; manager_id: string; legs: Array<{ oracleId: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>; deposit_amount_raw?: string;
+}) => post<PreparedTx & { bucket_count: number; leg_count: number }>("/api/predict/termbasket/open/prepare", b);
+
+// ---- volatility desk ----
+export interface VolGreeks { delta_btc: number; gamma: number; vega_usd: number; theta_usd_day: number; position_value_usd: number; }
+export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; }
+export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_cost_usd: number; venue: string; }
+export interface VolQuote {
+  side: "long" | "short"; oracle_id: string; expiry: string; forward_usd: number; atm_iv: number; t_years: number;
+  strip: StripQuote; greeks: VolGreeks; mark: BtcMark; hedge: HedgeQuote;
+}
+export interface VolDeskSurface extends VolSurface { realized_vol: number; rv_window_hours: number; rv_source: string; vol_risk_premium: number; }
+export const fetchVolDeskSurface = () => get<VolDeskSurface>("/api/vol/surface");
+export const volQuote = (b: { side: "long" | "short"; oracle_id?: string; notional_usd: number; sender?: string }) =>
+  post<VolQuote>("/api/vol/quote", b);
+export const volHedge = (deltaBtc: number, oracleId?: string) =>
+  get<{ mark: BtcMark; hedge: HedgeQuote }>(`/api/vol/hedge?delta_btc=${deltaBtc}${oracleId ? `&oracle_id=${oracleId}` : ""}`);
+export const prepareVolOpen = (b: {
+  owner: string; manager_id: string; oracle_id: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }>; deposit_amount_raw?: string;
+}) => post<PreparedTx & { bucket_count: number }>("/api/vol/open/prepare", b);
+
 // ---- the wallet-signed flow helper ----
 export interface SignFn { (txJson: string): Promise<string> }
 

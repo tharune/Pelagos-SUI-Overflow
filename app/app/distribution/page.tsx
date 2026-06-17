@@ -217,7 +217,7 @@ export default function DistributionPage() {
       <PageFrame wide zoom={0.8}>
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontFamily: FM, fontSize: 10.5, letterSpacing: "0.16em", textTransform: "uppercase", color: C.teal, marginBottom: 10 }}>
-            DeepBook Predict · Distribution
+            BTC · Distribution
           </div>
           <h1 style={{ fontFamily: FD, fontSize: 34, fontWeight: 600, letterSpacing: "-0.03em", color: C.textPrimary, margin: 0 }}>
             Distribution

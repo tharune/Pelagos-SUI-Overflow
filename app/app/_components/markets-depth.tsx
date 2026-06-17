@@ -44,7 +44,7 @@ export function MarketsDepthPanel() {
   return (
     <div style={{ ...card, marginTop: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted }}>Live markets · DeepBook Predict (BTC)</div>
+        <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted }}>Live markets · BTC</div>
         <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>{data ? `${data.markets.length} active oracles` : err ? "offline" : "loading…"}</span>
       </div>
 

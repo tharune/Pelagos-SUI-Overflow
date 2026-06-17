@@ -45,6 +45,65 @@ export function volWeights(n: number, side: VolSide): number[] {
   });
 }
 
+/** The four canonical vol structures, each synthesized as a range strip. */
+export type VolStrategy = 'straddle' | 'strangle' | 'butterfly' | 'condor';
+
+export interface StrategyProfile {
+  strategy: VolStrategy;
+  side: VolSide;
+  label: string;
+  thesis: string;
+  /** strip half-width in σ; wider = more OTM coverage. */
+  spanSigma: number;
+  /** per-bucket sizing weights (length n). */
+  weights: number[];
+}
+
+/**
+ * Map a structured vol strategy to its strip geometry (side, span, per-bucket
+ * weights). All four are real option structures expressed as DeepBook range
+ * strips:
+ *   straddle  — long gamma, ATM-centered wings (pays on any decent move)
+ *   strangle  — long gamma, OTM-only wings (cheaper, pays on a large move)
+ *   butterfly — short gamma, tight center (pays if BTC pins the forward)
+ *   condor    — short gamma, wide center plateau (pays across a range)
+ */
+export function strategyProfile(strategy: VolStrategy, n: number): StrategyProfile {
+  const center = (n - 1) / 2;
+  const maxd = Math.max(center, 1);
+  const dist = (i: number) => Math.abs(i - center) / maxd; // 0 center … 1 wings
+  let side: VolSide;
+  let spanSigma: number;
+  let label: string;
+  let thesis: string;
+  let w: (d: number) => number;
+  switch (strategy) {
+    case 'strangle':
+      side = 'long'; spanSigma = 3.0; label = 'Strangle';
+      thesis = 'Long gamma, OTM wings — cheap, pays on a large BTC move';
+      w = (d) => (d < 0.34 ? 0.05 : 0.12 + d * 1.25);
+      break;
+    case 'butterfly':
+      side = 'short'; spanSigma = 1.7; label = 'Butterfly';
+      thesis = 'Short gamma, pinned — pays if BTC stays near the forward';
+      w = (d) => 0.12 + (1 - d) * 1.4;
+      break;
+    case 'condor':
+      side = 'short'; spanSigma = 2.6; label = 'Iron Condor';
+      thesis = 'Short gamma, ranged — pays across a wide middle band';
+      w = (d) => (d < 0.55 ? 0.85 + (0.55 - d) : 0.06);
+      break;
+    case 'straddle':
+    default:
+      side = 'long'; spanSigma = 2.2; label = 'Straddle';
+      thesis = 'Long gamma, ATM — pays on any sizeable BTC move';
+      w = (d) => 0.15 + d * 1.05;
+      break;
+  }
+  const weights = Array.from({ length: n }, (_, i) => Math.max(0, w(dist(i))));
+  return { strategy, side, label, thesis, spanSigma, weights };
+}
+
 export interface VolGreeks {
   /** ∂(position value)/∂(forward) — the BTC-equivalent delta to hedge. */
   delta_btc: number;

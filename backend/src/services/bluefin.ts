@@ -118,6 +118,17 @@ async function fetchPyth(): Promise<BtcMark | null> {
   return { mark, funding_rate: 0.0001, source: 'pyth', funding_source: 'estimated', symbol: 'BTC/USD', venue: 'Pyth Network (Sui oracle)', chain: 'sui', conf: Number.isFinite(conf) ? conf : undefined };
 }
 
+// Short cache so a fast UI poll (the live hedge ticker) doesn't hammer the venue.
+let markCache: { at: number; mark: BtcMark } | null = null;
+
+/** Cached live BTC mark for high-frequency polling (default 1.5s TTL). */
+export async function fetchBtcMarkCached(fallbackUsd = 0, ttlMs = 1500): Promise<BtcMark> {
+  if (markCache && Date.now() - markCache.at < ttlMs) return markCache.mark;
+  const mark = await fetchBtcMark(fallbackUsd);
+  markCache = { at: Date.now(), mark };
+  return mark;
+}
+
 /** Live BTC mark + funding, Sui-DeFi-first: Bluefin → DeepBook → Pyth → Coinbase → forward. */
 export async function fetchBtcMark(fallbackUsd = 0): Promise<BtcMark> {
   const bluefin = await fetchBluefin();

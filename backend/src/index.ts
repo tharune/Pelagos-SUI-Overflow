@@ -27,6 +27,7 @@ import mmRoutes from './routes/mm';
 import { devRoutes } from './routes/dev';
 import { suiRoutes } from './routes/sui';
 import { predictRoutes } from './routes/predict';
+import { volRoutes } from './routes/vol';
 import { distributionRoutes } from './routes/distribution';
 import { metricsMiddleware } from './services/metrics';
 import { startMonitorServer } from './monitor/server';
@@ -214,6 +215,7 @@ app.use('/api/portfolio', portfolioLimiter, portfolioRoutes);
 app.use('/api/dev', devRoutes);
 app.use('/api/sui', suiRoutes);
 app.use('/api/predict', predictRoutes);
+app.use('/api/vol', volRoutes);
 app.use('/api/distribution', distributionRoutes);
 app.use('/api/mm', mmRoutes);
 

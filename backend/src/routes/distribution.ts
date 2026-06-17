@@ -14,7 +14,7 @@ import {
   settleContinuousPosition,
   closeContinuousPosition,
   seedLiquidity,
-  seedAllRandom,
+  resetPoolsToLive,
 } from '../services/distribution-continuous';
 
 const router = Router();
@@ -121,7 +121,7 @@ router.get('/continuous/markets', async (_req, res) => {
   }
 });
 
-/** Seed simulated AMM liquidity into a market's pool. */
+/** Add user-supplied liquidity to a market's pool (deepens the AMM backing). */
 router.post('/continuous/seed-liquidity', (req, res) => {
   try {
     const marketId = String(req.body?.market_id ?? '');
@@ -132,10 +132,10 @@ router.post('/continuous/seed-liquidity', (req, res) => {
   }
 });
 
-/** Seed a random 5–6 figure position into every market pool at once. */
+/** Resync every pool's backing to live depth (clears cached/seeded liquidity). */
 router.post('/continuous/seed-all', (_req, res) => {
   try {
-    res.json(seedAllRandom());
+    res.json(resetPoolsToLive());
   } catch (err) {
     errorResponse(res, err);
   }

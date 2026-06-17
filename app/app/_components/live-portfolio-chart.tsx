@@ -37,7 +37,6 @@ export function LivePortfolioChart({ portfolioValue, positions }: { portfolioVal
   const [scopeId, setScopeId] = useState("portfolio");
   const [ticks, setTicks] = useState<Tick[]>([]);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const [live, setLive] = useState(false);
   const f0 = useRef<number | null>(null);
 
   // Poll the real BTC forward every 3s — the live mark driver.
@@ -48,10 +47,9 @@ export function LivePortfolioChart({ portfolioValue, positions }: { portfolioVal
         const f = await fetchForward("BTC");
         if (!alive || !(f.forward > 0)) return;
         if (f0.current == null) f0.current = f.forward;
-        setLive(true);
         setTicks((prev) => [...prev, { t: Date.now(), forward: f.forward }].slice(-MAX_TICKS));
       } catch {
-        if (alive) setLive(false);
+        /* keep last marks on a transient failure */
       }
     };
     poll();
@@ -66,7 +64,6 @@ export function LivePortfolioChart({ portfolioValue, positions }: { portfolioVal
   const markable = scope.id === "portfolio" ? deployed : scope.valueUsd;
   const hasValue = flat + markable > 0;
   const baseF = f0.current ?? ticks[0]?.forward ?? 0;
-  const latestForward = ticks[ticks.length - 1]?.forward ?? 0;
 
   // VALUE series = idle cash + deployed marked to the forward move. Never the price.
   const series = ticks.map((tk) => (baseF > 0 ? flat + markable * (tk.forward / baseF) : flat + markable));
@@ -108,25 +105,14 @@ export function LivePortfolioChart({ portfolioValue, positions }: { portfolioVal
 
   return (
     <div>
-      {/* scope selector + live BTC reference + status */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+      {/* scope selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
         <div className="lpc-scopes">
           {scopes.map((s) => (
             <button key={s.id} className={`lpc-scope${s.id === scopeId ? " is-active" : ""}`} onClick={() => { setScopeId(s.id); setHoverIdx(null); }}>
               {s.label}
             </button>
           ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {latestForward > 0 && (
-            <span style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
-              BTC <span style={{ color: C.textSecondary }}>${latestForward.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-            </span>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: live ? C.green : C.textMuted, boxShadow: live ? `0 0 8px ${C.green}` : "none", animation: live ? "lpc-pulse 1.6s ease-in-out infinite" : "none" }} />
-            {live ? `live · ${n} ticks · 3s` : "connecting…"}
-          </div>
         </div>
       </div>
 

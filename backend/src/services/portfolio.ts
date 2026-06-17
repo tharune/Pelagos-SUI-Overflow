@@ -8,11 +8,11 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { snapshot as lendingSnapshot, type PoolSnapshot } from "./lending";
-import { quoteTranches, type TrancheQuote } from "./tranching";
+import { quoteTranches, basketSigmaFromLegs, type TrancheQuote } from "./tranching";
 import { filterMarkets, type FilteredMarket } from "./market-filter";
 import { fetchMarkets } from "./polymarket";
 import { assessBasketRisk, type LegMetadata } from "./correlation";
-import { getAllBundles } from "../db/queries";
+import { getAllBundles, getLegsByBundleId } from "../db/queries";
 
 const ANTHROPIC_TIMEOUT_MS = 30_000;
 const MODEL = "claude-sonnet-4-6";
@@ -337,6 +337,7 @@ async function fetchPrimitives(clientBasket?: PortfolioRequest["basket"]): Promi
   // Tranche quotes: pick the first active bundle if Supabase has one,
   // otherwise fall back to a mock so the endpoint still works pre-seed.
   const bundles = await getAllBundles();
+  let refSigma: number | undefined;
   if (bundles.length > 0) {
     const b = bundles[0];
     const days = Math.max(
@@ -346,13 +347,16 @@ async function fetchPrimitives(clientBasket?: PortfolioRequest["basket"]): Promi
       ),
     );
     const nav = Math.max(0.05, Math.min(0.95, b.issue_price ?? 0.5));
+    // Real leg count + σ from the bundle's live per-leg probabilities.
+    const legs = await getLegsByBundleId(b.id).catch(() => []);
+    refSigma = basketSigmaFromLegs(legs) ?? undefined;
     refBundle = {
       id: b.id,
       name: b.name,
       risk_tier: b.risk_tier,
       nav,
       days,
-      legs: 11,
+      legs: Math.max(1, legs.length || 1),
     };
   } else {
     refBundle = {
@@ -368,6 +372,7 @@ async function fetchPrimitives(clientBasket?: PortfolioRequest["basket"]): Promi
     bundleNav: refBundle.nav,
     totalLegs: refBundle.legs,
     horizonDays: refBundle.days,
+    sigma: refSigma,
   });
 
   return { lending, markets, tranches, refBundle };

@@ -20,6 +20,9 @@ import {
 
 export { predictConfig, signerAddress };
 export * from './server';
+export { buildVolSurface, type VolSurface, type VolSlice } from './vol';
+export { buildImpliedDensity, type ImpliedDensity } from './density';
+export { buildMarketsDepth, type MarketsDepth, type MarketRow } from './markets';
 
 // devInspect needs a sender but never requires it to own anything. Falls back to
 // a known testnet address so read-only previews work with no key configured.
@@ -271,26 +274,145 @@ export async function previewTrade(args: {
  * Preview a vertical RANGE trade via `get_range_trade_amounts` using devInspect.
  * Same fund-free, signer-free live read as previewTrade, for a (lower, higher] band.
  */
+// ---------------------------------------------------------------------------
+// Resilience for the hot devInspect read path.
+//
+// A single strip quote fires DOZENS of concurrent get_range_trade_amounts reads
+// (n buckets × marginal + sized, × 3 tranches). Unbounded against a public RPC
+// that throttles, a burst makes calls fail — and a failed price marks a
+// perfectly tradeable band "untradeable", so the whole strip can flicker to
+// 0/N. Three layers keep the live book stable WITHOUT faking anything:
+//   1. short-TTL cache — identical (band, quantity) reads inside the window are
+//      served from the last real on-chain result instead of re-hitting RPC;
+//   2. concurrency gate — caps simultaneous devInspect calls so we never
+//      self-throttle the burst;
+//   3. retry — transient (thrown) RPC failures back off and retry; a clean
+//      status!=success is a DETERMINISTIC out-of-band band, surfaced at once.
+// Pricing is sender-independent (devInspect is fund-free), so the cache key omits
+// the sender. Out-of-band rejections are cached negatively to avoid re-querying.
+// ---------------------------------------------------------------------------
+type RangePrice = { mint_cost: string; redeem_payout: string; sender: string };
+const RANGE_TTL_MS = 4000;
+// Cache POSITIVES only. Caching a failure risks poisoning: a throttle that
+// surfaces as status!=success would mark a genuinely tradeable band dead for the
+// whole TTL and cascade the strip to 0/N. Failures simply re-resolve next call.
+const RANGE_CACHE = new Map<string, { ok: true; v: RangePrice; exp: number }>();
+const RANGE_MAX_CONCURRENT = 8;
+let rangeInflight = 0;
+const rangeQueue: Array<() => void> = [];
+async function rangeGate<T>(fn: () => Promise<T>): Promise<T> {
+  if (rangeInflight >= RANGE_MAX_CONCURRENT) await new Promise<void>((r) => rangeQueue.push(r));
+  rangeInflight++;
+  try {
+    return await fn();
+  } finally {
+    rangeInflight--;
+    rangeQueue.shift()?.();
+  }
+}
+
 export async function previewRange(args: {
   key: RangeKeyParams;
   quantity: bigint;
   sender?: string;
-}): Promise<{ mint_cost: string; redeem_payout: string; sender: string }> {
+}): Promise<RangePrice> {
   const client = getSuiClient();
   const sender = args.sender ?? signerAddress() ?? FALLBACK_SENDER;
-  const tx = new Transaction();
-  addGetRangeTradeAmounts(tx, { key: args.key, quantity: args.quantity });
-  const res = await client.devInspectTransactionBlock({ sender, transactionBlock: tx });
-  if (res.effects.status.status !== 'success') {
-    throw new Error(`previewRange devInspect failed: ${res.effects.status.error}`);
+  const cacheKey = `${args.key.oracleId}|${args.key.expiry}|${args.key.lowerStrike}|${args.key.higherStrike}|${args.quantity}`;
+  const hit = RANGE_CACHE.get(cacheKey);
+  if (hit && hit.exp > Date.now()) return { ...hit.v, sender };
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let res;
+    try {
+      res = await rangeGate(() => {
+        const tx = new Transaction();
+        addGetRangeTradeAmounts(tx, { key: args.key, quantity: args.quantity });
+        return client.devInspectTransactionBlock({ sender, transactionBlock: tx });
+      });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+      continue;
+    }
+    if (res.effects.status.status !== 'success') {
+      throw new Error(`previewRange devInspect failed: ${res.effects.status.error}`);
+    }
+    const values = lastReturnValues(res.results);
+    if (values.length < 2) throw new Error('previewRange: expected two u64 return values');
+    const v: RangePrice = {
+      mint_cost: bcs.u64().parse(Uint8Array.from(values[0])),
+      redeem_payout: bcs.u64().parse(Uint8Array.from(values[1])),
+      sender,
+    };
+    RANGE_CACHE.set(cacheKey, { ok: true, v, exp: Date.now() + RANGE_TTL_MS });
+    return v;
   }
-  const values = lastReturnValues(res.results);
-  if (values.length < 2) throw new Error('previewRange: expected two u64 return values');
-  return {
-    mint_cost: bcs.u64().parse(Uint8Array.from(values[0])),
-    redeem_payout: bcs.u64().parse(Uint8Array.from(values[1])),
-    sender,
-  };
+  throw lastErr ?? new Error('previewRange: RPC unavailable');
+}
+
+/**
+ * Price an ENTIRE range strip in ONE devInspect.
+ *
+ * A strip quote previously fired one devInspect per band (× marginal + sized ×
+ * tranches = dozens of concurrent reads) which throttles the public RPC and
+ * flickers bands to "untradeable". `get_range_trade_amounts` PRICES out-of-band
+ * bands (it doesn't abort — only `mint` does), so every band of a strip can be
+ * batched into a single transaction block and read back from the per-command
+ * return values. This collapses ~17 RPC calls per strip to 1.
+ *
+ * `addGetRangeTradeAmounts` emits two commands per band — `range_key::new` then
+ * `get_range_trade_amounts` (the (u64,u64) ask/bid) — so the priced amounts sit
+ * at the odd command indices. Returns one entry per input band, in order;
+ * `ok:false` marks a band whose amounts were missing.
+ */
+export async function previewRangeBatch(args: {
+  oracleId: string;
+  expiry: number | string;
+  bands: Array<{ lower: string; higher: string; quantity: bigint }>;
+  sender?: string;
+}): Promise<Array<{ mint_cost: bigint; redeem_payout: bigint; ok: boolean }>> {
+  const out = args.bands.map(() => ({ mint_cost: 0n, redeem_payout: 0n, ok: false }));
+  if (args.bands.length === 0) return out;
+  const client = getSuiClient();
+  const sender = args.sender ?? signerAddress() ?? FALLBACK_SENDER;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let res;
+    try {
+      res = await rangeGate(() => {
+        const tx = new Transaction();
+        for (const b of args.bands) {
+          addGetRangeTradeAmounts(tx, {
+            key: { oracleId: args.oracleId, expiry: args.expiry, lowerStrike: b.lower, higherStrike: b.higher },
+            quantity: b.quantity,
+          });
+        }
+        return client.devInspectTransactionBlock({ sender, transactionBlock: tx });
+      });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      continue;
+    }
+    if (res.effects.status.status !== 'success') {
+      throw new Error(`previewRangeBatch devInspect failed: ${res.effects.status.error}`);
+    }
+    const results = (res.results as { returnValues?: [number[], string][] }[]) ?? [];
+    for (let i = 0; i < args.bands.length; i++) {
+      const rv = results[2 * i + 1]?.returnValues;
+      if (rv && rv.length >= 2) {
+        out[i] = {
+          mint_cost: BigInt(bcs.u64().parse(Uint8Array.from(rv[0][0]))),
+          redeem_payout: BigInt(bcs.u64().parse(Uint8Array.from(rv[1][0]))),
+          ok: true,
+        };
+      }
+    }
+    return out;
+  }
+  throw lastErr ?? new Error('previewRangeBatch: RPC unavailable');
 }
 
 /** Dry-run `create_manager` via devInspect (proves the entry resolves; no write). */

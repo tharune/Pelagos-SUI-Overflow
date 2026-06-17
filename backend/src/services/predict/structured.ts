@@ -34,7 +34,7 @@ import {
   addSupply,
   addWithdraw,
 } from './ptb';
-import { previewRange } from './index';
+import { previewRangeBatch } from './index';
 
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / probability fixed-point
 const CONTRACT_UNIT = 1_000_000n; // 1e6 raw = 1 contract = $1 payout
@@ -148,7 +148,10 @@ export interface StripQuote {
   buckets: PricedBucket[];
   total_cost_raw: string; // Σ ask (what you pay now)
   total_redeem_value_raw: string; // Σ bid (what you'd get redeeming now)
-  total_max_payout_raw: string; // Σ quantity (max if everything settles in-band)
+  total_max_payout_raw: string; // Σ quantity (total notional across all buckets)
+  /** Largest single bucket's payout — the HONEST best case, since settlement
+   *  lands in exactly one band so only that band's contracts ever pay. */
+  realized_max_payout_raw: string;
   total_slippage_raw: string; // Σ slippage over marginal
   round_trip_spread_raw: string; // total_cost − total_redeem_value
   /** EV under the user's own Normal view: Σ weightᵢ·payoutᵢ − cost. */
@@ -161,29 +164,32 @@ interface UnitInfo {
   tradeable: boolean;
 }
 
-/** REAL per-bucket (ask, bid) at the given quantities via devInspect (post-trade priced). */
+/** REAL per-bucket (ask, bid) at the given quantities — one batched devInspect. */
 async function priceAtQuantities(
   oracle: GridOracle,
   units: UnitInfo[],
   qtys: bigint[],
   sender?: string,
 ): Promise<Array<{ mint: bigint; redeem: bigint; ok: boolean }>> {
-  return Promise.all(
-    units.map(async (x, i) => {
-      const q = qtys[i];
-      if (!x.tradeable || q <= 0n) return { mint: 0n, redeem: 0n, ok: false };
-      try {
-        const r = await previewRange({
-          key: { oracleId: oracle.oracle_id, expiry: String(oracle.expiry), lowerStrike: x.b.lower, higherStrike: x.b.higher },
-          quantity: q,
-          sender,
-        });
-        return { mint: BigInt(r.mint_cost), redeem: BigInt(r.redeem_payout), ok: true };
-      } catch {
-        return { mint: 0n, redeem: 0n, ok: false };
-      }
-    }),
-  );
+  const out = units.map(() => ({ mint: 0n, redeem: 0n, ok: false }));
+  const idx: number[] = [];
+  const bands: Array<{ lower: string; higher: string; quantity: bigint }> = [];
+  units.forEach((x, i) => {
+    if (x.tradeable && qtys[i] > 0n) {
+      idx.push(i);
+      bands.push({ lower: x.b.lower, higher: x.b.higher, quantity: qtys[i] });
+    }
+  });
+  if (bands.length === 0) return out;
+  try {
+    const res = await previewRangeBatch({ oracleId: oracle.oracle_id, expiry: String(oracle.expiry), bands, sender });
+    idx.forEach((origI, k) => {
+      out[origI] = { mint: res[k].mint_cost, redeem: res[k].redeem_payout, ok: res[k].ok };
+    });
+  } catch {
+    /* leave all unpriced; the caller falls back to the marginal estimate */
+  }
+  return out;
 }
 
 /**
@@ -206,25 +212,29 @@ export async function previewStrip(args: {
   const { oracle, muRaw, sigmaRaw, n, budgetRaw } = args;
   const raw = buildStripBuckets(oracle, muRaw, sigmaRaw, n, args.spanSigma);
 
-  // (1) marginal per-contract ask (resilient: out-of-bounds bands -> untradeable).
-  const units: UnitInfo[] = await Promise.all(
-    raw.map(async (b) => {
-      try {
-        const u = await previewRange({
-          key: { oracleId: oracle.oracle_id, expiry: String(oracle.expiry), lowerStrike: b.lower, higherStrike: b.higher },
-          quantity: CONTRACT_UNIT,
-          sender: args.sender,
-        });
-        const c = BigInt(u.mint_cost);
-        const prob = Number(c) / Number(CONTRACT_UNIT);
-        // Mintable only if the per-contract ask sits inside the protocol's bounds.
-        const mintable = c > 0n && prob >= MIN_MINTABLE_PRICE && prob <= MAX_MINTABLE_PRICE;
-        return { b, unitCost: c, tradeable: mintable };
-      } catch {
-        return { b, unitCost: 0n, tradeable: false };
-      }
-    }),
-  );
+  // (1) marginal per-contract ask for EVERY band in one batched devInspect.
+  // Tradeability is set here (stable, cacheable) — the per-contract ask must sit
+  // inside the protocol's [2%,98%] mintable bounds. Out-of-bounds bands price
+  // fine via get_range_trade_amounts but would abort at mint, so we exclude them.
+  let marg: Array<{ mint_cost: bigint; redeem_payout: bigint; ok: boolean }> = raw.map(() => ({
+    mint_cost: 0n, redeem_payout: 0n, ok: false,
+  }));
+  try {
+    marg = await previewRangeBatch({
+      oracleId: oracle.oracle_id,
+      expiry: String(oracle.expiry),
+      bands: raw.map((b) => ({ lower: b.lower, higher: b.higher, quantity: CONTRACT_UNIT })),
+      sender: args.sender,
+    });
+  } catch {
+    /* all unpriced -> strip resolves untradeable; route surfaces an empty quote */
+  }
+  const units: UnitInfo[] = raw.map((b, i) => {
+    const c = marg[i].ok ? marg[i].mint_cost : 0n;
+    const prob = Number(c) / Number(CONTRACT_UNIT);
+    const mintable = c > 0n && prob >= MIN_MINTABLE_PRICE && prob <= MAX_MINTABLE_PRICE;
+    return { b, unitCost: c, tradeable: mintable };
+  });
 
   // (2) size quantity ∝ Normal weight, scaled so Σ(marginal cost) ≈ budget.
   const denom = units
@@ -250,19 +260,27 @@ export async function previewStrip(args: {
   const buckets: PricedBucket[] = [];
   let totalRedeem = 0n;
   let totalPayout = 0n;
+  let maxPayout = 0n;
   let totalSlip = 0n;
   let evNum = 0;
   for (let i = 0; i < units.length; i++) {
     const { b, unitCost, tradeable } = units[i];
     const q = qtys[i];
     const r = real[i];
-    const live = tradeable && r.ok && q > 0n;
-    const mintCost = live ? r.mint : 0n;
-    const redeem = live ? r.redeem : 0n;
-    const marginal = (unitCost * q) / CONTRACT_UNIT; // cost if priced at the 1-contract marginal
+    // Tradeability is decided by the MARGINAL price (step 1), which is stable and
+    // cacheable. The sized re-price (step 3) only refines cost/bid with slippage —
+    // if it throttles (r.ok === false), fall back to the marginal estimate rather
+    // than dropping the band, so a transient RPC hiccup can never flicker a
+    // genuinely tradeable strip to 0/N.
+    const live = tradeable && q > 0n;
+    const marginal = (unitCost * q) / CONTRACT_UNIT; // cost at the 1-contract marginal
+    const mintCost = !live ? 0n : r.ok ? r.mint : marginal;
+    // Redeem-now (bid) ≈ marginal less a nominal spread when the live bid is missing.
+    const redeem = !live ? 0n : r.ok ? r.redeem : (marginal * 97n) / 100n;
     const slippage = mintCost > marginal ? mintCost - marginal : 0n;
     totalRedeem += redeem;
     totalPayout += live ? q : 0n;
+    if (live && q > maxPayout) maxPayout = q;
     totalSlip += slippage;
     evNum += b.weight * Number(live ? q : 0n);
     buckets.push({
@@ -292,6 +310,7 @@ export async function previewStrip(args: {
     total_cost_raw: totalMint.toString(),
     total_redeem_value_raw: totalRedeem.toString(),
     total_max_payout_raw: totalPayout.toString(),
+    realized_max_payout_raw: maxPayout.toString(),
     total_slippage_raw: totalSlip.toString(),
     round_trip_spread_raw: (totalMint > totalRedeem ? totalMint - totalRedeem : 0n).toString(),
     expected_value_raw: ev.toString(),
@@ -410,6 +429,33 @@ export async function prepareRedeemRange(args: {
     quantity: args.quantity,
   });
   return buildAndDryRun(tx, args.owner);
+}
+
+/**
+ * SELL a whole strip in one PTB: redeem every band of the tranche/strip back to
+ * dUSDC (the bid side). Non-custodial — the dry-run will reject if the wallet's
+ * manager doesn't actually hold these band positions, so the UI surfaces a clear
+ * "no position to sell" rather than a silent failure.
+ */
+export async function prepareRedeemStrip(args: {
+  owner: string;
+  managerId: string;
+  oracleId: string;
+  expiry: number | string;
+  buckets: Array<{ lower: string; higher: string; quantity: string }>;
+}): Promise<PreparedTx & { bucket_count: number }> {
+  const live = args.buckets.filter((b) => BigInt(b.quantity) > 0n);
+  if (live.length === 0) throw new Error('no positive-quantity buckets to redeem');
+  const tx = new Transaction();
+  for (const b of live) {
+    addRedeemRange(tx, {
+      managerId: args.managerId,
+      key: { oracleId: args.oracleId, expiry: String(args.expiry), lowerStrike: b.lower, higherStrike: b.higher },
+      quantity: b.quantity,
+    });
+  }
+  const prepared = await buildAndDryRun(tx, args.owner);
+  return { ...prepared, bucket_count: live.length };
 }
 
 /** PPN floor / "be the house": supply dUSDC to the PLP vault, PLP coin to user. */

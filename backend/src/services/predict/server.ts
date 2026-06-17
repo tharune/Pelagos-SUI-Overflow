@@ -88,11 +88,18 @@ export async function managersForOwner(owner: string): Promise<PredictManagerRef
 }
 
 /**
- * Pick the most useful currently-tradeable oracle: status `active`, expiry in
- * the future, soonest expiry first. Optionally filter by underlying asset.
+ * Pick the most useful currently-tradeable oracle: status `active`, soonest
+ * expiry first, but skipping oracles that are about to expire. Within the last
+ * few minutes the protocol's implied distribution collapses toward a point mass,
+ * which pushes every priced band outside the [2%,98%] mintable window (central
+ * band > 98% "too certain", wings < 2%) — so the auto-selected front oracle
+ * would quote a strip with zero tradeable buckets. A short buffer guarantees the
+ * selected oracle has a live, well-priced distribution. Falls back to the
+ * soonest active oracle if every oracle is inside the buffer.
  */
 export async function findActiveOracle(
   underlying?: string,
+  minMsToExpiry = 6 * 60_000,
 ): Promise<PredictOracle | null> {
   const now = Date.now();
   const want = underlying?.toUpperCase();
@@ -101,7 +108,7 @@ export async function findActiveOracle(
     .filter((o) => o.status === 'active' && o.expiry > now)
     .filter((o) => (want ? o.underlying_asset?.toUpperCase() === want : true))
     .sort((a, b) => a.expiry - b.expiry);
-  return active[0] ?? null;
+  return active.find((o) => o.expiry - now >= minMsToExpiry) ?? active[0] ?? null;
 }
 
 /**

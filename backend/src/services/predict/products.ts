@@ -156,4 +156,106 @@ export async function quoteBasket(args: {
   return { basket, strip };
 }
 
+// ---------------------------------------------------------------------------
+// TERM BASKETS — calendar bundles across BTC expiries (distinct from the
+// single-expiry Distribution product). One ticket holds a central strip on each
+// of several live tenors, so you own a slice of the whole BTC term structure.
+// ---------------------------------------------------------------------------
+
+function shortTenor(ms: number): string {
+  if (ms <= 0) return 'expired';
+  const m = Math.round(ms / 60000);
+  if (m < 90) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 36) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+export interface TermBasketRecipe {
+  id: string;
+  name: string;
+  description: string;
+  /** Pick which tenor indices (into the expiry-sorted live oracle list) the basket spans. */
+  pick: (n: number) => number[];
+}
+
+export const DEEPBOOK_TERM_BASKETS: TermBasketRecipe[] = [
+  { id: 'near-ladder', name: 'Near Ladder', description: 'Equal weight across the three nearest expiries — smooth near-term coverage.', pick: (n) => [0, 1, 2].filter((i) => i < n) },
+  { id: 'barbell', name: 'Barbell', description: 'Nearest + farthest expiry — short-dated response plus long-dated coverage.', pick: (n) => (n >= 2 ? [0, n - 1] : [0]) },
+  { id: 'full-term', name: 'Full Term', description: 'Equal weight across every live expiry — the whole BTC term structure in one ticket.', pick: (n) => Array.from({ length: n }, (_, i) => i) },
+];
+
+interface TermOracle extends GridOracle { forward_raw: number; tenor_label: string; t_years: number; }
+
+/** Live BTC oracles (active, ≥6m to expiry) sorted near→far, each with its live forward. */
+async function resolveTermOracles(asset: string): Promise<TermOracle[]> {
+  const now = Date.now();
+  const want = asset.toUpperCase();
+  const oracles = await predictServer.predictOracles().catch(() => predictServer.oracles());
+  const active = oracles
+    .filter((o) => o.status === 'active' && o.expiry > now + 6 * 60_000)
+    .filter((o) => o.underlying_asset?.toUpperCase() === want)
+    .sort((a, b) => a.expiry - b.expiry);
+  return Promise.all(
+    active.map(async (o) => {
+      const p = (await predictServer.oraclePriceLatest(o.oracle_id).catch(() => null)) as { forward?: number; spot?: number } | null;
+      const fwd = Number(p?.forward ?? p?.spot ?? o.min_strike);
+      return {
+        oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size,
+        forward_raw: fwd, tenor_label: shortTenor(o.expiry - now), t_years: (o.expiry - now) / YEAR_MS,
+      };
+    }),
+  );
+}
+
+export interface TermBasketLeg {
+  oracle_id: string;
+  expiry: string;
+  tenor_label: string;
+  t_years: number;
+  forward_usd: number;
+  weight: number;
+  strip: StripQuote;
+}
+
+export interface TermBasketQuote {
+  basket: { id: string; name: string; description: string };
+  legs: TermBasketLeg[];
+  total_cost_raw: string;
+  total_best_raw: string;        // Σ realized best across legs (independent expiries)
+  round_trip_spread_raw: string;
+  forward_usd: number;
+  dusdc_decimals: number;
+}
+
+/** Price a term basket: equal-weight the budget across the recipe's tenors and
+ *  price each leg's central strip through the real MM (previewStrip). */
+export async function quoteTermBasket(args: { asset: string; basketId: string; budgetRaw: bigint; sender?: string }): Promise<TermBasketQuote> {
+  const recipe = DEEPBOOK_TERM_BASKETS.find((b) => b.id === args.basketId);
+  if (!recipe) throw new Error(`unknown term basket ${args.basketId}; valid: ${DEEPBOOK_TERM_BASKETS.map((b) => b.id).join(', ')}`);
+  const oracles = await resolveTermOracles(args.asset);
+  if (oracles.length === 0) throw new Error(`no active ${args.asset} oracles`);
+  const picked = recipe.pick(oracles.length).map((i) => oracles[i]).filter((o): o is TermOracle => Boolean(o));
+  if (picked.length === 0) throw new Error('term basket resolved no legs');
+  const perLeg = args.budgetRaw / BigInt(picked.length);
+  const weight = 1 / picked.length;
+  const legs = await Promise.all(
+    picked.map(async (o): Promise<TermBasketLeg> => {
+      const sigma = await impliedSigmaRaw(o, o.forward_raw, Math.max(o.tick_size, Math.round(o.forward_raw * 0.005)));
+      const strip = await previewStrip({ oracle: o, muRaw: o.forward_raw, sigmaRaw: sigma, n: 4, budgetRaw: perLeg, sender: args.sender });
+      return { oracle_id: o.oracle_id, expiry: String(o.expiry), tenor_label: o.tenor_label, t_years: o.t_years, forward_usd: o.forward_raw / 1e9, weight, strip };
+    }),
+  );
+  const sum = (f: (s: StripQuote) => string) => legs.reduce((a, l) => a + BigInt(f(l.strip)), 0n);
+  return {
+    basket: { id: recipe.id, name: recipe.name, description: recipe.description },
+    legs,
+    total_cost_raw: sum((s) => s.total_cost_raw).toString(),
+    total_best_raw: sum((s) => s.realized_max_payout_raw).toString(),
+    round_trip_spread_raw: sum((s) => s.round_trip_spread_raw).toString(),
+    forward_usd: picked[0].forward_raw / 1e9,
+    dusdc_decimals: 6,
+  };
+}
+
 export { DUSDC };

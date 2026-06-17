@@ -207,10 +207,18 @@ export async function previewStrip(args: {
   n: number;
   budgetRaw: bigint;
   spanSigma?: number;
+  /** Optional per-bucket sizing override (length must equal n). The Volatility
+   *  product reshapes the payout — barbell (wings-heavy, long gamma) vs pin
+   *  (center-heavy, short gamma) — while reusing this exact MM pricing path.
+   *  Weights drive quantity sizing only; the bands themselves are unchanged. */
+  weights?: number[];
   sender?: string;
 }): Promise<StripQuote> {
   const { oracle, muRaw, sigmaRaw, n, budgetRaw } = args;
   const raw = buildStripBuckets(oracle, muRaw, sigmaRaw, n, args.spanSigma);
+  if (args.weights && args.weights.length === raw.length) {
+    for (let i = 0; i < raw.length; i++) raw[i] = { ...raw[i], weight: Math.max(0, args.weights[i]) };
+  }
 
   // (1) marginal per-contract ask for EVERY band in one batched devInspect.
   // Tradeability is set here (stable, cacheable) — the per-contract ask must sit
@@ -410,6 +418,44 @@ export async function prepareMintStrip(args: {
   if (live === 0) throw new Error('no positive-quantity buckets to mint');
   const prepared = await buildAndDryRun(tx, args.owner);
   return { ...prepared, bucket_count: live };
+}
+
+/**
+ * Mint MULTIPLE strips across different oracles/expiries in ONE PTB — the term
+ * basket (a calendar bundle) and any multi-leg structure. One deposit funds them
+ * all; each band keys its own oracle+expiry, so the protocol books the legs
+ * independently. Non-custodial (unsigned tx for the wallet).
+ */
+export async function prepareMintMultiStrip(args: {
+  owner: string;
+  managerId: string;
+  legs: Array<{ oracleId: string; expiry: number | string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>;
+  depositRaw?: bigint;
+}): Promise<PreparedTx & { bucket_count: number; leg_count: number }> {
+  const tx = new Transaction();
+  if (args.depositRaw && args.depositRaw > 0n) {
+    const coin = await prepareDusdc(tx, args.owner, args.depositRaw);
+    addDeposit(tx, args.managerId, coin);
+  }
+  let live = 0;
+  let legs = 0;
+  for (const leg of args.legs) {
+    let legLive = 0;
+    for (const b of leg.buckets) {
+      if (BigInt(b.quantity) <= 0n) continue;
+      addMintRange(tx, {
+        managerId: args.managerId,
+        key: { oracleId: leg.oracleId, expiry: String(leg.expiry), lowerStrike: b.lower, higherStrike: b.higher },
+        quantity: b.quantity,
+      });
+      live++;
+      legLive++;
+    }
+    if (legLive > 0) legs++;
+  }
+  if (live === 0) throw new Error('no positive-quantity buckets to mint across the basket legs');
+  const prepared = await buildAndDryRun(tx, args.owner);
+  return { ...prepared, bucket_count: live, leg_count: legs };
 }
 
 /** Redeem one range bucket (live or, after settlement, permissionless). */

@@ -50,13 +50,13 @@ export function MmDeskBid({
       return;
     }
     const ctrl = new AbortController();
-    fetchMmQuote({ productType, trancheKind, sizeUsdc, signal: ctrl.signal })
+    fetchMmQuote({ productType, trancheKind, sizeUsdc, bundleId, signal: ctrl.signal })
       .then(setQuote)
       .catch(() => {
         /* the bid is best-effort; hide on failure */
       });
     return () => ctrl.abort();
-  }, [productType, trancheKind, sizeUsdc]);
+  }, [productType, trancheKind, sizeUsdc, bundleId]);
 
   if (!(sizeUsdc > 0) || !quote) return null;
 
@@ -96,7 +96,7 @@ export function MmDeskBid({
           Market-maker desk bid · simulated
         </span>
         <span style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
-          {(quote.spread_bps / 100).toFixed(2)}% below par
+          {(quote.spread_bps / 100).toFixed(2)}% below {quote.mark_source === "par" ? "par" : "mark"}
         </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 6 }}>
@@ -104,7 +104,8 @@ export function MmDeskBid({
           ${quote.payout_usdc.toFixed(2)}
         </span>
         <span style={{ fontFamily: FM, fontSize: 11, color: C.textSecondary }}>
-          ${quote.bid_per_unit.toFixed(4)}/unit · ${quote.size_usdc.toFixed(2)} held
+          ${quote.bid_per_unit.toFixed(4)}/unit · mark ${quote.mark_per_unit.toFixed(4)}
+          {quote.mark_source === "live_nav" ? " · live NAV" : quote.mark_source === "tranche_model" ? " · model" : ""}
         </span>
       </div>
       <button

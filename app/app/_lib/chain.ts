@@ -4,8 +4,10 @@ export const CHAIN = (process.env.NEXT_PUBLIC_CHAIN ?? "sui").toLowerCase();
 export const IS_SUI = CHAIN === "sui";
 
 export const SUI_NETWORK = process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet";
-export const SUI_ACTIVE_ADDRESS =
-  process.env.NEXT_PUBLIC_SUI_ACTIVE_ADDRESS ?? "";
+
+// NOTE: the active wallet address always comes from the connected dapp-kit
+// account (see wallet-bridge `useActiveWalletAddress`). There is intentionally
+// no env/hardcoded address fallback — a disconnected app shows the connect state.
 
 export function shortAddress(address: string): string {
   if (address.length <= 12) return address;

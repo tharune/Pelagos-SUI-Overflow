@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";
+import { LivePortfolioChart, type ChartScope } from "../_components/live-portfolio-chart";
 import { C, FS, FD, FM, EASE, tc, trancheColor, fmtUsd } from "../_lib/tokens";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
@@ -17,14 +18,14 @@ import {
   clearVirtualPositionsByUiBundleId,
   type GroupedVirtualPosition,
 } from "../_lib/virtual-positions";
-import { Personalization } from "./_personalization";
+import { BacktestPanel } from "../_components/backtest-panel";
 import { History } from "./_history";
 import {
   fetchContinuousPositions,
   type ContinuousPosition,
 } from "../_lib/distribution-continuous-client";
 
-type View = "positions" | "personalization" | "history";
+type View = "positions" | "backtest" | "history";
 
 // Catmull-Rom → cubic-bezier smoothing for a clean institutional curve.
 function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
@@ -627,6 +628,11 @@ export default function PortfolioPage() {
     },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
+  // Scopes for the live chart: whole portfolio (added inside the chart) + each
+  // funded product/position the user actually holds.
+  const chartScopes: ChartScope[] = productRows
+    .filter((row) => row.id !== "cash" && row.value > 0)
+    .map((row) => ({ id: row.id, label: row.label, valueUsd: row.value }));
   // Capital actually put to work (everything that isn't idle cash) as a share
   // of net account value. More telling than a raw "funded products" count — it
   // answers how hard the capital is working, and moves as you deploy/redeem.
@@ -712,21 +718,21 @@ export default function PortfolioPage() {
             <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", color: C.tealLight, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>
               {view === "positions"
                 ? "Portfolio"
-                : view === "personalization"
-                  ? "Allocation"
+                : view === "backtest"
+                  ? "Strategy"
                   : "Portfolio ledger"}
             </div>
             <h1 style={{ margin: 0, color: C.textPrimary, fontFamily: FD, fontSize: "clamp(30px, 3.4vw, 46px)", lineHeight: 1.04, letterSpacing: "-0.03em", fontWeight: 500 }}>
               {view === "positions"
                 ? "Portfolio"
-                : view === "personalization"
-                  ? "Portfolio builder"
+                : view === "backtest"
+                  ? "Backtest"
                   : "Activity"}
             </h1>
             {view !== "positions" && (
-              <div style={{ fontSize: 14, color: C.textSecondary, fontFamily: FS, marginTop: 8 }}>
-                {view === "personalization"
-                  ? "Build an allocation shaped by risk tolerance, capital, and objective."
+              <div style={{ fontSize: 14, color: C.textSecondary, fontFamily: FS, marginTop: 8, maxWidth: 720, lineHeight: 1.55 }}>
+                {view === "backtest"
+                  ? "The PLP “be-the-house” vault strategy, replayed across thousands of settled BTC oracles — live from the protocol’s own indexer."
                   : "A chronological ledger of buys, exits, and note actions."}
               </div>
             )}
@@ -734,7 +740,7 @@ export default function PortfolioPage() {
           <div className="portfolio-tabs">
             {([
               { id: "positions", label: "Overview" },
-              { id: "personalization", label: "Allocation" },
+              { id: "backtest", label: "Backtest" },
               { id: "history", label: "History" },
             ] as const).map((t) => (
               <button
@@ -749,8 +755,8 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        {view === "personalization" ? (
-          <Personalization />
+        {view === "backtest" ? (
+          <BacktestPanel />
         ) : view === "history" ? (
           <History
             walletAddress={appWalletAddress}
@@ -762,14 +768,9 @@ export default function PortfolioPage() {
           <div className="portfolio-panel" style={{ display: "grid", alignContent: "space-between", minHeight: 256 }}>
             <div>
               <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 12 }}>
-                Net account value
+                Live value · mark-to-market
               </div>
-              <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: "clamp(30px, 3.2vw, 44px)", lineHeight: 1.0, letterSpacing: "-0.035em", fontWeight: 600 }}>
-                {fmtUsd(displayTotal, 2)}
-              </div>
-              <div className="portfolio-value-chart">
-                <AccountValueChart value={displayTotal} pnl={displayPnl} events={valueEvents} accruals={valueAccruals} nowMs={renderNow} />
-              </div>
+              <LivePortfolioChart portfolioValue={displayTotal} positions={chartScopes} />
             </div>
 
             <div className="portfolio-metric-row">

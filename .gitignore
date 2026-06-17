@@ -84,3 +84,6 @@ backend/.distribution-positions.json
 # Runtime distribution state (regenerated)
 backend/.distribution-positions.json
 backend/.distribution-pools.json
+
+# backtest output artifact (generated)
+backend/.backtest-strip.json

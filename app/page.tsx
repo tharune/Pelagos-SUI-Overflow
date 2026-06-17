@@ -426,8 +426,8 @@ function WaterfallViz({ caption }: { caption: string }) {
   const colW = 104;
   // top → bottom: first loss sits on top, the protected senior slice at the base.
   const segs = [
-    { name: "Upside", share: 0.15, op: 0.32, role: "first loss" },
-    { name: "Balanced", share: 0.3, op: 0.58, role: "mezzanine" },
+    { name: "Junior", share: 0.15, op: 0.32, role: "first loss" },
+    { name: "Mezzanine", share: 0.3, op: 0.58, role: "balanced" },
     { name: "Senior", share: 0.55, op: 0.92, role: "protected" },
   ];
   let y = top;
@@ -502,7 +502,7 @@ function ProtectedViz({ caption }: { caption: string }) {
           {seriesPaths({ values: note, bold: true, endLabel: "98.6%", delay: 0.22 }, cy, fillId, "n")}
           {/* 95% floor */}
           {seriesPaths({ values: Array(7).fill(target), dashed: true, op: 0.75 }, cy, fillId, "f")}
-          <text className="feat-end" x={cPlotL + 8} y={cy(target) + 15} textAnchor="start" fill={C.textMuted} fontFamily={FM} fontSize="9.5" letterSpacing="0.06em">95% PRINCIPAL FLOOR</text>
+          <text className="feat-end" x={cPlotL + 8} y={cy(target) + 15} textAnchor="start" fill={C.textMuted} fontFamily={FM} fontSize="9.5" letterSpacing="0.06em">PRINCIPAL FLOOR</text>
         </>
       )}
     </ChartFrame>
@@ -574,10 +574,10 @@ const SURFACES: Array<{
   href: string;
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
-  { id: "distribution", eyebrow: "Curve trade", title: "Distribution Markets", body: "Set your own continuous view of where a price lands, then trade that curve against the market and settle on Sui.", href: "/app/distribution", Icon: IconCurve },
-  { id: "basket", eyebrow: "PBU basket", title: "Market Baskets", body: "Bundle several correlated markets into one Sui-local position with a single collateral leg.", href: "/app/basket", Icon: IconBasket },
-  { id: "risk", eyebrow: "Waterfall", title: "Risk Slices", body: "Split a market into senior, balanced, and upside-heavy tranches that absorb losses in order.", href: "/app/tranche", Icon: IconSlices },
-  { id: "ppn", eyebrow: "Floor target", title: "Protected Notes", body: "Route USDC into a principal sleeve sized from live Sui yield, keeping residual market upside.", href: "/app/ppn", Icon: IconShield },
+  { id: "distribution", eyebrow: "Range ladder", title: "Distribution", body: "Drag μ and σ and mint a strip of real DeepBook range options that mirrors your whole view of where BTC lands — in one signature.", href: "/app/distribution", Icon: IconCurve },
+  { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple. Plus a cross-venue hybrid.", href: "/app/tranche", Icon: IconSlices },
+  { id: "ppn", eyebrow: "Principal protected", title: "Protected Notes", body: "The floor earns itself back in the PLP house pool, the remainder buys an upside range strip — both in one transaction.", href: "/app/ppn", Icon: IconShield },
+  { id: "basket", eyebrow: "Strips + events", title: "Baskets", body: "Curated DeepBook BTC strips — Pin, Spread, Wide — across every live expiry, plus uncorrelated event baskets. One venue, one click.", href: "/app/basket", Icon: IconBasket },
 ];
 
 type Showcase = {
@@ -595,12 +595,12 @@ type Showcase = {
 const SHOWCASE: Showcase[] = [
   {
     id: "basket",
-    eyebrow: "PBU basket",
-    title: "Market Baskets",
+    eyebrow: "Strips + events",
+    title: "Baskets",
     href: "/app/basket",
     Icon: IconBasket,
-    lead: "Bundle correlated markets into one position with a single collateral leg.",
-    specs: ["One collateral leg, many markets", "Correlated exposure in a single ticket", "Settles as one Sui-local position"],
+    lead: "Curated BTC strips — Pin, Spread, Wide — on every live DeepBook expiry, plus uncorrelated event baskets.",
+    specs: ["Pin, Spread, Wide shapes", "Live on-chain book per expiry", "Plus uncorrelated event baskets"],
     caption: "Pooled basket resolves above its uncorrelated components",
     legend: [{ name: "Basket" }, { name: "Components", op: 0.3 }],
   },
@@ -610,10 +610,10 @@ const SHOWCASE: Showcase[] = [
     title: "Risk Slices",
     href: "/app/tranche",
     Icon: IconSlices,
-    lead: "Split one market into tranches that absorb losses in a set order.",
-    specs: ["Senior is shielded, paid first", "Balanced sits in the middle", "Upside takes first losses, keeps the convexity"],
+    lead: "Slice one strip into senior, mezzanine, and junior by conviction width — each absorbs losses in order.",
+    specs: ["Senior covers wide, defensive and steady", "Junior pins the forward for the biggest multiple", "Plus a cross-venue hybrid: BTC core + event tail"],
     caption: "Capital stack and loss waterfall",
-    legend: [{ name: "Senior", op: 0.9 }, { name: "Balanced", op: 0.6 }, { name: "Upside", op: 0.36 }],
+    legend: [{ name: "Senior", op: 0.9 }, { name: "Mezzanine", op: 0.6 }, { name: "Junior", op: 0.36 }],
   },
   {
     id: "ppn",
@@ -621,10 +621,10 @@ const SHOWCASE: Showcase[] = [
     title: "Protected Notes",
     href: "/app/ppn",
     Icon: IconShield,
-    lead: "Your principal is floored at 95%, so the downside is protected and you keep the upside above it.",
-    specs: ["USDC principal sleeve", "Downside floored at 95%", "Full upside above the floor"],
-    caption: "Note floored at 95% while the underlying keeps the upside",
-    legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor (95%)", dashed: true, op: 0.75 }],
+    lead: "Set your floor: it earns itself back in the PLP house pool while the rest buys upside — principal protected.",
+    specs: ["USDC principal sleeve", "Downside floored at your chosen level", "Full upside above the floor"],
+    caption: "Note held at its floor while the underlying keeps the upside",
+    legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor", dashed: true, op: 0.75 }],
   },
   {
     id: "distribution",
@@ -678,7 +678,7 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
 }
 
 const PIPE: Array<{ name: string; sub: string; Icon: (p: IconProps) => React.ReactElement }> = [
-  { name: "Live pricing", sub: "Polymarket Gamma + CLOB", Icon: IconSignal },
+  { name: "Live pricing", sub: "DeepBook Predict order book", Icon: IconSignal },
   { name: "Quote engine", sub: "Depth-weighted bands", Icon: IconBasket },
   { name: "USDC collateral", sub: "Net of quote fees", Icon: IconCoin },
   { name: "Sui settlement", sub: "mock-USDC package", Icon: IconCube },
@@ -1020,7 +1020,7 @@ export default function HomePage() {
                 </a>
               </div>
               <div className="lp-trust">
-                <span>Live Polymarket pricing</span>
+                <span>Live DeepBook pricing</span>
                 <span>USDC collateral</span>
                 <span>Settled on Sui</span>
               </div>

@@ -9,7 +9,9 @@ import { BUNDLES, type Bundle } from "../_lib/bundles";
 import type { LiveBasket, LiveMarket, WindowKey } from "../_lib/live-baskets";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { fetchAllVaultPrices, type VaultPriceResponse } from "../../lib/api";
+import { DeepBookBaskets } from "../_components/deepbook-baskets";
 
+type AssetClass = "deepbook" | "event";
 type TierFilter = "all" | 90 | 70 | 50;
 type WindowFilter = "all" | WindowKey;
 type FeedStatus = "loading" | "ready" | "seed";
@@ -20,10 +22,10 @@ type BasketView = Bundle & {
   window: WindowKey;
 };
 
+// Mid (PBU-MID, tier 70) is intentionally dropped — event baskets are High + Low only.
 const TIER_OPTIONS: Array<{ value: TierFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: 90, label: "High" },
-  { value: 70, label: "Mid" },
   { value: 50, label: "Low" },
 ];
 
@@ -106,6 +108,7 @@ function formatPrice(value: number | null | undefined): string {
 export default function BasketsPage() {
   const router = useRouter();
   const basketState = useLiveBaskets();
+  const [assetClass, setAssetClass] = useState<AssetClass>("deepbook");
   const [tier, setTier] = useState<TierFilter>("all");
   const [windowFilter, setWindowFilter] = useState<WindowFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -126,7 +129,7 @@ export default function BasketsPage() {
     };
   }, []);
 
-  const { baskets, feedStatus, feedError } = useMemo(() => {
+  const { baskets, feedStatus } = useMemo(() => {
     if (basketState.status === "ok" && basketState.baskets.length > 0) {
       return {
         baskets: basketState.baskets.map(liveBasket),
@@ -158,6 +161,7 @@ export default function BasketsPage() {
   const filtered = useMemo(() => {
     return baskets
       .filter((basket) => {
+        if (basket.tier === 70) return false; // Mid tier removed from the suite
         if (tier !== "all" && basket.tier !== tier) return false;
         if (windowFilter !== "all" && basket.window !== windowFilter) return false;
         return true;
@@ -193,48 +197,60 @@ export default function BasketsPage() {
         <div className="basket-shell">
           <section className="basket-hero">
             <div>
-              <h1>Market Baskets</h1>
-              <p>Select a PBU basket, review NAV and constituents, then open the deployment view.</p>
+              <h1>Baskets</h1>
+              <p>
+                {assetClass === "deepbook"
+                  ? "Structured BTC strips on DeepBook Predict. Pick an expiry and a shape, read the live on-chain book, then open in one signature."
+                  : "Curated baskets of uncorrelated event markets, settled on Pelagos's own vault. High-conviction and long-shot tiers."}
+              </p>
             </div>
-          </section>
-
-          <section className="basket-controls" aria-label="Basket filters">
-            <SegmentedControl value={tier} onChange={setTier} options={TIER_OPTIONS} />
-            <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
-          </section>
-
-          {feedStatus === "seed" && feedError ? (
-            <div className="basket-warning" style={{ display: "none" }}>
-              {feedError}
-            </div>
-          ) : null}
-
-          {feedStatus === "loading" ? (
-            <BasketLoading />
-          ) : filtered.length === 0 ? (
-            <BasketEmpty
-              onReset={() => {
-                setTier("all");
-                setWindowFilter("all");
-              }}
+            <SegmentedControl
+              value={assetClass}
+              onChange={setAssetClass}
+              options={[
+                { value: "deepbook", label: "DeepBook · BTC" },
+                { value: "event", label: "Event baskets" },
+              ]}
             />
+          </section>
+
+          {assetClass === "deepbook" ? (
+            <DeepBookBaskets />
           ) : (
-            <section className="basket-workspace">
-              <BasketSelector
-                baskets={filtered}
-                selectedId={selected?.id ?? null}
-                vaultPrices={vaultPrices}
-                onSelect={setSelectedId}
-              />
-              {selected && (
-                <SelectedBasketPanel
-                  basket={selected}
-                  vaultPrice={vaultPrices[selected.id]?.issue_price ?? selected.issue}
-                  onOpen={() => router.push(`/app/basket/${selected.id}`)}
-                  onSlices={() => router.push(`/app/tranche/${selected.id}`)}
+            <>
+              <section className="basket-controls" aria-label="Basket filters">
+                <SegmentedControl value={tier} onChange={setTier} options={TIER_OPTIONS} />
+                <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
+              </section>
+
+              {feedStatus === "loading" ? (
+                <BasketLoading />
+              ) : filtered.length === 0 ? (
+                <BasketEmpty
+                  onReset={() => {
+                    setTier("all");
+                    setWindowFilter("all");
+                  }}
                 />
+              ) : (
+                <section className="basket-workspace">
+                  <BasketSelector
+                    baskets={filtered}
+                    selectedId={selected?.id ?? null}
+                    vaultPrices={vaultPrices}
+                    onSelect={setSelectedId}
+                  />
+                  {selected && (
+                    <SelectedBasketPanel
+                      basket={selected}
+                      vaultPrice={vaultPrices[selected.id]?.issue_price ?? selected.issue}
+                      onOpen={() => router.push(`/app/basket/${selected.id}`)}
+                      onSlices={() => router.push(`/app/tranche/${selected.id}`)}
+                    />
+                  )}
+                </section>
               )}
-            </section>
+            </>
           )}
         </div>
       </PageFrame>
@@ -627,7 +643,7 @@ function BasketEmpty({ onReset }: { onReset: () => void }) {
 
 const BASKET_CSS = `
   .basket-shell { max-width: 1320px; margin: 0 auto; display: grid; gap: 14px; min-width: 0; }
-  .basket-hero { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 8px; padding: 0 0 4px; }
+  .basket-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 16px; padding: 0 0 4px; }
   .basket-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.08; letter-spacing: -0.025em; font-weight: 600; }
   .basket-hero p { max-width: 620px; margin: 8px 0 0; color: ${C.textSecondary}; font-family: ${FS}; font-size: 13px; line-height: 1.55; }
   .basket-selector-head span, .basket-section-head span, .basket-metric-cell span { color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }

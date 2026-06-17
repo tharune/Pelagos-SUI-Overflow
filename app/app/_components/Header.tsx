@@ -9,13 +9,12 @@ import { C, FD } from "../_lib/tokens";
 import { ThemeToggle } from "../_lib/theme";
 
 const NAV_LEFT = [
-  { id: "portfolio", label: "Portfolio",      href: "/app/portfolio" },
-  { id: "basket",    label: "Market Baskets", href: "/app/basket" },
-  { id: "tranche",   label: "Risk Slices",    href: "/app/tranche" },
-  { id: "ppn",       label: "Protected Notes", href: "/app/ppn" },
-  { id: "distribution", label: "Distribution Markets", href: "/app/distribution" },
-  { id: "predict",   label: "DeepBook Predict", href: "/app/predict" },
-  { id: "docs",      label: "About",          href: "/app/docs" },
+  { id: "portfolio",    label: "Portfolio",       href: "/app/portfolio" },
+  { id: "distribution", label: "Distribution",    href: "/app/distribution" },
+  { id: "tranche",      label: "Risk Slices",     href: "/app/tranche" },
+  { id: "ppn",          label: "Protected Notes", href: "/app/ppn" },
+  { id: "basket",       label: "Baskets",         href: "/app/basket" },
+  { id: "docs",         label: "About",           href: "/app/docs" },
 ];
 
 function PelagosMark() {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, trancheColor, tc, tl } from "../_lib/tokens";
@@ -8,7 +8,6 @@ import { BUNDLES } from "../_lib/bundles";
 import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "./_quote";
 import type { LiveBasket } from "../_lib/live-baskets";
-import { trancheQuote, fetchVolSurface, type TrancheProfile } from "../_lib/predict-strip-client";
 
 const TIER_LABEL: Record<90 | 70 | 50, string> = {
   90: "High probability",
@@ -53,25 +52,13 @@ export default function TranchesPage() {
             <div>
               <h1>Risk Slices</h1>
               <p>
-                Senior, mezzanine, and junior tranches across two venues: DeepBook&apos;s live BTC range strips and Polymarket&apos;s
-                event-CLOB baskets. Pick a slice; set your size and open it inside each market.
+                Senior, mezzanine, and junior tranches of Polymarket&apos;s event-CLOB baskets. Each basket is sliced by
+                loss priority; pick a slice and open it. (BTC range strips live under Distribution &amp; Baskets.)
               </p>
             </div>
           </section>
 
           <div className="risk-stack">
-            {/* ── DeepBook · BTC ── */}
-            <section className="risk-tier risk-tier--lead">
-              <header className="risk-tier-head">
-                <div>
-                  <span style={{ color: C.tealLight }}>DeepBook · BTC</span>
-                  <p>One live BTC range strip, sliced by conviction width. Senior covers wide for a high hit-rate and a steady multiple; junior pins the forward for the biggest payout. Sized off the oracle&apos;s own implied move.</p>
-                </div>
-                <strong>senior · mezz · junior</strong>
-              </header>
-              <DeepBookTranches onOpen={(oid) => router.push(`/app/tranche/db/${oid}`)} />
-            </section>
-
             {/* ── Polymarket event tiers ── */}
             {state.status === "loading" && <CardSkeleton count={3} />}
             {state.status === "error" && <EmptyState title="Could not load event baskets" subtitle={state.error} />}
@@ -99,98 +86,6 @@ export default function TranchesPage() {
         </div>
       </PageFrame>
     </>
-  );
-}
-
-// ── DeepBook tranches: one card per slice (senior / mezz / junior) ──
-// Priced on the soonest active BTC oracle, whose bands reliably sit inside the
-// protocol's mintable [2%,98%] band — so all three slices quote real fills.
-const DB_ORDER: TrancheProfile["tranche"][] = ["senior", "mezz", "junior"];
-
-function DeepBookTranches({ onOpen }: { onOpen: (oracleId: string) => void }) {
-  const [data, setData] = useState<{ tranches: TrancheProfile[]; oracleId: string; forward: number; tenor: string } | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    Promise.all([trancheQuote({ asset: "BTC", budget_usd: 100 }), fetchVolSurface("BTC")])
-      .then(([q, s]) => {
-        if (!alive) return;
-        const slice = s.slices.find((sl) => sl.oracle_id === q.oracle_id);
-        setData({ tranches: q.tranches, oracleId: q.oracle_id, forward: q.forward_usd, tenor: slice?.tenor_label ?? "front" });
-      })
-      .catch(() => { if (alive) setData(null); });
-    return () => { alive = false; };
-  }, []);
-
-  if (!data) return <div className="risk-grid"><CardSkeleton count={3} /></div>;
-
-  const sorted = DB_ORDER.map((k) => data.tranches.find((t) => t.tranche === k)).filter((t): t is TrancheProfile => Boolean(t));
-
-  return (
-    <div className="risk-grid">
-      {sorted.map((t) => (
-        <TrancheStratCard key={t.tranche} t={t} forward={data.forward} tenor={data.tenor} onClick={() => onOpen(data.oracleId)} />
-      ))}
-    </div>
-  );
-}
-
-function TrancheStratCard({ t, forward, tenor, onClick }: { t: TrancheProfile; forward: number; tenor: string; onClick: () => void }) {
-  const kind = t.tranche === "mezz" ? "mezzanine" : t.tranche;
-  const col = trancheColor(kind);
-  const cost = Number(t.strip.total_cost_raw) / 1e6;
-  // Honest best case = the largest single band settling (only one band can win).
-  const maxPay = Number(t.strip.realized_max_payout_raw) / 1e6;
-  const spread = Number(t.strip.round_trip_spread_raw) / 1e6;
-  const mult = cost > 0 ? maxPay / cost : 0;
-  const live = t.strip.buckets.filter((b) => b.tradeable).length;
-  const total = t.strip.buckets.length;
-  // Band coverage scales with σ-multiple — senior covers wide, junior pins ATM.
-  const cover = Math.min(92, 18 + t.sigma_mult * 26);
-
-  return (
-    <button className="risk-card" type="button" onClick={onClick}>
-      <div className="risk-card-head">
-        <div>
-          <div className="risk-card-title">
-            <i style={{ background: col }} />
-            <strong style={{ textTransform: "capitalize" }}>{kind}</strong>
-          </div>
-          <div className="risk-meta">
-            <span>BTC · {tenor}</span>
-            <span>σ × {t.sigma_mult.toFixed(2)}</span>
-            <span style={{ color: `${C.green}cc` }}>live</span>
-          </div>
-        </div>
-        <span className="risk-day">{live}/{total}</span>
-      </div>
-
-      <div className="risk-band">
-        <div className="risk-band-track">
-          <div style={{ width: `${(100 - cover) / 2}%`, background: "transparent" }} />
-          <div title={kind} style={{ width: `${cover}%`, background: col }} />
-        </div>
-        <i style={{ left: "50%" }} />
-      </div>
-
-      <div className="risk-slice-list">
-        <div className="risk-slice-row">
-          <div><span style={{ color: C.textSecondary }}>Best-case payout</span><em>per $100 in</em></div>
-          <strong>{maxPay > 0 ? `$${maxPay.toFixed(0)}` : "—"}</strong>
-          <b style={{ color: mult >= 2 ? C.green : mult >= 1.25 ? C.tealLight : C.textSecondary }}>{mult > 0 ? `${mult.toFixed(2)}×` : "out of band"}</b>
-        </div>
-        <div className="risk-slice-row">
-          <div><span style={{ color: C.textSecondary }}>Round-trip spread</span><em>open + close</em></div>
-          <strong>{spread > 0 ? `$${spread.toFixed(2)}` : "—"}</strong>
-          <b style={{ color: C.textMuted }}>cost</b>
-        </div>
-        <div className="risk-slice-row">
-          <div><span style={{ color: C.textSecondary }}>Forward</span><em>oracle mark</em></div>
-          <strong>${Math.round(forward).toLocaleString()}</strong>
-          <b style={{ color: C.textMuted }}>BTC</b>
-        </div>
-      </div>
-    </button>
   );
 }
 
@@ -260,9 +155,6 @@ function TrancheRow({ quote }: { quote: TrancheQuote }) {
   );
 }
 
-function RowSkeleton() {
-  return <div style={{ height: 132, opacity: 0.4, display: "grid", placeItems: "center", fontFamily: FM, fontSize: 11, color: C.textMuted }}>pricing live…</div>;
-}
 function CardSkeleton({ count }: { count: number }) {
   return <>{Array.from({ length: count }).map((_, i) => <div key={i} className="risk-card" style={{ height: 230, opacity: 0.45 }} />)}</>;
 }

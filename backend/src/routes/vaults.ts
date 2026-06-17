@@ -98,6 +98,15 @@ interface LlamaPool {
  * only populate the base component, and reading a hard null as zero
  * would hide a perfectly good pool behind our min-APY filter.
  */
+/** Humanize a DeFiLlama project slug for display: "navi-lending" -> "Navi". */
+function humanizeProject(slug: string): string {
+  return slug
+    .replace(/-(lending|lend|finance|protocol)$/i, '')
+    .split('-')
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(' ') || slug;
+}
+
 function readApy(row: LlamaPool): number | null {
   const a = typeof row.apy === 'number' ? row.apy : null;
   if (a !== null && a > 0) return a / 100;
@@ -183,10 +192,11 @@ async function fetchFromDefiLlama(): Promise<VaultSource[] | null> {
       }
     }
 
-    // Pass 3: if more than one venue is still missing, back-fill from
-    // the top-TVL pools we haven't already used. This keeps the list
-    // populated with real live yields even when DefiLlama's slugs
-    // don't match any of our display names at all.
+    // Pass 3: if a curated venue is still missing, back-fill its slot from the
+    // top-TVL Sui USDC pools we haven't used — but display the REAL protocol name
+    // (not the curated slot's name), so we never present one protocol's rate
+    // under another's label. This keeps the list populated with honestly-attributed
+    // live yields when DefiLlama's slugs don't match our curated display names.
     const usedProjects = new Set(
       Array.from(byVenue.values()).map((v) => v.project),
     );
@@ -197,10 +207,8 @@ async function fetchFromDefiLlama(): Promise<VaultSource[] | null> {
         if (usedProjects.has(cand.project)) continue;
         const slot = stillMissing.shift();
         if (!slot) break;
-        // Preserve the UI's display name but mark the project slug so
-        // operators can trace which DefiLlama pool the rate came from.
         byVenue.set(slot.name, {
-          name: slot.name,
+          name: humanizeProject(cand.project), // the REAL source, not the curated slot name
           project: cand.project,
           apy: cand.apy,
           tvlUsd: cand.tvl,

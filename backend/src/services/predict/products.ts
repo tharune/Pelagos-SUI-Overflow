@@ -29,7 +29,7 @@ const YEAR_MS = 365.25 * 24 * 3600 * 1000;
  * so the grid can never collapse the buckets; falls back to `flatSigmaRaw` (the
  * route's flat default) when the SVI feed is unavailable.
  */
-async function impliedSigmaRaw(oracle: GridOracle, forwardRaw: number, flatSigmaRaw: number): Promise<number> {
+export async function impliedSigmaRaw(oracle: GridOracle, forwardRaw: number, flatSigmaRaw: number): Promise<number> {
   let base = flatSigmaRaw;
   try {
     const svi = await predictServer.oracleSviLatest(oracle.oracle_id);

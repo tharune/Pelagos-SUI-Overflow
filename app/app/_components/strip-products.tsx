@@ -15,7 +15,7 @@
 // once for the shared class names.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { C, FD, FM, FS, EASE, trancheColor } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
@@ -23,6 +23,7 @@ import { useWalletSigner, useUsdcBalance } from "../_lib/wallet-bridge";
 import {
   ppnQuote,
   trancheQuote,
+  stripPreview,
   ensureManager,
   prepareOpenStrip,
   preparePpnOpen,
@@ -170,59 +171,122 @@ export function openableBuckets(buckets: StripBucket[]) {
 // The bucket ladder — the live MM order book for a distribution strip.
 // ---------------------------------------------------------------------------
 
-// Clean two-sided depth ladder (Level-2 DOM): each price band is a level with
-// its live BID (redeem) and ASK (mint) from the on-chain book, depth bars sized
-// by resting size, the forward marked at the mid, and the round-trip spread
-// surfaced. Bands are sorted high → low strike like a real order book.
-export function BucketLadder({ quote }: { quote: StripQuote }) {
-  const bands = [...quote.buckets].sort((a, b) => b.higher_usd - a.higher_usd);
-  const maxQty = Math.max(...bands.map((b) => (b.tradeable ? Number(b.quantity) : 0)), 1);
-  const fwd = quote.forward_usd;
-  const spread = Number(quote.round_trip_spread_raw) / 1e6;
-  const fwdIdx = bands.findIndex((b) => fwd >= b.lower_usd && fwd < b.higher_usd);
+// CEX / Wall-Street order book — asks stacked above the forward mid, bids below,
+// with cumulative depth bars, a live spread row, and timeframe toggles. It is
+// self-contained: it polls a fresh on-chain strip (real get_range_trade_amounts
+// pricing) every few seconds and on timeframe change, so the book is live. The
+// timeframe widens/tightens the depth window shown (1m = tight near-mid book,
+// 1D = the full deep book).
+const OB_TFS: Array<{ k: string; span: number }> = [
+  { k: "1m", span: 1.4 },
+  { k: "5m", span: 2.0 },
+  { k: "15m", span: 2.6 },
+  { k: "1h", span: 3.2 },
+  { k: "1D", span: 4.2 },
+];
+
+export function OrderBook({ oracleId, levels = 16 }: { oracleId?: string; levels?: number }) {
+  const [tf, setTf] = useState("15m");
+  const [quote, setQuote] = useState<StripQuote | null>(null);
+  const [pulse, setPulse] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    const span = OB_TFS.find((t) => t.k === tf)?.span ?? 2.6;
+    const load = () =>
+      stripPreview({ oracle_id: oracleId, n: levels, span_sigma: span, budget_usd: 2000 })
+        .then((q) => { if (alive) { setQuote(q); setPulse((p) => p + 1); } })
+        .catch(() => {});
+    load();
+    const timer = window.setInterval(load, 4500);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [oracleId, tf, levels]);
+
+  const view = useMemo(() => {
+    if (!quote) return null;
+    const fwd = quote.forward_usd;
+    const rows = quote.buckets
+      .map((b) => ({
+        mid: (b.lower_usd + b.higher_usd) / 2,
+        lo: b.lower_usd,
+        hi: b.higher_usd,
+        live: b.tradeable && Number(b.quantity) > 0,
+        size: Number(b.quantity) / 1e6,
+        ask: Number(b.mint_cost_raw) / 1e6,
+        bid: Number(b.redeem_value_raw) / 1e6,
+        imp: b.unit_price,
+      }))
+      .filter((r) => r.live);
+    const asks = rows.filter((r) => r.mid > fwd).sort((a, b) => b.mid - a.mid); // far → near
+    const bids = rows.filter((r) => r.mid <= fwd).sort((a, b) => b.mid - a.mid); // near → far
+    // cumulative depth from the mid outward
+    let c = 0; const askCum = new Map<number, number>();
+    for (let i = asks.length - 1; i >= 0; i--) { c += asks[i].size; askCum.set(i, c); }
+    c = 0; const bidCum = new Map<number, number>();
+    for (let i = 0; i < bids.length; i++) { c += bids[i].size; bidCum.set(i, c); }
+    const maxCum = Math.max(...Array.from(askCum.values()), ...Array.from(bidCum.values()), 1);
+    const bestAsk = asks.length ? asks[asks.length - 1].ask : 0;
+    const bestBid = bids.length ? bids[0].bid : 0;
+    return { fwd, asks, bids, askCum, bidCum, maxCum, spread: Math.max(0, bestAsk - bestBid) };
+  }, [quote]);
 
   return (
-    <div className="ob">
-      <div className="ob-head">
-        <span>Bid · depth</span>
-        <span className="ob-mid-h">Price band</span>
-        <span className="ob-ask-h">Ask · depth</span>
-        <span className="ob-imp-h">Implied</span>
+    <div className="cb">
+      <div className="cb-head">
+        <div className="cb-title">
+          <span className="cb-live"><i style={{ animationDelay: `${pulse % 2}s` }} /> Live order book</span>
+        </div>
+        <div className="cb-tfs">
+          {OB_TFS.map((t) => (
+            <button key={t.k} type="button" className={t.k === tf ? "is-on" : ""} onClick={() => setTf(t.k)}>{t.k}</button>
+          ))}
+        </div>
       </div>
-      {bands.map((b, i) => {
-        const live = b.tradeable && Number(b.quantity) > 0;
-        const ask = Number(b.mint_cost_raw) / 1e6;
-        const bid = Number(b.redeem_value_raw) / 1e6;
-        const depth = live ? (Number(b.quantity) / maxQty) * 100 : 0;
-        const containsFwd = i === fwdIdx;
-        return (
-          <React.Fragment key={i}>
-            {containsFwd && (
-              <div className="ob-spread">
-                <span>forward {dollars(fwd)}</span>
-                <span>spread {spread > 0 ? `$${spread.toFixed(2)}` : "—"}</span>
-              </div>
-            )}
-            <div className={`ob-row${live ? "" : " is-dim"}`}>
-              <div className="ob-bid">
-                <div className="ob-depth ob-depth-bid" style={{ width: `${depth}%` }} />
-                <span>{live ? `$${bid.toFixed(2)}` : "—"}</span>
-              </div>
-              <div className="ob-band">
-                {dollars(b.lower_usd)}–{dollars(b.higher_usd)}
-                {!live && <em>no fill</em>}
-              </div>
-              <div className="ob-ask">
-                <span>{live ? `$${ask.toFixed(2)}` : "—"}</span>
-                <div className="ob-depth ob-depth-ask" style={{ width: `${depth}%` }} />
-              </div>
-              <span className="ob-imp">{(b.unit_price * 100).toFixed(1)}%</span>
-            </div>
-          </React.Fragment>
-        );
-      })}
+      <div className="cb-cols"><span>Price</span><span>Size</span><span>Total</span></div>
+      {!view ? (
+        <div className="cb-empty">loading the live book…</div>
+      ) : (
+        <>
+          <div className="cb-side">
+            {view.asks.map((r, i) => {
+              const cum = view.askCum.get(i) ?? 0;
+              return (
+                <div className="cb-row cb-ask" key={`a${i}`}>
+                  <div className="cb-depth cb-depth-ask" style={{ width: `${(cum / view.maxCum) * 100}%` }} />
+                  <span className="cb-price">{dollars(r.mid)}</span>
+                  <span className="cb-size">{r.size.toFixed(1)}</span>
+                  <span className="cb-total">{cum.toFixed(0)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="cb-spread">
+            <span className="cb-mid">{dollars(view.fwd)}</span>
+            <span className="cb-spread-v">spread {view.spread > 0 ? `$${view.spread.toFixed(2)}` : "—"}</span>
+          </div>
+          <div className="cb-side">
+            {view.bids.map((r, i) => {
+              const cum = view.bidCum.get(i) ?? 0;
+              return (
+                <div className="cb-row cb-bid" key={`b${i}`}>
+                  <div className="cb-depth cb-depth-bid" style={{ width: `${(cum / view.maxCum) * 100}%` }} />
+                  <span className="cb-price">{dollars(r.mid)}</span>
+                  <span className="cb-size">{r.size.toFixed(1)}</span>
+                  <span className="cb-total">{cum.toFixed(0)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
+}
+
+// Back-compat alias: older call sites pass a static {quote}; render the live book
+// for that quote's oracle so every surface gets the same CEX order book.
+export function BucketLadder({ quote }: { quote: StripQuote }) {
+  return <OrderBook oracleId={quote.oracle_id} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -656,27 +720,32 @@ export function StripStyles() {
       .mk-ghost { width: 100%; background: transparent; border: 0.5px solid ${C.border}; border-radius: 10px; padding: 12px; color: ${C.textSecondary}; font-family: ${FD}; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s ${EASE}; }
       .mk-ghost:hover:not(:disabled) { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
       .mk-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
-      /* ---- Level-2 depth ladder (order book) ---- */
-      .ob { display: grid; gap: 2px; font-family: ${FM}; }
-      .ob-head { display: grid; grid-template-columns: minmax(0,1fr) minmax(150px,1.1fr) minmax(0,1fr) 56px; gap: 10px; align-items: baseline; padding: 0 4px 8px; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
-      .ob-head .ob-mid-h { text-align: center; }
-      .ob-head .ob-ask-h { text-align: right; }
-      .ob-head .ob-imp-h { text-align: right; }
-      .ob-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(150px,1.1fr) minmax(0,1fr) 56px; gap: 10px; align-items: center; height: 30px; border-radius: 6px; }
-      .ob-row.is-dim { opacity: 0.4; }
-      .ob-bid, .ob-ask { position: relative; display: flex; align-items: center; height: 100%; overflow: hidden; border-radius: 5px; }
-      .ob-bid { justify-content: flex-end; }
-      .ob-ask { justify-content: flex-start; }
-      .ob-depth { position: absolute; top: 0; bottom: 0; }
-      .ob-depth-bid { right: 0; background: ${C.green}1f; border-right: 2px solid ${C.green}66; }
-      .ob-depth-ask { left: 0; background: ${C.teal}1f; border-left: 2px solid ${C.teal}66; }
-      .ob-bid span { position: relative; padding-right: 9px; font-size: 11.5px; color: ${C.green}; font-variant-numeric: tabular-nums; }
-      .ob-ask span { position: relative; padding-left: 9px; font-size: 11.5px; color: ${C.tealLight}; font-variant-numeric: tabular-nums; }
-      .ob-band { text-align: center; font-size: 11px; color: ${C.textPrimary}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-      .ob-band em { margin-left: 7px; font-style: normal; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; }
-      .ob-imp { text-align: right; font-size: 10.5px; color: ${C.textMuted}; font-variant-numeric: tabular-nums; }
-      .ob-spread { display: flex; justify-content: space-between; padding: 4px 8px; margin: 2px 0; font-size: 9.5px; letter-spacing: 0.06em; color: ${C.textMuted}; border-top: 0.5px dashed ${C.border}; border-bottom: 0.5px dashed ${C.border}; }
-      .ob-spread span:first-child { color: ${C.tealLight}; }
+      /* ---- CEX / Wall-Street order book ---- */
+      .cb { font-family: ${FM}; display: grid; gap: 0; }
+      .cb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .cb-live { display: inline-flex; align-items: center; gap: 7px; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: ${C.textMuted}; }
+      .cb-live i { width: 6px; height: 6px; border-radius: 50%; background: ${C.green}; box-shadow: 0 0 0 0 ${C.green}66; animation: cbPing 2.4s ${EASE} infinite; }
+      @keyframes cbPing { 0% { box-shadow: 0 0 0 0 ${C.green}55; } 70% { box-shadow: 0 0 0 5px ${C.green}00; } 100% { box-shadow: 0 0 0 0 ${C.green}00; } }
+      .cb-tfs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
+      .cb-tfs button { appearance: none; border: 0; background: transparent; border-radius: 6px; padding: 3px 9px; color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; cursor: pointer; transition: all 0.14s ${EASE}; }
+      .cb-tfs button:hover { color: ${C.textSecondary}; }
+      .cb-tfs button.is-on { background: ${C.card}; color: ${C.textPrimary}; }
+      .cb-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 0 8px 6px; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
+      .cb-cols span:nth-child(2), .cb-cols span:nth-child(3) { text-align: right; }
+      .cb-side { display: grid; gap: 1px; }
+      .cb-row { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; height: 24px; padding: 0 8px; border-radius: 4px; overflow: hidden; }
+      .cb-depth { position: absolute; top: 0; bottom: 0; right: 0; }
+      .cb-depth-ask { background: ${C.red}16; }
+      .cb-depth-bid { background: ${C.green}16; }
+      .cb-price { position: relative; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+      .cb-ask .cb-price { color: ${C.red}; }
+      .cb-bid .cb-price { color: ${C.green}; }
+      .cb-size, .cb-total { position: relative; text-align: right; font-size: 11px; color: ${C.textSecondary}; font-variant-numeric: tabular-nums; }
+      .cb-total { color: ${C.textMuted}; }
+      .cb-spread { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px; margin: 3px 0; border-top: 0.5px solid ${C.border}; border-bottom: 0.5px solid ${C.border}; }
+      .cb-mid { font-family: ${FD}; font-size: 14px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
+      .cb-spread-v { font-size: 10px; letter-spacing: 0.04em; color: ${C.textMuted}; }
+      .cb-empty { height: 200px; display: grid; place-items: center; font-size: 11.5px; color: ${C.textMuted}; }
       .mk-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 4px; background: ${C.border}; outline: none; }
       .mk-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }
       .mk-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }

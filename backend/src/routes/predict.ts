@@ -552,12 +552,19 @@ router.post('/strip/preview', async (req: Request, res: Response) => {
       body.mu_usd !== undefined ? Math.round(Number(body.mu_usd) * PRICE_SCALE)
       : body.mu_raw !== undefined ? Number(body.mu_raw)
       : o.forward_raw;
+    // Default σ tracks the oracle's live implied move (tenor-aware, floored to
+    // the grid) so the bands sit inside the mintable window — same calibration as
+    // the tranches. Falls back to a flat 1% if the SVI feed is unavailable.
     const sigmaRaw =
       body.sigma_usd !== undefined ? Math.round(Number(body.sigma_usd) * PRICE_SCALE)
       : body.sigma_raw !== undefined ? Number(body.sigma_raw)
-      : Math.max(o.tick_size, Math.round(o.forward_raw * 0.01)); // default σ = 1% of forward
+      : await products.impliedSigmaRaw(
+          { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
+          o.forward_raw,
+          Math.max(o.tick_size, Math.round(o.forward_raw * 0.01)),
+        );
     if (!(sigmaRaw > 0)) throw new Error('sigma must be positive');
-    const n = Math.min(12, Math.max(1, Number(body.n ?? 6)));
+    const n = Math.min(24, Math.max(1, Number(body.n ?? 6)));
     const budgetRaw =
       body.budget_raw !== undefined ? BigInt(String(body.budget_raw))
       : body.budget_usd !== undefined

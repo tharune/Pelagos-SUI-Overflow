@@ -234,6 +234,35 @@ export interface QuoteTranchesInputs {
   tranches?: TrancheSpec[];
 }
 
+/**
+ * σ of a basket's NAV from its REAL per-leg live probabilities:
+ *   NAV = Σ wᵢ·pᵢ  ⇒  Var(NAV) = Σ wᵢ²·pᵢ(1−pᵢ)  (independent binaries),
+ *   so σ = √(Σ wᵢ²·pᵢ(1−pᵢ)) over the still-active legs (resolved legs add no
+ *   variance). This generalizes the √(p(1−p)/N) approximation — which assumes
+ *   every leg equals the NAV — to the actual heterogeneous live odds, so tranche
+ *   fair value / APY / Greeks price off real per-leg risk. Returns null when no
+ *   usable leg probabilities are available (caller keeps the binomial default).
+ */
+export function basketSigmaFromLegs(
+  legs: Array<{ probability: number; weight: number; status?: string }>,
+): number | null {
+  if (!Array.isArray(legs) || legs.length === 0) return null;
+  const totalW = legs.reduce((s, l) => s + (Number(l.weight) || 0), 0) || 0;
+  if (totalW <= 0) return null;
+  let v = 0;
+  let counted = 0;
+  for (const l of legs) {
+    if (l.status && l.status !== 'active') continue; // resolved legs add no variance
+    const p = Math.min(0.999, Math.max(0.001, Number(l.probability)));
+    if (!Number.isFinite(p)) continue;
+    const w = (Number(l.weight) || 0) / totalW;
+    v += w * w * p * (1 - p);
+    counted++;
+  }
+  if (counted === 0) return null;
+  return Math.sqrt(Math.max(v, 1e-9));
+}
+
 export function quoteTranches(opts: QuoteTranchesInputs): TrancheQuote[] {
   const nav = Math.max(0.001, Math.min(0.999, opts.bundleNav));
   const totalLegs = Math.max(1, opts.totalLegs);

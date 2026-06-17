@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { quoteSellToMM, MM_BID_BPS, type ProductKind, type TrancheKind, type MarkSource } from '../services/mm-quote';
 import { createTransaction, getTransactionBySignature, getBundleById, getLegsByBundleId } from '../db/queries';
 import { getLiveNAV } from '../services/pricing';
-import { quoteTranches } from '../services/tranching';
+import { quoteTranches, basketSigmaFromLegs } from '../services/tranching';
 
 /**
  * Market-maker secondary-market routes (Pelagos / Sui).
@@ -55,6 +55,7 @@ async function resolveMark(
     totalLegs: Math.max(1, legs.length),
     horizonDays,
     tier: bundle?.risk_tier,
+    sigma: basketSigmaFromLegs(legs) ?? undefined,
   });
   const t = tqs.find((x) => x.kind === (trancheKind ?? 'senior'));
   return t ? { mark: t.fairPrice, source: 'tranche_model' } : { mark: nav, source: 'live_nav' };

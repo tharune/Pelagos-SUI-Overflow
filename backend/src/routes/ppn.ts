@@ -19,7 +19,7 @@ import {
   vaultConfigured,
   VAULT,
 } from '../services/vault';
-import { quoteTranches } from '../services/tranching';
+import { quoteTranches, basketSigmaFromLegs } from '../services/tranching';
 import { allocateNote } from '../services/ppn-allocator';
 
 const router = Router();
@@ -396,6 +396,8 @@ router.post('/tranche/sell/rfq', async (req: Request, res: Response) => {
           bundleNav: nav,
           totalLegs: Math.max(1, legs.length || 1),
           horizonDays,
+          // σ from the REAL live per-leg probabilities (not the √(p(1−p)/N) approx).
+          sigma: basketSigmaFromLegs(legs) ?? undefined,
         }).find((t) => t.kind === kind);
 
         const indicativePct = matured ? 100 : tranche ? tranche.pricePerToken * 100 : 95;

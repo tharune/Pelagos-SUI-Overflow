@@ -11,6 +11,7 @@
     "seed": "tsx src/scripts/seed.ts",
     "setup": "tsx src/scripts/setup.ts",
     "test:api": "tsx src/scripts/test-api.ts",
+    "backtest": "tsx --tsconfig ./tsconfig.dev.json src/scripts/backtest-strip.ts",
     "verify:predict": "tsx --tsconfig ./tsconfig.dev.json src/scripts/verify-predict.ts",
     "write:predict": "tsx --tsconfig ./tsconfig.dev.json src/scripts/write-flow-predict.ts",
     "test:buttons": "tsx --tsconfig ./tsconfig.dev.json src/scripts/test-buttons.ts"

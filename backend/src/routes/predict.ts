@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Router, Request, Response } from 'express';
 import * as predict from '../services/predict';
 import * as structured from '../services/predict/structured';
@@ -137,10 +139,111 @@ router.get('/oracles/active', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Live forward tick — the soonest active oracle's latest forward/spot from the
+ * indexer, in USD. The frontend polls this every few seconds to drive the live
+ * mark-to-market chart (the genuine on-chain price tick). 1e9-scaled → USD.
+ */
+router.get('/forward', async (req: Request, res: Response) => {
+  try {
+    const oracle = await predict.findActiveOracle((req.query.underlying as string | undefined) ?? 'BTC');
+    if (!oracle) return res.status(404).json({ error: 'No active oracle found' });
+    const latest = (await predict.predictServer.oraclePriceLatest(oracle.oracle_id)) as Record<string, number>;
+    const forward = Number(latest.forward ?? latest.spot ?? 0) / 1e9;
+    const spot = Number(latest.spot ?? latest.forward ?? 0) / 1e9;
+    res.json({ oracle_id: oracle.oracle_id, expiry: oracle.expiry, forward, spot });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 router.get('/oracles/:id/state', async (req: Request, res: Response) => {
   try {
     res.json(await predict.predictServer.oracleState(req.params.id));
   } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * Live SVI implied-vol SURFACE (BTC-only on testnet). Decodes each active
+ * oracle's published SVI params + live forward into an annualized IV smile per
+ * expiry; the protocol prices every market off this surface.
+ *   GET /api/predict/vol-surface?underlying=BTC&strikes=0.15
+ */
+router.get('/vol-surface', async (req: Request, res: Response) => {
+  try {
+    const underlying = String(req.query.underlying ?? 'BTC').toUpperCase();
+    const strikesPct =
+      req.query.strikes !== undefined ? Number(req.query.strikes) : 0.15;
+    if (!Number.isFinite(strikesPct) || strikesPct <= 0 || strikesPct >= 1) {
+      throw new Error('strikes must be in (0, 1)');
+    }
+    const surface = await predict.buildVolSurface(underlying, strikesPct);
+    res.json(surface);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/no active oracles/i.test(message)) {
+      return res.status(404).json({ error: 'no active oracles' });
+    }
+    sendError(res, err);
+  }
+});
+
+/**
+ * Real SVI-implied DENSITY (BTC-only on testnet). The risk-neutral settlement
+ * distribution reconstructed from the oracle's live SVI smile — skewed/fat-tailed,
+ * NOT a single-σ Normal. CDF = N(-d2) per strike; pdf = dCDF/dK, normalized.
+ *   GET /api/predict/density?oracle_id=0x..&steps=121&span=0.18
+ */
+router.get('/density', async (req: Request, res: Response) => {
+  try {
+    const oracleId =
+      typeof req.query.oracle_id === 'string' && req.query.oracle_id ? req.query.oracle_id : undefined;
+    const steps = req.query.steps !== undefined ? Number(req.query.steps) : undefined;
+    const span = req.query.span !== undefined ? Number(req.query.span) : undefined;
+    if (span !== undefined && (!Number.isFinite(span) || span <= 0 || span >= 1)) {
+      throw new Error('span must be in (0, 1)');
+    }
+    const density = await predict.buildImpliedDensity(oracleId, steps, span);
+    res.json(density);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/no oracle|oracle expired/i.test(message)) {
+      return res.status(404).json({ error: 'no oracle' });
+    }
+    sendError(res, err);
+  }
+});
+
+/**
+ * Markets-depth snapshot (BTC-only on testnet). One resilient row per active
+ * oracle — live forward, ATM IV, SVI skew, ATM binary-up, grid params — plus a
+ * vault block (TVL / share price / utilization / max payout). All indexer-derived.
+ *   GET /api/predict/markets?underlying=BTC
+ */
+router.get('/markets', async (req: Request, res: Response) => {
+  try {
+    const underlying = String(req.query.underlying ?? 'BTC').toUpperCase();
+    res.json(await predict.buildMarketsDepth(underlying));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/**
+ * Indexer-replay BACKTEST results (the "simulation results for a vault strategy").
+ * Reads backend/.backtest-strip.json produced by `npm run backtest`. The headline
+ * series is house{} — the PLP / vault counterparty that earns the strip spread.
+ */
+router.get('/backtest', (_req: Request, res: Response) => {
+  try {
+    const path = resolve(__dirname, '../../.backtest-strip.json');
+    res.json(JSON.parse(readFileSync(path, 'utf8')));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return res.status(404).json({ error: 'backtest not generated yet; run npm run backtest' });
+    }
     sendError(res, err);
   }
 });
@@ -508,6 +611,29 @@ router.post('/strip/open/prepare', async (req: Request, res: Response) => {
         expiry: String(body.expiry),
         buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
         depositRaw,
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** SELL a whole strip: redeem every band of a tranche/strip in one wallet-signed PTB. */
+router.post('/strip/redeem/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
+    if (!isObjectId(body.oracle_id)) throw new Error('oracle_id (0x...) is required');
+    if (body.expiry === undefined) throw new Error('expiry is required');
+    if (!Array.isArray(body.buckets) || body.buckets.length === 0) throw new Error('buckets[] is required');
+    res.json(
+      await structured.prepareRedeemStrip({
+        owner: body.owner as string,
+        managerId: body.manager_id as string,
+        oracleId: body.oracle_id as string,
+        expiry: String(body.expiry),
+        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
       }),
     );
   } catch (err) {

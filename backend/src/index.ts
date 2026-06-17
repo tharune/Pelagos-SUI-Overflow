@@ -20,6 +20,7 @@ import { mlRoutes } from './routes/ml';
 import { onchainRoutes } from './routes/onchain';
 import { metricsRoutes } from './routes/metrics';
 import { lendingRoutes } from './routes/lending';
+import { warmLendingRate } from './services/lending';
 import { hedgeRoutes } from './routes/hedge';
 import portfolioRoutes from './routes/portfolio';
 import vaultRoutes from './routes/vaults';
@@ -229,6 +230,8 @@ app.listen(config.port, () => {
   console.log(`Pelagos backend running on port ${config.port}`);
   startCronJobs();
   startMonitorServer();
+  // Warm the live Sui USDC lending rate so the first /api/lending is already live.
+  void warmLendingRate().catch(() => {});
 });
 
 export default app;

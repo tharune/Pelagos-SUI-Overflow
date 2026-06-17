@@ -14,8 +14,14 @@ import * as structured from '../services/predict/structured';
 import { impliedSigmaRaw } from '../services/predict/products';
 import { buildVolSurface } from '../services/predict/vol';
 import { findActiveOracle, predictServer } from '../services/predict/server';
-import { volWeights, computeVolGreeks, type VolSide } from '../services/predict/volatility';
-import { fetchBtcMark, fetchRealizedVol, quoteHedge } from '../services/bluefin';
+import { volWeights, computeVolGreeks, strategyProfile, type VolSide, type VolStrategy } from '../services/predict/volatility';
+import { fetchBtcMark, fetchBtcMarkCached, fetchRealizedVol, quoteHedge } from '../services/bluefin';
+
+const STRATEGIES: VolStrategy[] = ['straddle', 'strangle', 'butterfly', 'condor'];
+function parseStrategy(v: unknown, side: VolSide): VolStrategy {
+  if (typeof v === 'string' && STRATEGIES.includes(v as VolStrategy)) return v as VolStrategy;
+  return side === 'short' ? 'butterfly' : 'straddle'; // side fallback
+}
 
 const router = Router();
 const PRICE_SCALE = 1_000_000_000;
@@ -91,7 +97,10 @@ router.get('/surface', async (_req: Request, res: Response) => {
 router.post('/quote', async (req: Request, res: Response) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const side: VolSide = body.side === 'short' ? 'short' : 'long';
+    const sideHint: VolSide = body.side === 'short' ? 'short' : 'long';
+    const n = 8;
+    const profile = strategyProfile(parseStrategy(body.strategy, sideHint), n);
+    const side = profile.side;
     const o = await resolveVolOracle(typeof body.oracle_id === 'string' ? body.oracle_id : undefined);
     const notionalUsd = Math.max(1, Number(body.notional_usd ?? body.budget_usd ?? 100));
     const budgetRaw = BigInt(Math.round(notionalUsd * 1e6));
@@ -100,16 +109,14 @@ router.post('/quote', async (req: Request, res: Response) => {
       o.forward_raw,
       Math.max(o.tick_size, Math.round(o.forward_raw * 0.005)),
     );
-    const n = 8;
-    const spanSigma = side === 'long' ? 2.6 : 2.0;
     const strip = await structured.previewStrip({
       oracle: { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
       muRaw: o.forward_raw,
       sigmaRaw,
       n,
       budgetRaw,
-      spanSigma,
-      weights: volWeights(n, side),
+      spanSigma: profile.spanSigma,
+      weights: profile.weights,
       sender: typeof body.sender === 'string' ? body.sender : undefined,
     });
     const forwardUsd = o.forward_raw / PRICE_SCALE;
@@ -123,9 +130,13 @@ router.post('/quote', async (req: Request, res: Response) => {
     const maxLossUsd = Number(strip.total_cost_raw) / 1e6;
     res.json({
       side,
+      strategy: profile.strategy,
+      strategy_label: profile.label,
+      thesis: profile.thesis,
       oracle_id: o.oracle_id,
       expiry: String(o.expiry),
       forward_usd: forwardUsd,
+      sigma_usd: sigmaUsd,
       atm_iv: atmIv,
       t_years: tYears,
       tenor_label: tenorLabel(Number(o.expiry) - Date.now()),
@@ -135,6 +146,16 @@ router.post('/quote', async (req: Request, res: Response) => {
       mark,
       hedge,
     });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** Lightweight live BTC mark for the real-time ticker/hedge poll (cached ~1.5s). */
+router.get('/mark', async (_req: Request, res: Response) => {
+  try {
+    const mark = await fetchBtcMarkCached();
+    res.json({ mark, ts: Date.now() });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

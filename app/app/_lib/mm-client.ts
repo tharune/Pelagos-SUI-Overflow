@@ -19,18 +19,23 @@ import { BACKEND_URL } from "./tokens";
 export type MmProductType = "basket" | "tranche" | "note";
 export type MmTrancheKind = "senior" | "junior" | "mezzanine";
 
-/** The simulated MM bid, mirroring the backend quote. */
+export type MmMarkSource = "live_nav" | "tranche_model" | "par";
+
+/** The MM bid: anchored to a LIVE mark, with a simulated spread + fill. */
 export interface MmQuote {
   productType: MmProductType;
   trancheKind: MmTrancheKind | null;
-  /** Position size being sold, display USDC (== units; par is 1 USDC/unit). */
+  /** Units being sold (par-USDC face); live value = size × mark_per_unit. */
   size_usdc: number;
   /** MM payout, display USDC. */
   payout_usdc: number;
-  /** Per-unit par mark (1) and the per-unit bid the MM pays. */
+  /** LIVE per-unit mark (basket NAV / tranche fair value / par for a note). */
   mark_per_unit: number;
+  /** Where the mark came from — live NAV, tranche model, or par. */
+  mark_source: MmMarkSource;
+  /** Per-unit bid the MM pays = mark × (1 − spread). */
   bid_per_unit: number;
-  /** Discount below par, in bps. */
+  /** MM spread below the live mark, in bps. */
   spread_bps: number;
   simulated: true;
 }
@@ -54,11 +59,13 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-/** Fetch a simulated MM bid for a position size. */
+/** Fetch an MM bid for a position size, anchored to the live mark when bundleId is given. */
 export async function fetchMmQuote(args: {
   productType: MmProductType;
   sizeUsdc: number;
   trancheKind?: MmTrancheKind;
+  /** Pass the bundle so the bid anchors to the live NAV / tranche fair value. */
+  bundleId?: string;
   signal?: AbortSignal;
 }): Promise<MmQuote> {
   const res = await fetch(`${BACKEND_URL}/api/mm/quote`, {
@@ -68,6 +75,7 @@ export async function fetchMmQuote(args: {
       product_type: args.productType,
       size_usdc: args.sizeUsdc,
       tranche_kind: args.trancheKind,
+      bundle_id: args.bundleId,
     }),
     signal: args.signal,
   });
@@ -95,6 +103,7 @@ export async function sellToMM(args: {
       productType: args.productType,
       sizeUsdc: args.sizeUsdc,
       trancheKind: args.trancheKind,
+      bundleId: args.bundleId,
     }));
   const res = await fetch(`${BACKEND_URL}/api/mm/confirm`, {
     method: "POST",

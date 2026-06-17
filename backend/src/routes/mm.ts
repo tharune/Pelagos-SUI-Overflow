@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { quoteSellToMM, MM_BID_BPS, type ProductKind, type TrancheKind } from '../services/mm-quote';
-import { createTransaction, getTransactionBySignature } from '../db/queries';
+import { quoteSellToMM, MM_BID_BPS, type ProductKind, type TrancheKind, type MarkSource } from '../services/mm-quote';
+import { createTransaction, getTransactionBySignature, getBundleById, getLegsByBundleId } from '../db/queries';
+import { getLiveNAV } from '../services/pricing';
+import { quoteTranches } from '../services/tranching';
 
 /**
  * Market-maker secondary-market routes (Pelagos / Sui).
@@ -22,16 +24,54 @@ function trancheFrom(v: unknown): TrancheKind | undefined {
 }
 
 /**
- * POST /api/mm/quote
- * body: { product_type: "basket"|"tranche"|"note", size_usdc, tranche_kind? }
- * → simulated MM bid for the position.
+ * Resolve the LIVE per-unit mark for a position so the MM bid is anchored to
+ * real value, not par:
+ *   basket  → live NAV (getLiveNAV, refreshed from Polymarket)
+ *   tranche → the tranche's model fair value (quoteTranches at the live NAV)
+ *   note    → par (1) — principal-protected, trades at/above par pre-maturity
+ * Falls back to par when no bundle_id is given or the live data is unavailable.
  */
-router.post('/quote', (req: Request, res: Response) => {
+async function resolveMark(
+  productType: ProductKind,
+  bundleId: string | undefined,
+  trancheKind: TrancheKind | undefined,
+): Promise<{ mark: number; source: MarkSource }> {
+  if (!bundleId || productType === 'note') return { mark: 1, source: 'par' };
+
+  const navRes = await getLiveNAV(bundleId).catch(() => null);
+  const bundle = await getBundleById(bundleId).catch(() => null);
+  const nav = navRes?.nav ?? bundle?.issue_price ?? null;
+  if (nav === null || !Number.isFinite(nav)) return { mark: 1, source: 'par' };
+
+  if (productType === 'basket') return { mark: nav, source: 'live_nav' };
+
+  // tranche → price the slice off the live NAV with the real leg count + horizon.
+  const legs = await getLegsByBundleId(bundleId).catch(() => []);
+  const horizonDays = bundle?.resolution_date
+    ? Math.max(1, Math.ceil((new Date(bundle.resolution_date).getTime() - Date.now()) / 86_400_000))
+    : 30;
+  const tqs = quoteTranches({
+    bundleNav: nav,
+    totalLegs: Math.max(1, legs.length),
+    horizonDays,
+    tier: bundle?.risk_tier,
+  });
+  const t = tqs.find((x) => x.kind === (trancheKind ?? 'senior'));
+  return t ? { mark: t.fairPrice, source: 'tranche_model' } : { mark: nav, source: 'live_nav' };
+}
+
+/**
+ * POST /api/mm/quote
+ * body: { product_type, size_usdc, tranche_kind?, bundle_id? }
+ * → MM bid anchored to the position's LIVE mark, spread simulated.
+ */
+router.post('/quote', async (req: Request, res: Response) => {
   try {
-    const { product_type, size_usdc, tranche_kind } = (req.body ?? {}) as {
+    const { product_type, size_usdc, tranche_kind, bundle_id } = (req.body ?? {}) as {
       product_type?: string;
       size_usdc?: number;
       tranche_kind?: string;
+      bundle_id?: string;
     };
     const productType = product_type as ProductKind;
     if (!PRODUCT_KINDS.includes(productType)) {
@@ -41,7 +81,9 @@ router.post('/quote', (req: Request, res: Response) => {
     if (!Number.isFinite(size) || size <= 0) {
       return res.status(400).json({ error: 'size_usdc must be a positive number' });
     }
-    const quote = quoteSellToMM({ productType, sizeUsdc: size, trancheKind: trancheFrom(tranche_kind) });
+    const trancheKind = trancheFrom(tranche_kind);
+    const { mark, source } = await resolveMark(productType, bundle_id, trancheKind);
+    const quote = quoteSellToMM({ productType, sizeUsdc: size, trancheKind, markPerUnit: mark, markSource: source });
     return res.json(quote);
   } catch (err) {
     return res.status(400).json({ error: (err as Error).message });

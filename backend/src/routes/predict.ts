@@ -824,4 +824,47 @@ router.post('/basket/quote', async (req: Request, res: Response) => {
   }
 });
 
+// ── Term baskets (calendar bundles across BTC expiries) ──
+router.get('/termbaskets', (_req: Request, res: Response) => {
+  res.json(products.DEEPBOOK_TERM_BASKETS.map((b) => ({ id: b.id, name: b.name, description: b.description })));
+});
+
+/** Quote a term basket — central strip on each of the recipe's live tenors. */
+router.post('/termbasket/quote', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (typeof body.basket_id !== 'string') throw new Error('basket_id is required');
+    const out = await products.quoteTermBasket({
+      asset: String(body.asset ?? 'BTC').toUpperCase(),
+      basketId: body.basket_id,
+      budgetRaw: budgetFromBody(body),
+      sender: typeof body.sender === 'string' ? body.sender : undefined,
+    });
+    res.json(out);
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
+/** Open a term basket — mint every leg's bands across oracles in ONE PTB. */
+router.post('/termbasket/open/prepare', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+    if (!isObjectId(body.owner)) throw new Error('owner (0x...) is required');
+    if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
+    if (!Array.isArray(body.legs) || body.legs.length === 0) throw new Error('legs[] is required');
+    const depositRaw = rawAmount(body, 'deposit_amount_raw', 'deposit_amount_ui') ?? undefined;
+    res.json(
+      await structured.prepareMintMultiStrip({
+        owner: body.owner as string,
+        managerId: body.manager_id as string,
+        legs: body.legs as Array<{ oracleId: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>,
+        depositRaw,
+      }),
+    );
+  } catch (err) {
+    sendError(res, err, 400);
+  }
+});
+
 export const predictRoutes = router;

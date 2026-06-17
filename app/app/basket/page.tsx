@@ -22,10 +22,10 @@ type BasketView = Bundle & {
   window: WindowKey;
 };
 
-// Mid (PBU-MID, tier 70) is intentionally dropped — event baskets are High + Low only.
 const TIER_OPTIONS: Array<{ value: TierFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: 90, label: "High" },
+  { value: 70, label: "Mid" },
   { value: 50, label: "Low" },
 ];
 
@@ -130,38 +130,29 @@ export default function BasketsPage() {
   }, []);
 
   const { baskets, feedStatus } = useMemo(() => {
-    if (basketState.status === "ok" && basketState.baskets.length > 0) {
-      return {
-        baskets: basketState.baskets.map(liveBasket),
-        feedStatus: "ready" as FeedStatus,
-        feedError: null,
-      };
+    // Still loading the first feed → show the skeleton.
+    if (basketState.status !== "ok" && basketState.status !== "error") {
+      return { baskets: [] as BasketView[], feedStatus: "loading" as FeedStatus, feedError: null };
     }
-    if (basketState.status === "error") {
-      return {
-        baskets: BUNDLES.map(seedBasket),
-        feedStatus: "seed" as FeedStatus,
-        feedError: basketState.error,
-      };
-    }
-    if (basketState.status === "ok") {
-      return {
-        baskets: BUNDLES.map(seedBasket),
-        feedStatus: "seed" as FeedStatus,
-        feedError: "Live basket feed returned no baskets.",
-      };
-    }
+    // Always render the full product suite (High / Mid / Low × windows). Overlay
+    // live feed data where available; seed the rest so no basket goes missing when
+    // the live market feed is sparse (few mid-probability markets right now).
+    const live = basketState.status === "ok" ? basketState.baskets : [];
+    const liveById = new Map(live.map((b) => [b.id, b] as const));
+    const merged: BasketView[] = BUNDLES.map((b) => {
+      const lv = liveById.get(b.id);
+      return lv ? liveBasket(lv) : seedBasket(b);
+    });
     return {
-      baskets: [] as BasketView[],
-      feedStatus: "loading" as FeedStatus,
-      feedError: null,
+      baskets: merged,
+      feedStatus: (live.length > 0 ? "ready" : "seed") as FeedStatus,
+      feedError: basketState.status === "error" ? basketState.error : null,
     };
   }, [basketState]);
 
   const filtered = useMemo(() => {
     return baskets
       .filter((basket) => {
-        if (basket.tier === 70) return false; // Mid tier removed from the suite
         if (tier !== "all" && basket.tier !== tier) return false;
         if (windowFilter !== "all" && basket.window !== windowFilter) return false;
         return true;

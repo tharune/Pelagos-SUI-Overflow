@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from '../db/supabase';
 import { Position } from '../types';
+import { getLiveNAV } from '../services/pricing';
 
 const router = Router();
 
@@ -29,6 +30,18 @@ router.get('/', async (req: Request, res: Response) => {
       return res.json({ count: 0, wallets: [] });
     }
 
+    // Mark positions to market: value at the LIVE NAV per bundle (refreshed from
+    // Polymarket), not the stale entry-price cost basis. One NAV fetch per distinct
+    // bundle; fall back to entry_price if a bundle's NAV is unavailable.
+    const bundleIds = [...new Set((positions as Position[]).map((p) => p.bundle_id).filter(Boolean))];
+    const navByBundle = new Map<string, number>();
+    await Promise.all(
+      bundleIds.map(async (id) => {
+        const r = await getLiveNAV(id).catch(() => null);
+        if (r && Number.isFinite(r.nav)) navByBundle.set(id, r.nav);
+      }),
+    );
+
     // Group by wallet_address
     const walletMap = new Map<string, {
       total_deposited: number;
@@ -38,7 +51,8 @@ router.get('/', async (req: Request, res: Response) => {
 
     for (const pos of positions as Position[]) {
       const existing = walletMap.get(pos.wallet_address);
-      const approxValue = pos.tokens_held * pos.entry_price;
+      const markPrice = navByBundle.get(pos.bundle_id) ?? pos.entry_price;
+      const approxValue = pos.tokens_held * markPrice;
 
       if (existing) {
         existing.total_deposited += pos.deposited_usdc;

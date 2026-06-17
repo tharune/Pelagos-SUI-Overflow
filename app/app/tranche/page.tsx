@@ -27,15 +27,22 @@ export default function TranchesPage() {
 
   const groups = useMemo(() => {
     const empty: Record<90 | 70 | 50, LiveBasket[]> = { 90: [], 70: [], 50: [] };
-    const baskets =
-      state.status === "ok" && state.baskets.length > 0
-        ? state.baskets
-        : BUNDLES.map((b) => ({
-            ...b,
-            live: true as const,
-            window: (tl(b.daysLeft) === "This week" ? "week" : tl(b.daysLeft) === "This month" ? "month" : "long") as "week" | "month" | "long",
-            markets: [],
-          }) as unknown as LiveBasket);
+    // Always render the full product suite (High / Mid / Low × windows). Overlay
+    // live feed data where available; seed the rest, so no tier goes missing when
+    // the live market feed is sparse (e.g. few mid-probability markets right now).
+    const liveById = new Map(
+      (state.status === "ok" ? state.baskets : []).map((b) => [b.id, b] as const),
+    );
+    const baskets: LiveBasket[] = BUNDLES.map(
+      (b) =>
+        liveById.get(b.id) ??
+        ({
+          ...b,
+          live: false as const,
+          window: (tl(b.daysLeft) === "This week" ? "week" : tl(b.daysLeft) === "This month" ? "month" : "long") as "week" | "month" | "long",
+          markets: [],
+        } as unknown as LiveBasket),
+    );
     for (const b of baskets) empty[b.tier].push(b);
     const winOrder: Record<"week" | "month" | "long", number> = { week: 0, month: 1, long: 2 };
     for (const t of [90, 70, 50] as const) empty[t].sort((a, b) => winOrder[a.window] - winOrder[b.window]);
@@ -62,7 +69,7 @@ export default function TranchesPage() {
             {/* ── Polymarket event tiers ── */}
             {state.status === "loading" && <CardSkeleton count={3} />}
             {state.status === "error" && <EmptyState title="Could not load event baskets" subtitle={state.error} />}
-            {([90, 50] as const).map((tier) => {
+            {([90, 70, 50] as const).map((tier) => {
               const baskets = groups[tier];
               if (baskets.length === 0) return null;
               return (

@@ -20,8 +20,22 @@ import { fetchBtcMark, fetchRealizedVol, quoteHedge } from '../services/bluefin'
 const router = Router();
 const PRICE_SCALE = 1_000_000_000;
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
+// A real vol trade wants a multi-day horizon: long enough that per-day Greeks
+// (esp. theta) are meaningful — a 1h tenor annualizes decay into nonsense — and
+// the SVI smile is well-behaved at every active BTC tenor out here.
+const VOL_TARGET_MS = 3 * 24 * 60 * 60 * 1000; // ~3 days
 
 type ResolvedOracle = structured.GridOracle & { forward_raw: number };
+
+/** Compact human tenor label from a millisecond horizon. */
+function tenorLabel(ms: number): string {
+  const m = ms / 60_000;
+  if (m < 90) return `${Math.round(m)}m`;
+  const h = m / 60;
+  if (h < 36) return `${h.toFixed(h < 10 ? 1 : 0)}h`;
+  const d = h / 24;
+  return `${d.toFixed(d < 10 ? 1 : 0)}d`;
+}
 
 /** Resolve a BTC vol oracle (+live forward) by id, else the soonest buffered active oracle. */
 async function resolveVolOracle(oracleId?: string): Promise<ResolvedOracle> {
@@ -35,7 +49,7 @@ async function resolveVolOracle(oracleId?: string): Promise<ResolvedOracle> {
     return { ...st.oracle, forward_raw: fwd };
   }
   // Vol trading wants a meaningful horizon — minute-tenors make "per-day" Greeks
-  // explode. Default to the LONGEST active BTC oracle within ~2 days.
+  // explode. Default to the active BTC oracle nearest a multi-day target.
   const now = Date.now();
   const oracles = await predictServer.predictOracles().catch(() => predictServer.oracles());
   const active = oracles
@@ -47,10 +61,10 @@ async function resolveVolOracle(oracleId?: string): Promise<ResolvedOracle> {
     const fp = (await predictServer.oraclePriceLatest(f.oracle_id)) as { forward?: number; spot?: number };
     return { oracle_id: f.oracle_id, expiry: f.expiry, min_strike: f.min_strike, tick_size: f.tick_size, forward_raw: Number(fp.forward ?? fp.spot ?? f.min_strike) };
   }
-  // ~1h is the sweet spot: long enough for meaningful Greeks, short enough that
-  // the SVI smile is still well-behaved (the far-dated testnet oracles extrapolate
-  // to absurd IVs and price every band out of the mintable window).
-  const targetMs = now + 60 * 60_000;
+  // ~3 days: a genuine vol horizon where vega/theta are meaningful and sane (a 1h
+  // tenor annualizes decay into a nonsense per-day theta), while staying inside the
+  // band of tenors whose SVI smile prices every strip band tradeable.
+  const targetMs = now + VOL_TARGET_MS;
   const o = active.reduce((best, cur) => (Math.abs(cur.expiry - targetMs) < Math.abs(best.expiry - targetMs) ? cur : best), active[0]);
   const p = (await predictServer.oraclePriceLatest(o.oracle_id)) as { forward?: number; spot?: number };
   return { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size, forward_raw: Number(p.forward ?? p.spot ?? o.min_strike) };
@@ -105,7 +119,22 @@ router.post('/quote', async (req: Request, res: Response) => {
     const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, atmIv, tYears);
     const mark = await fetchBtcMark(forwardUsd);
     const hedge = quoteHedge(greeks.delta_btc, mark.mark, mark.funding_rate);
-    res.json({ side, oracle_id: o.oracle_id, expiry: String(o.expiry), forward_usd: forwardUsd, atm_iv: atmIv, t_years: tYears, strip, greeks, mark, hedge });
+    // The vol leg is a bought strip — max risk is the premium paid, full stop.
+    const maxLossUsd = Number(strip.total_cost_raw) / 1e6;
+    res.json({
+      side,
+      oracle_id: o.oracle_id,
+      expiry: String(o.expiry),
+      forward_usd: forwardUsd,
+      atm_iv: atmIv,
+      t_years: tYears,
+      tenor_label: tenorLabel(Number(o.expiry) - Date.now()),
+      max_loss_usd: maxLossUsd,
+      strip,
+      greeks,
+      mark,
+      hedge,
+    });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

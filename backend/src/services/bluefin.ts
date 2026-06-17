@@ -144,9 +144,9 @@ export interface RealizedVol {
   source: 'coinbase' | 'unavailable';
 }
 
-/** Annualized realized vol from REAL Coinbase BTC-USD hourly candles. */
-export async function fetchRealizedVol(windowHours = 168): Promise<RealizedVol> {
-  const c = (await getJson(`${COINBASE_BASE}/products/BTC-USD/candles?granularity=3600`, false)) as number[][] | null;
+/** Annualized realized vol from REAL Coinbase hourly candles (default BTC-USD). */
+export async function fetchRealizedVol(windowHours = 168, product = 'BTC-USD'): Promise<RealizedVol> {
+  const c = (await getJson(`${COINBASE_BASE}/products/${product}/candles?granularity=3600`, false)) as number[][] | null;
   if (Array.isArray(c) && c.length > 3) {
     // candle = [time, low, high, open, close, volume], newest first.
     const closes = c

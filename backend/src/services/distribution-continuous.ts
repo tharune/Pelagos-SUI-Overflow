@@ -21,6 +21,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { getSuiClient, signerAddress } from './predict/sui';
 import { mintMockUsdc } from './mock-usdc';
 import { discoverDistributionCandidates, type DistributionCandidate } from './distribution';
+import { fetchRealizedVol } from './bluefin';
 
 const MOCK_USDC_TYPE =
   process.env.MOCK_USDC_TYPE ??
@@ -269,21 +270,48 @@ function specToMarket(s: CuratedSpec): ContinuousMarket {
   );
 }
 
+// Coinbase product per asset for realized-vol (BNB isn't on Coinbase → fallback).
+const COINBASE_VOL_PRODUCT: Record<string, string | null> = {
+  BTC: 'BTC-USD', ETH: 'ETH-USD', SOL: 'SOL-USD', XRP: 'XRP-USD', DOGE: 'DOGE-USD', GOLD: 'PAXG-USD', BNB: null,
+};
+// Annualized-vol fallback when an asset has no Coinbase candle feed.
+const ANNUAL_VOL_FALLBACK: Record<string, number> = {
+  BTC: 0.55, ETH: 0.7, SOL: 0.9, BNB: 0.6, XRP: 0.85, DOGE: 1.0, GOLD: 0.15,
+};
+let volCache: { at: number; vols: Record<string, number> } | null = null;
+
+/** Real annualized realized vol per asset from Coinbase candles (cached 5m). */
+async function annualVols(): Promise<Record<string, number>> {
+  if (volCache && Date.now() - volCache.at < 5 * 60_000) return volCache.vols;
+  const assets = Object.keys(ANNUAL_VOL_FALLBACK);
+  const results = await Promise.all(
+    assets.map(async (a) => {
+      const product = COINBASE_VOL_PRODUCT[a];
+      if (!product) return [a, ANNUAL_VOL_FALLBACK[a]] as const;
+      const rv = await fetchRealizedVol(168, product).catch(() => null);
+      return [a, rv && rv.source === 'coinbase' && rv.realized_vol > 0 ? rv.realized_vol : ANNUAL_VOL_FALLBACK[a]] as const;
+    }),
+  );
+  const vols = Object.fromEntries(results);
+  volCache = { at: Date.now(), vols };
+  return vols;
+}
+
 async function curatedMarkets(): Promise<ContinuousMarket[]> {
-  const { prices: spot, volumes: vol } = await fetchSpot();
-  // All anchored to LIVE spot feeds (CoinGecko; PAX-Gold tracks gold/oz). σ is a
-  // horizon-scaled volatility; volume_usd is the asset's REAL 24h USD volume,
-  // which sets pool depth. No fabricated values — every μ and volume is real.
+  const [{ prices: spot, volumes: vol }, av] = await Promise.all([fetchSpot(), annualVols()]);
+  // σ = spot × REAL annualized vol × √(horizon/yr): every μ (CoinGecko), σ (Coinbase
+  // realized vol) and 24h volume is live. PAX-Gold tracks gold/oz.
+  const sig = (asset: string, mu: number, days: number) => mu * av[asset] * Math.sqrt(days / 365);
   const specs: CuratedSpec[] = [
-    { id: 'btc-usd-7d', underlying: 'BTC', question: 'BTC/USD · 7-day forward', unit: 'USD', category: 'crypto', mu: spot.BTC, sigma: spot.BTC * 0.08, volume_usd: vol.BTC, source: 'spot' },
-    { id: 'eth-usd-30d', underlying: 'ETH', question: 'ETH/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.ETH, sigma: spot.ETH * 0.18, volume_usd: vol.ETH, source: 'spot' },
-    { id: 'sol-usd-30d', underlying: 'SOL', question: 'SOL/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.SOL, sigma: spot.SOL * 0.22, volume_usd: vol.SOL, source: 'spot' },
-    { id: 'bnb-usd-30d', underlying: 'BNB', question: 'BNB/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.BNB, sigma: spot.BNB * 0.16, volume_usd: vol.BNB, source: 'spot' },
-    { id: 'xrp-usd-30d', underlying: 'XRP', question: 'XRP/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.XRP, sigma: spot.XRP * 0.24, volume_usd: vol.XRP, source: 'spot' },
-    { id: 'doge-usd-30d', underlying: 'DOGE', question: 'DOGE/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.DOGE, sigma: spot.DOGE * 0.3, volume_usd: vol.DOGE, source: 'spot' },
-    { id: 'gold-usd-30d', underlying: 'GOLD', question: 'Gold /oz · 30-day forward', unit: 'USD', category: 'commodities', mu: spot.GOLD, sigma: spot.GOLD * 0.05, volume_usd: vol.GOLD, source: 'spot' },
+    { id: 'btc-usd-7d', underlying: 'BTC', question: 'BTC/USD · 7-day forward', unit: 'USD', category: 'crypto', mu: spot.BTC, sigma: sig('BTC', spot.BTC, 7), volume_usd: vol.BTC, source: 'spot' },
+    { id: 'eth-usd-30d', underlying: 'ETH', question: 'ETH/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.ETH, sigma: sig('ETH', spot.ETH, 30), volume_usd: vol.ETH, source: 'spot' },
+    { id: 'sol-usd-30d', underlying: 'SOL', question: 'SOL/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.SOL, sigma: sig('SOL', spot.SOL, 30), volume_usd: vol.SOL, source: 'spot' },
+    { id: 'bnb-usd-30d', underlying: 'BNB', question: 'BNB/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.BNB, sigma: sig('BNB', spot.BNB, 30), volume_usd: vol.BNB, source: 'spot' },
+    { id: 'xrp-usd-30d', underlying: 'XRP', question: 'XRP/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.XRP, sigma: sig('XRP', spot.XRP, 30), volume_usd: vol.XRP, source: 'spot' },
+    { id: 'doge-usd-30d', underlying: 'DOGE', question: 'DOGE/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.DOGE, sigma: sig('DOGE', spot.DOGE, 30), volume_usd: vol.DOGE, source: 'spot' },
+    { id: 'gold-usd-30d', underlying: 'GOLD', question: 'Gold /oz · 30-day forward', unit: 'USD', category: 'commodities', mu: spot.GOLD, sigma: sig('GOLD', spot.GOLD, 30), volume_usd: vol.GOLD, source: 'spot' },
   ];
-  return specs.filter((s) => s.mu > 0).map(specToMarket);
+  return specs.filter((s) => s.mu > 0 && s.sigma > 0).map(specToMarket);
 }
 
 // ---------------------------------------------------------------------------

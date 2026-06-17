@@ -200,7 +200,7 @@ export default function BasketsPage() {
               <h1>Baskets</h1>
               <p>
                 {assetClass === "deepbook"
-                  ? "Structured BTC strips on DeepBook Predict. Pick an expiry and a shape, read the live on-chain book, then open in one signature."
+                  ? "Calendar bundles spanning the BTC term structure — one ticket holds a strip on each of several live DeepBook expiries. Pick a shape, read its composition, open in one signature."
                   : "Curated baskets of uncorrelated event markets, settled on Pelagos's own vault. High-conviction and long-shot tiers."}
               </p>
             </div>

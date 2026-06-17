@@ -1,72 +1,38 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// DeepBook baskets — the structured BTC strips (Pin / Spread / Wide), priced
-// live on a chosen expiry (tenor). Master-detail: pick a tenor, pick a strip,
-// see its live on-chain bucket ladder (ask + bid from get_range_trade_amounts)
-// and open it in one signature. Testnet DeepBook Predict lists BTC only, so the
-// tenor selector spans BTC's live expiries (near → far term).
+// BTC Term Baskets — calendar bundles across DeepBook Predict expiries. One
+// ticket holds a central strip on each of several live tenors, so you own a
+// slice of the whole BTC term structure (distinct from Distribution, which
+// trades a single expiry's curve). Master-detail: pick a basket shape, read its
+// composition (the legs across the term structure), open it in one signature.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
+import React, { useEffect, useMemo, useState } from "react";
+import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { friendlyWalletError } from "../_lib/chain";
-import {
-  stripPreview,
-  listBaskets,
-  ensureManager,
-  prepareOpenStrip,
-  confirmPredict,
-  usd,
-  type StripQuote,
-  type BasketRecipe,
-} from "../_lib/predict-strip-client";
 import { useWalletSigner } from "../_lib/wallet-bridge";
 import {
-  BucketLadder,
-  OpenButton,
-  ResultLine,
-  Cap,
-  Stat,
-  StripStyles,
-  openableBuckets,
-} from "./strip-products";
+  listTermBaskets,
+  termBasketQuote,
+  ensureManager,
+  prepareTermBasketOpen,
+  confirmPredict,
+  usd,
+  type TermBasketQuote,
+} from "../_lib/predict-strip-client";
+import { OpenButton, ResultLine, Cap, openableBuckets, StripStyles } from "./strip-products";
 
-type Wallet = ReturnType<typeof useWalletSigner>;
-
-interface Oracle {
-  oracle_id: string;
-  expiry: number;
-  status: string;
-}
-
-function tenorLabel(expiry: number): string {
-  const ms = expiry - Date.now();
-  if (ms <= 0) return "expired";
-  const m = Math.round(ms / 60000);
-  if (m < 90) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 36) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
-}
-
-const ACCENT: Record<string, string> = {
-  "btc-pin": "#8fe3ff",
-  "btc-spread": "#4da2ff",
-  "btc-convex": "#1f5fd1",
-};
+const ACCENT: Record<string, string> = { "near-ladder": "#7de7ff", barbell: "#4da2ff", "full-term": "#8b5cf6" };
 
 export function DeepBookBaskets() {
   const wallet = useWalletSigner();
-  const [oracles, setOracles] = useState<Oracle[] | null>(null);
-  const [tenorId, setTenorId] = useState<string | null>(null);
-  const [recipes, setRecipes] = useState<BasketRecipe[]>([]);
-  const [budget] = useState("100");
-
-  const [quotes, setQuotes] = useState<Record<string, StripQuote>>({});
+  const [baskets, setBaskets] = useState<Array<{ id: string; name: string; description: string }> | null>(null);
+  const [selected, setSelected] = useState<string>("near-ladder");
+  const [budget, setBudget] = useState("150");
+  const [quote, setQuote] = useState<TermBasketQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -74,233 +40,156 @@ export function DeepBookBaskets() {
   const [openErr, setOpenErr] = useState<string | null>(null);
 
   const budgetNum = Number(budget);
-  const validBudget = Number.isFinite(budgetNum) && budgetNum > 0;
+  const valid = Number.isFinite(budgetNum) && budgetNum > 0;
 
-  // Load the live BTC tenors + the recipe presets once.
   useEffect(() => {
-    const ctrl = new AbortController();
-    fetch(`${BACKEND_URL}/api/predict/oracles?active=true&underlying=BTC`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((arr: Oracle[]) => {
-        if (!Array.isArray(arr)) return;
-        // Skip near-expiry oracles: within a few minutes the implied distribution
-        // collapses and wide shapes price every band out of the mintable window.
-        const now = Date.now();
-        const live = arr.filter((o) => o.status === "active" && o.expiry > now).sort((a, b) => a.expiry - b.expiry);
-        const buffered = live.filter((o) => o.expiry - now >= 6 * 60_000);
-        const active = (buffered.length >= 3 ? buffered : live).slice(0, 6);
-        setOracles(active);
-        setTenorId((cur) => cur ?? active[0]?.oracle_id ?? null);
-      })
-      .catch(() => setErr("Couldn't load live BTC expiries — is the backend running?"));
-    listBaskets().then(setRecipes).catch(() => {});
-    return () => ctrl.abort();
+    listTermBaskets().then((b) => { setBaskets(b); if (b[0]) setSelected((s) => (b.some((x) => x.id === s) ? s : b[0].id)); }).catch(() => setBaskets([]));
   }, []);
 
-  // Price the three strips on the selected tenor whenever it / budget changes.
-  const timer = useRef<number | null>(null);
+  // Price the selected basket whenever it / the budget changes (debounced).
   useEffect(() => {
-    if (!tenorId || recipes.length === 0 || !validBudget) return;
-    if (timer.current) window.clearTimeout(timer.current);
+    if (!selected || !valid) return;
+    let alive = true;
     setLoading(true);
-    const ctrl = new AbortController();
-    timer.current = window.setTimeout(async () => {
-      try {
-        // One default preview resolves the live forward for this oracle.
-        const base = await stripPreview({ oracle_id: tenorId, n: 4, budget_usd: budgetNum, sender: wallet.address ?? undefined }, ctrl.signal);
-        const priced = await Promise.all(
-          recipes.map((r) =>
-            stripPreview(
-              { oracle_id: tenorId, sigma_usd: r.sigma_pct * base.forward_usd, n: r.n, budget_usd: budgetNum, sender: wallet.address ?? undefined },
-              ctrl.signal,
-            )
-              .then((q) => [r.id, q] as const)
-              .catch(() => null),
-          ),
-        );
-        const next: Record<string, StripQuote> = {};
-        for (const p of priced) if (p) next[p[0]] = p[1];
-        setQuotes(next);
-        setErr(null);
-        setSelected((cur) => (cur && next[cur] ? cur : recipes[0]?.id ?? null));
-      } catch (e) {
-        if ((e as { name?: string })?.name !== "AbortError") setErr(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
+    const t = window.setTimeout(() => {
+      termBasketQuote({ asset: "BTC", basket_id: selected, budget_usd: budgetNum, sender: wallet.address ?? undefined })
+        .then((q) => { if (alive) { setQuote(q); setErr(null); } })
+        .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { if (alive) setLoading(false); });
     }, 250);
-    return () => {
-      ctrl.abort();
-      if (timer.current) window.clearTimeout(timer.current);
-    };
-  }, [tenorId, recipes, budgetNum, validBudget, wallet.address]);
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [selected, budgetNum, valid, wallet.address]);
 
-  const selectedRecipe = recipes.find((r) => r.id === selected) ?? null;
-  const selectedQuote = selected ? quotes[selected] : null;
+  const meta = useMemo(() => baskets?.find((b) => b.id === selected) ?? null, [baskets, selected]);
+  const maxWeight = quote ? Math.max(...quote.legs.map((l) => l.weight), 0.01) : 1;
 
   async function open() {
-    if (!selectedQuote || !tenorId) return;
-    setBusy(true);
-    setOpenErr(null);
-    setResult(null);
+    if (!quote || busy) return;
+    setBusy(true); setOpenErr(null); setResult(null);
     try {
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
-      const buckets = openableBuckets(selectedQuote.buckets);
-      if (buckets.length === 0) throw new Error("No tradeable buckets on this tenor — try a wider basket or another expiry.");
+      const legs = quote.legs
+        .map((l) => ({ oracleId: l.oracle_id, expiry: l.expiry, buckets: openableBuckets(l.strip.buckets) }))
+        .filter((l) => l.buckets.length > 0);
+      if (legs.length === 0) throw new Error("No tradeable legs in this basket right now.");
       setStage("Building basket…");
-      const deposit = ((BigInt(selectedQuote.total_cost_raw) * 12n) / 10n).toString();
-      const prep = await prepareOpenStrip({
-        owner: wallet.address as string,
-        manager_id: mgr,
-        oracle_id: selectedQuote.oracle_id,
-        expiry: selectedQuote.expiry,
-        buckets,
-        deposit_amount_raw: deposit,
-      });
+      const deposit = ((BigInt(quote.total_cost_raw) * 12n) / 10n).toString();
+      const prep = await prepareTermBasketOpen({ owner: wallet.address as string, manager_id: mgr, legs, deposit_amount_raw: deposit });
       setStage("Sign in wallet…");
       const digest = await wallet.signAndExecute(prep.tx_bytes);
       setStage("Confirming…");
       const c = await confirmPredict(digest);
       setResult(c.digest);
-    } catch (e) {
-      setOpenErr(friendlyWalletError(e));
-    } finally {
-      setBusy(false);
-      setStage(null);
-    }
+    } catch (e) { setOpenErr(friendlyWalletError(e)); }
+    finally { setBusy(false); setStage(null); }
   }
 
   return (
-    <div className="db-wrap">
-      {/* tenor controls */}
-      <div className="db-controls">
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-          <Cap>Expiry · live BTC tenors</Cap>
-          <div className="db-tenors">
-            {oracles === null ? (
-              <span style={{ fontFamily: FM, fontSize: 11.5, color: C.textMuted }}>loading tenors…</span>
-            ) : oracles.length === 0 ? (
-              <span style={{ fontFamily: FM, fontSize: 11.5, color: C.textMuted }}>no live BTC expiries right now</span>
-            ) : (
-              oracles.map((o) => (
-                <button
-                  key={o.oracle_id}
-                  className={`db-tenor${o.oracle_id === tenorId ? " is-active" : ""}`}
-                  onClick={() => setTenorId(o.oracle_id)}
-                >
-                  {tenorLabel(o.expiry)}
+    <div className="tb-wrap">
+      <div className="tb-grid">
+        {/* left: basket shapes */}
+        <div className="tb-presets">
+          {baskets === null ? (
+            <div className="tb-skel" />
+          ) : (
+            baskets.map((b) => {
+              const on = b.id === selected;
+              const accent = ACCENT[b.id] ?? C.teal;
+              return (
+                <button key={b.id} className={`tb-preset${on ? " is-active" : ""}`} style={on ? { borderColor: `${accent}88`, boxShadow: `inset 2px 0 0 ${accent}` } : undefined} onClick={() => setSelected(b.id)}>
+                  <span style={{ color: accent }}>{b.name}</span>
+                  <p>{b.description}</p>
                 </button>
-              ))
-            )}
+              );
+            })
+          )}
+        </div>
+
+        {/* right: composition */}
+        <div className="tb-detail">
+          <div className="tb-detail-head">
+            <div>
+              <Cap>{meta?.name ?? "Term basket"} · composition</Cap>
+              <div className="tb-sub">{quote ? `${quote.legs.length} legs across the BTC term structure` : "calendar bundle across live expiries"}</div>
+            </div>
+            <div className="tb-budget">
+              <Cap style={{ marginBottom: 5 }}>Budget (dUSDC)</Cap>
+              <input className="tb-num" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
+            </div>
           </div>
-        </div>
-      </div>
 
-      {err && <div className="db-warn">{err}</div>}
+          {err && <div className="tb-warn">{err}</div>}
 
-      <div className="db-grid">
-        {/* left: strip cards */}
-        <div className="db-cards">
-          {recipes.map((r) => {
-            const q = quotes[r.id];
-            const accent = ACCENT[r.id] ?? C.teal;
-            const on = r.id === selected;
-            const tradeable = q ? q.buckets.filter((b) => b.tradeable).length : 0;
-            return (
-              <button
-                key={r.id}
-                className={`db-card${on ? " is-active" : ""}`}
-                style={on ? { borderColor: `${accent}88`, boxShadow: `inset 2px 0 0 ${accent}` } : undefined}
-                onClick={() => setSelected(r.id)}
-              >
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontFamily: FD, fontSize: 15, fontWeight: 600, color: accent }}>{r.name}</span>
-                    <span style={{ fontFamily: FM, fontSize: 9.5, color: C.textMuted }}>σ {(r.sigma_pct * 100).toFixed(1)}% · N{r.n}</span>
-                  </div>
-                  <span style={{ fontFamily: FS, fontSize: 12, color: C.textSecondary, lineHeight: 1.45, marginTop: 6, display: "block" }}>
-                    {r.description}
-                  </span>
-                </div>
-                <div style={{ marginTop: "auto", paddingTop: 12, borderTop: `0.5px solid ${C.border}`, display: "grid", gap: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.1em", color: C.textMuted }}>ASK</span>
-                    <span style={{ fontFamily: FD, fontSize: 13, color: C.textPrimary }}>{q && tradeable > 0 ? usd(q.total_cost_raw) : loading ? "…" : "—"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.1em", color: C.textMuted }}>BEST CASE</span>
-                    <span style={{ fontFamily: FD, fontSize: 13, color: accent }}>{q && tradeable > 0 ? usd(q.realized_max_payout_raw) : loading ? "…" : "—"}</span>
-                  </div>
-                  <div style={{ fontFamily: FM, fontSize: 9.5, color: q && tradeable > 0 ? C.green : C.textMuted }}>
-                    {q ? (tradeable > 0 ? `${tradeable}/${q.buckets.length} bands tradeable` : "rolls at this tenor") : ""}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-          {recipes.length === 0 && <div className="db-warn">Loading DeepBook strips…</div>}
-        </div>
-
-        {/* right: live ladder + open for the selected strip */}
-        <div className="db-detail">
-          {selectedRecipe && selectedQuote ? (
+          {quote ? (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                <div>
-                  <Cap>{selectedRecipe.name} · live on-chain MM (ask + bid)</Cap>
-                  <div style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted, marginTop: 5 }}>
-                    {tenorId && oracles ? `${tenorLabel(oracles.find((o) => o.oracle_id === tenorId)?.expiry ?? 0)} expiry · ${selectedQuote.oracle_id.slice(0, 8)}…` : ""}
-                  </div>
-                </div>
-                <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>{loading ? "pricing…" : `${selectedQuote.buckets.length} buckets`}</span>
+              <div className="tb-legs">
+                <div className="tb-leg tb-leg-head"><span>Expiry</span><span>Weight</span><span>Cost</span><span>Best case</span></div>
+                {quote.legs.map((l) => {
+                  const cost = Number(l.strip.total_cost_raw) / 1e6;
+                  const best = Number(l.strip.realized_max_payout_raw) / 1e6;
+                  const accent = ACCENT[selected] ?? C.teal;
+                  return (
+                    <div className="tb-leg" key={l.oracle_id}>
+                      <span className="tb-leg-tenor">
+                        <span className="tb-leg-bar" style={{ width: `${(l.weight / maxWeight) * 100}%`, background: `${accent}33`, borderLeft: `2px solid ${accent}` }} />
+                        <b>{l.tenor_label}</b>
+                      </span>
+                      <span>{(l.weight * 100).toFixed(0)}%</span>
+                      <span>${cost.toFixed(2)}</span>
+                      <span style={{ color: best >= cost ? C.green : C.textSecondary }}>${best.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
               </div>
 
-              <BucketLadder quote={selectedQuote} />
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginTop: 16, paddingTop: 16, borderTop: `0.5px solid ${C.border}` }}>
-                <Stat label="Total ask" value={usd(selectedQuote.total_cost_raw)} />
-                <Stat label="Best-case max payout" value={usd(selectedQuote.realized_max_payout_raw)} color={C.tealLight} />
-                <Stat label="Round-trip spread" value={usd(selectedQuote.round_trip_spread_raw)} color={C.amber} />
+              <div className="tb-totals">
+                <div><Cap>Total cost</Cap><strong>{usd(quote.total_cost_raw)}</strong></div>
+                <div><Cap>Best case</Cap><strong style={{ color: C.tealLight }}>{usd(quote.total_best_raw)}</strong></div>
+                <div><Cap>Round-trip spread</Cap><strong style={{ color: C.amber }}>{usd(quote.round_trip_spread_raw)}</strong></div>
               </div>
 
               <div style={{ marginTop: 16 }}>
-                <OpenButton
-                  wallet={wallet}
-                  busy={busy}
-                  disabled={!selectedQuote}
-                  label={`Open ${selectedRecipe.name} · ${usd(selectedQuote.total_cost_raw)}`}
-                  busyLabel={stage ?? "Submitting…"}
-                  onOpen={open}
-                />
-                {result && <ResultLine digest={result} label={`${selectedRecipe.name} opened`} />}
-                {openErr && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}
+                <OpenButton wallet={wallet} busy={busy} disabled={!quote} label={`Open ${meta?.name ?? "basket"} · ${usd(quote.total_cost_raw)}`} busyLabel={stage ?? "Submitting…"} onOpen={open} />
+                {result && <ResultLine digest={result} label={`${meta?.name ?? "Basket"} opened`} />}
+                {openErr && <div className="tb-warn" style={{ marginTop: 12 }}>{openErr}</div>}
               </div>
             </>
           ) : (
-            <div style={{ height: 280, display: "grid", placeItems: "center", fontFamily: FM, fontSize: 12, color: C.textMuted }}>
-              {loading ? "Pricing live strips…" : "Select a strip to see its live ladder."}
-            </div>
+            <div className="tb-empty">{loading ? "Pricing the term basket…" : "Select a basket shape."}</div>
           )}
         </div>
       </div>
 
       <style jsx global>{`
-        .db-wrap { display: grid; gap: 14px; min-width: 0; }
-        .db-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; padding: 16px 18px; }
-        .db-tenors { display: flex; gap: 6px; flex-wrap: wrap; }
-        .db-tenor { padding: 6px 12px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textSecondary}; font-family: ${FM}; font-size: 11.5px; cursor: pointer; transition: all 0.14s ${EASE}; }
-        .db-tenor:hover { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
-        .db-tenor.is-active { border-color: ${C.tealLight}; color: ${C.textPrimary}; background: ${C.cardHover}; }
-        .db-num { width: 130px; box-sizing: border-box; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 9px 12px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; outline: none; }
-        .db-num:focus { border-color: ${C.tealLight}; }
-        .db-warn { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 10px; padding: 12px 14px; font-family: ${FM}; font-size: 12px; color: ${C.textMuted}; }
-        .db-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.5fr); gap: 16px; align-items: stretch; }
-        @media (max-width: 980px) { .db-grid { grid-template-columns: 1fr; } }
-        .db-cards { display: grid; gap: 12px; grid-auto-rows: 1fr; }
-        .db-card { display: flex; flex-direction: column; text-align: left; border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; padding: 16px; cursor: pointer; transition: border-color 0.14s ${EASE}, background 0.14s ${EASE}, transform 0.14s ${EASE}; }
-        .db-card:hover { border-color: ${C.borderHover}; background: ${C.cardHover}; transform: translateY(-2px); }
-        .db-detail { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 14px; padding: 20px; min-width: 0; display: flex; flex-direction: column; }
+        .tb-wrap { display: grid; gap: 14px; min-width: 0; }
+        .tb-grid { display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); gap: 16px; align-items: stretch; }
+        @media (max-width: 980px) { .tb-grid { grid-template-columns: 1fr; } }
+        .tb-presets { display: grid; gap: 12px; grid-auto-rows: 1fr; }
+        .tb-preset { display: flex; flex-direction: column; gap: 6px; text-align: left; border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; padding: 16px; cursor: pointer; transition: border-color 0.14s ${EASE}, background 0.14s ${EASE}, transform 0.14s ${EASE}; }
+        .tb-preset:hover { border-color: ${C.borderHover}; background: ${C.cardHover}; transform: translateY(-2px); }
+        .tb-preset span { font-family: ${FD}; font-size: 15px; font-weight: 600; }
+        .tb-preset p { margin: 0; font-family: ${FS}; font-size: 12px; color: ${C.textSecondary}; line-height: 1.45; }
+        .tb-detail { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 14px; padding: 18px 20px; min-width: 0; display: flex; flex-direction: column; }
+        .tb-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+        .tb-sub { font-family: ${FS}; font-size: 12.5px; color: ${C.textSecondary}; margin-top: 6px; }
+        .tb-budget { text-align: right; }
+        .tb-num { width: 120px; box-sizing: border-box; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 9px 12px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; outline: none; text-align: right; }
+        .tb-num:focus { border-color: ${C.tealLight}; }
+        .tb-legs { border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
+        .tb-leg { display: grid; grid-template-columns: minmax(0,1.5fr) 64px 1fr 1fr; gap: 10px; align-items: center; padding: 11px 13px; border-bottom: 0.5px solid ${C.border}; font-family: ${FM}; font-size: 12px; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
+        .tb-leg:last-child { border-bottom: 0; }
+        .tb-leg span:not(.tb-leg-tenor) { text-align: right; }
+        .tb-leg-head { background: ${C.surface}; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
+        .tb-leg-tenor { position: relative; display: flex; align-items: center; min-width: 0; }
+        .tb-leg-tenor .tb-leg-bar { position: absolute; inset: -11px auto -11px 0; border-radius: 4px; }
+        .tb-leg-tenor b { position: relative; font-weight: 600; }
+        .tb-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 0.5px solid ${C.border}; }
+        .tb-totals div { display: grid; gap: 5px; }
+        .tb-totals strong { font-family: ${FD}; font-size: 19px; font-weight: 600; color: ${C.textPrimary}; }
+        .tb-warn { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 12px 14px; font-family: ${FM}; font-size: 12px; color: ${C.textMuted}; }
+        .tb-empty { flex: 1; min-height: 220px; display: grid; place-items: center; font-family: ${FM}; font-size: 12px; color: ${C.textMuted}; }
+        .tb-skel { min-height: 360px; border: 0.5px solid ${C.border}; border-radius: 12px; background: ${C.card}; opacity: 0.5; }
       `}</style>
       <StripStyles />
     </div>

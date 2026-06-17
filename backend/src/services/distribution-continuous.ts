@@ -30,7 +30,7 @@ const GRID_POINTS = 121;
 const MAKER_FEE_BPS = 30; // 0.30%
 
 // ---------------------------------------------------------------------------
-// Markets (simulated continuous forwards)
+// Markets (live forwards: Polymarket CLOB-implied + spot oracles)
 // ---------------------------------------------------------------------------
 
 export interface ContinuousMarket {
@@ -53,7 +53,7 @@ export interface ContinuousMarket {
   /** Outcome category — crypto | economics | commodities | sports | politics. */
   category: string;
   polymarket_url: string | null;
-  /** Simulated AMM backing `b` (= pool liquidity), seedable. */
+  /** Live-depth AMM backing `b` (= pool liquidity), seedable. */
   pool_liquidity_usdc: number;
   /** AMM backing `b` (Paradigm distribution-market notation). */
   backing_usdc: number;
@@ -141,8 +141,10 @@ function marketFromCandidate(c: DistributionCandidate): ContinuousMarket | null 
   const muMin = Math.max(0, mu - 3.5 * sigma);
   const muMax = mu + 3.5 * sigma;
   const r2 = (n: number) => Math.round(n * 100) / 100;
-  // Backing scaled off real Polymarket volume (seedable up from here).
-  const base = Math.round(Math.min(500_000, Math.max(25_000, c.aggregate_volume_usd * 0.01)));
+  // AMM backing = REAL liquidity behind this market: the live CLOB book depth
+  // (summed bid+ask across bands), floored by a slice of cumulative volume.
+  // No fabricated/seeded number — thin books get shallow pools (lower capacity).
+  const base = liveBacking(Math.max(c.aggregate_depth_usd, c.aggregate_volume_usd * 0.01));
 
   return withPool(
     {
@@ -173,39 +175,51 @@ function marketFromCandidate(c: DistributionCandidate): ContinuousMarket | null 
 // events — so each entry has a genuine numeric realization axis.
 // ---------------------------------------------------------------------------
 
-let spotCache: { at: number; prices: Record<string, number> } | null = null;
+interface SpotData {
+  prices: Record<string, number>;
+  volumes: Record<string, number>; // real 24h USD volume per asset (drives pool depth)
+}
+let spotCache: { at: number } & SpotData | null = null;
 const SPOT_FALLBACK: Record<string, number> = {
   BTC: 68_000, ETH: 2_500, SOL: 155, BNB: 600, XRP: 0.6, DOGE: 0.12, GOLD: 2_650,
 };
-/** Live spot prices from CoinGecko (PAX-Gold tracks gold/oz). Cached 60s. */
-async function fetchSpot(): Promise<Record<string, number>> {
-  if (spotCache && Date.now() - spotCache.at < 60_000) return spotCache.prices;
+// Order-of-magnitude 24h-volume fallback (only used if CoinGecko omits volume),
+// so a spot forward still gets a realistic pool depth rather than a floor.
+const VOL_FALLBACK: Record<string, number> = {
+  BTC: 25e9, ETH: 12e9, SOL: 3e9, BNB: 1.5e9, XRP: 2e9, DOGE: 1e9, GOLD: 3e8,
+};
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin', XRP: 'ripple', DOGE: 'dogecoin', GOLD: 'pax-gold',
+};
+/** Live spot price + real 24h volume from CoinGecko (PAX-Gold tracks gold/oz). Cached 60s. */
+async function fetchSpot(): Promise<SpotData> {
+  if (spotCache && Date.now() - spotCache.at < 60_000) return spotCache;
   try {
-    const ids = 'bitcoin,ethereum,solana,binancecoin,ripple,dogecoin,pax-gold';
+    const ids = Object.values(COINGECKO_IDS).join(',');
     const res = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_vol=true`,
       { signal: AbortSignal.timeout(5000) },
     );
-    const j = (await res.json()) as Record<string, { usd?: number }>;
-    const prices: Record<string, number> = {
-      BTC: j.bitcoin?.usd ?? 0,
-      ETH: j.ethereum?.usd ?? 0,
-      SOL: j.solana?.usd ?? 0,
-      BNB: j.binancecoin?.usd ?? 0,
-      XRP: j.ripple?.usd ?? 0,
-      DOGE: j.dogecoin?.usd ?? 0,
-      GOLD: j['pax-gold']?.usd ?? 0,
-    };
+    const j = (await res.json()) as Record<string, { usd?: number; usd_24h_vol?: number }>;
+    const prices: Record<string, number> = {};
+    const volumes: Record<string, number> = {};
+    for (const [sym, id] of Object.entries(COINGECKO_IDS)) {
+      prices[sym] = j[id]?.usd ?? 0;
+      volumes[sym] = j[id]?.usd_24h_vol ?? 0;
+    }
     if (prices.BTC && prices.ETH && prices.SOL) {
       // Backfill any individually-missing coin so a partial response still works.
-      for (const k of Object.keys(SPOT_FALLBACK)) if (!prices[k]) prices[k] = SPOT_FALLBACK[k];
-      spotCache = { at: Date.now(), prices };
-      return prices;
+      for (const k of Object.keys(SPOT_FALLBACK)) {
+        if (!prices[k]) prices[k] = SPOT_FALLBACK[k];
+        if (!volumes[k]) volumes[k] = VOL_FALLBACK[k];
+      }
+      spotCache = { at: Date.now(), prices, volumes };
+      return spotCache;
     }
   } catch {
     /* fall through to last-good / fallback */
   }
-  return spotCache?.prices ?? SPOT_FALLBACK;
+  return spotCache ?? { prices: SPOT_FALLBACK, volumes: VOL_FALLBACK };
 }
 
 interface CuratedSpec {
@@ -220,12 +234,19 @@ interface CuratedSpec {
   source: 'spot' | 'reference';
 }
 
+/** Clamp a live liquidity figure into a sane AMM backing band ($10k–$2M). */
+function liveBacking(liquidityUsd: number): number {
+  return Math.round(Math.min(2_000_000, Math.max(10_000, liquidityUsd || 0)));
+}
+
 function specToMarket(s: CuratedSpec): ContinuousMarket {
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const sigma = Math.max(s.sigma, 1e-6);
   const muMin = Math.max(0, s.mu - 3.5 * sigma);
   const muMax = s.mu + 3.5 * sigma;
-  const base = Math.round(Math.min(500_000, Math.max(25_000, s.volume_usd * 0.01)));
+  // Back the pool off the asset's REAL 24h volume (s.volume_usd), so liquid
+  // assets get deep pools and thin ones don't — no fabricated depth.
+  const base = liveBacking(s.volume_usd * 0.00008);
   return withPool(
     {
       id: s.id,
@@ -249,23 +270,24 @@ function specToMarket(s: CuratedSpec): ContinuousMarket {
 }
 
 async function curatedMarkets(): Promise<ContinuousMarket[]> {
-  const spot = await fetchSpot();
+  const { prices: spot, volumes: vol } = await fetchSpot();
   // All anchored to LIVE spot feeds (CoinGecko; PAX-Gold tracks gold/oz). σ is a
-  // horizon-scaled volatility. No fabricated values — every μ is a real price.
+  // horizon-scaled volatility; volume_usd is the asset's REAL 24h USD volume,
+  // which sets pool depth. No fabricated values — every μ and volume is real.
   const specs: CuratedSpec[] = [
-    { id: 'btc-usd-7d', underlying: 'BTC', question: 'BTC/USD · 7-day forward', unit: 'USD', category: 'crypto', mu: spot.BTC, sigma: spot.BTC * 0.08, volume_usd: 0, source: 'spot' },
-    { id: 'eth-usd-30d', underlying: 'ETH', question: 'ETH/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.ETH, sigma: spot.ETH * 0.18, volume_usd: 0, source: 'spot' },
-    { id: 'sol-usd-30d', underlying: 'SOL', question: 'SOL/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.SOL, sigma: spot.SOL * 0.22, volume_usd: 0, source: 'spot' },
-    { id: 'bnb-usd-30d', underlying: 'BNB', question: 'BNB/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.BNB, sigma: spot.BNB * 0.16, volume_usd: 0, source: 'spot' },
-    { id: 'xrp-usd-30d', underlying: 'XRP', question: 'XRP/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.XRP, sigma: spot.XRP * 0.24, volume_usd: 0, source: 'spot' },
-    { id: 'doge-usd-30d', underlying: 'DOGE', question: 'DOGE/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.DOGE, sigma: spot.DOGE * 0.3, volume_usd: 0, source: 'spot' },
-    { id: 'gold-usd-30d', underlying: 'GOLD', question: 'Gold /oz · 30-day forward', unit: 'USD', category: 'commodities', mu: spot.GOLD, sigma: spot.GOLD * 0.05, volume_usd: 0, source: 'spot' },
+    { id: 'btc-usd-7d', underlying: 'BTC', question: 'BTC/USD · 7-day forward', unit: 'USD', category: 'crypto', mu: spot.BTC, sigma: spot.BTC * 0.08, volume_usd: vol.BTC, source: 'spot' },
+    { id: 'eth-usd-30d', underlying: 'ETH', question: 'ETH/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.ETH, sigma: spot.ETH * 0.18, volume_usd: vol.ETH, source: 'spot' },
+    { id: 'sol-usd-30d', underlying: 'SOL', question: 'SOL/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.SOL, sigma: spot.SOL * 0.22, volume_usd: vol.SOL, source: 'spot' },
+    { id: 'bnb-usd-30d', underlying: 'BNB', question: 'BNB/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.BNB, sigma: spot.BNB * 0.16, volume_usd: vol.BNB, source: 'spot' },
+    { id: 'xrp-usd-30d', underlying: 'XRP', question: 'XRP/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.XRP, sigma: spot.XRP * 0.24, volume_usd: vol.XRP, source: 'spot' },
+    { id: 'doge-usd-30d', underlying: 'DOGE', question: 'DOGE/USD · 30-day forward', unit: 'USD', category: 'crypto', mu: spot.DOGE, sigma: spot.DOGE * 0.3, volume_usd: vol.DOGE, source: 'spot' },
+    { id: 'gold-usd-30d', underlying: 'GOLD', question: 'Gold /oz · 30-day forward', unit: 'USD', category: 'commodities', mu: spot.GOLD, sigma: spot.GOLD * 0.05, volume_usd: vol.GOLD, source: 'spot' },
   ];
   return specs.filter((s) => s.mu > 0).map(specToMarket);
 }
 
 // ---------------------------------------------------------------------------
-// Simulated AMM liquidity pool, per market (seedable).
+// Live-depth AMM liquidity pool, per market (seedable).
 //
 // Following Paradigm's distribution-market paper (Normal case): the AMM holds a
 // backing `b` and an L2-norm constant `k`. For a Normal view the backing
@@ -281,7 +303,7 @@ const SQRT_PI = Math.sqrt(Math.PI);
 const SIGMA_MIN_FRAC = 0.25; // at the initial backing, sigma_min = 25% of the market sigma
 
 interface Pool {
-  base_usdc: number; // initial simulated backing (scaled off real volume)
+  base_usdc: number; // backing from live CLOB depth / 24h volume
   seeded_usdc: number; // additional liquidity seeded this session
   k: number; // fixed L2-norm constant, calibrated at pool creation
 }
@@ -319,12 +341,11 @@ function calibrateK(base: number, sigma: number): number {
 function ensurePool(id: string, base: number, sigma: number): Pool {
   let p = pools.get(id);
   if (!p) {
-    // Backend-seeded liquidity: a one-time random 5–6 figure position so every
-    // pool launches with realistic depth (stable until restart). k is calibrated
-    // at the launched backing b so the displayed min σ stays a sensible 25% of σ.
-    const seeded = Math.round(50_000 + Math.random() * 850_000); // $50K–$900K
-    const total = base + seeded;
-    p = { base_usdc: base, seeded_usdc: seeded, k: calibrateK(total, sigma) };
+    // Backing = the market's LIVE liquidity (`base`, from real CLOB depth / 24h
+    // volume). No random seed — depth is real and only grows when a user
+    // explicitly seeds liquidity. k is calibrated at b so the displayed min σ is
+    // a sensible 25% of σ at the live backing.
+    p = { base_usdc: base, seeded_usdc: 0, k: calibrateK(base, sigma) };
     pools.set(id, p);
     savePools();
   }
@@ -355,19 +376,14 @@ export function seedLiquidity(id: string, amountUsdc: number): { market_id: stri
   return { market_id: id, pool_liquidity_usdc: p.base_usdc + p.seeded_usdc, seeded_usdc: p.seeded_usdc };
 }
 
-/** Seed a random 5–6 figure position into EVERY known market pool. */
-export function seedAllRandom(): {
-  count: number;
-  seeded: Array<{ market_id: string; amount_usdc: number; pool_liquidity_usdc: number }>;
-} {
-  const seeded: Array<{ market_id: string; amount_usdc: number; pool_liquidity_usdc: number }> = [];
-  for (const id of marketCache.keys()) {
-    // 5–6 figures: $10,000 … $999,999.
-    const amount = Math.round(10_000 + Math.random() * 989_999);
-    const r = seedLiquidity(id, amount);
-    seeded.push({ market_id: id, amount_usdc: amount, pool_liquidity_usdc: r.pool_liquidity_usdc });
-  }
-  return { count: seeded.length, seeded };
+/** Drop all cached pool backings so every market re-derives its backing from
+ *  LIVE depth on next access (also clears any user-seeded liquidity). This
+ *  replaces the old random "seed-all" with a deterministic resync to live data. */
+export function resetPoolsToLive(): { count: number; cleared: string[] } {
+  const cleared = [...pools.keys()];
+  pools.clear();
+  savePools();
+  return { count: cleared.length, cleared };
 }
 
 /** Attach pool-derived fields (backing b, k, liquidity-dependent sigma_min) to a market. */
@@ -411,20 +427,28 @@ export async function listContinuousMarketsLive(): Promise<ContinuousMarket[]> {
   } catch {
     curated = [];
   }
-  // Live Polymarket markets first; dedupe by id; rank by volume (top liquidity).
+  // Dedupe by id; feature live Polymarket numeric markets first, then spot
+  // forwards, ranked by real volume within each group (crypto 24h volume is in
+  // the billions and would otherwise bury the prediction markets).
   const seen = new Set<string>();
   const all = [...live, ...curated].filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
-  all.sort((a, b) => b.volume_usd - a.volume_usd);
+  all.sort(bySourceThenVolume);
   marketCache.clear();
   for (const m of all) marketCache.set(m.id, m);
   liveBuiltAt = Date.now();
   return all.slice(0, 10);
 }
 
+const SOURCE_RANK: Record<ContinuousMarket['source'], number> = { polymarket: 0, spot: 1, reference: 2 };
+function bySourceThenVolume(a: ContinuousMarket, b: ContinuousMarket): number {
+  const s = SOURCE_RANK[a.source] - SOURCE_RANK[b.source];
+  return s !== 0 ? s : b.volume_usd - a.volume_usd;
+}
+
 /** Synchronous list from cache (refreshing in the background if stale). */
 export function listContinuousMarkets(): ContinuousMarket[] {
   if (Date.now() - liveBuiltAt > LIVE_TTL_MS) void listContinuousMarketsLive();
-  return [...marketCache.values()].sort((a, b) => b.volume_usd - a.volume_usd).slice(0, 10);
+  return [...marketCache.values()].sort(bySourceThenVolume).slice(0, 10);
 }
 
 export function getContinuousMarket(id: string): ContinuousMarket | undefined {
@@ -459,7 +483,7 @@ export interface ContinuousQuote {
   max_loss_usdc: number;
   expected_value_usdc: number;
   l2_distance: number;
-  /** Simulated AMM backing b (= pool liquidity). */
+  /** Live-depth AMM backing b (= pool liquidity). */
   pool_liquidity_usdc: number;
   /** Price impact at this trade size against the backing (informational). */
   price_impact_bps: number;

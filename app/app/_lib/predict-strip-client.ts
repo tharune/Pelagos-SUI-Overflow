@@ -266,15 +266,19 @@ export const prepareTermBasketOpen = (b: {
 export interface VolGreeks { delta_btc: number; gamma: number; vega_usd: number; theta_usd_day: number; position_value_usd: number; }
 export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; chain: "sui" | "cex" | "forward"; conf?: number; }
 export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_cost_usd: number; venue: string; }
+export type VolStrategy = "straddle" | "strangle" | "butterfly" | "condor";
 export interface VolQuote {
-  side: "long" | "short"; oracle_id: string; expiry: string; forward_usd: number; atm_iv: number; t_years: number;
+  side: "long" | "short"; strategy: VolStrategy; strategy_label: string; thesis: string;
+  oracle_id: string; expiry: string; forward_usd: number; sigma_usd: number; atm_iv: number; t_years: number;
   tenor_label: string; max_loss_usd: number;
   strip: StripQuote; greeks: VolGreeks; mark: BtcMark; hedge: HedgeQuote;
 }
 export interface VolDeskSurface extends VolSurface { realized_vol: number; rv_window_hours: number; rv_source: string; vol_risk_premium: number; }
 export const fetchVolDeskSurface = () => get<VolDeskSurface>("/api/vol/surface");
-export const volQuote = (b: { side: "long" | "short"; oracle_id?: string; notional_usd: number; sender?: string }) =>
+export const volQuote = (b: { strategy?: VolStrategy; side?: "long" | "short"; oracle_id?: string; notional_usd: number; sender?: string }) =>
   post<VolQuote>("/api/vol/quote", b);
+/** Fast live BTC mark for the real-time ticker/hedge (backend-cached ~1.5s). */
+export const fetchVolMark = (signal?: AbortSignal) => get<{ mark: BtcMark; ts: number }>("/api/vol/mark", signal);
 export const volHedge = (deltaBtc: number, oracleId?: string) =>
   get<{ mark: BtcMark; hedge: HedgeQuote }>(`/api/vol/hedge?delta_btc=${deltaBtc}${oracleId ? `&oracle_id=${oracleId}` : ""}`);
 export const prepareVolOpen = (b: {

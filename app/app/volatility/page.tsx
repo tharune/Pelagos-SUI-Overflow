@@ -291,8 +291,12 @@ type DeskProps = {
 // BASIC — the guided 4-strategy desk + horizon selector.
 // ===========================================================================
 function BasicDesk(p: DeskProps) {
-  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd } = p;
+  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd, wallet, busy } = p;
   const horizonSlice = sliceForHorizon(surface, horizon);
+  // The delta-neutral hedge is now an OPTIONAL step inside the execute modal,
+  // surfaced when you click Open — not a permanent panel cluttering the desk.
+  const [showExecute, setShowExecute] = useState(false);
+  const [hedgeOn, setHedgeOn] = useState(false);
 
   return (
     <>
@@ -312,26 +316,33 @@ function BasicDesk(p: DeskProps) {
       </div>
     </div>
 
-    <div className="vd-grid">
-      {/* LEFT — strategy, controls, payoff */}
-      <div className="vd-main">
-        {/* strategy selector */}
-        <div className="vd-card vd-strats">
-          {STRATS.map((s) => {
-            const on = s.id === strategy;
-            const c = sideColor(s.side);
-            return (
-              <button key={s.id} className={`vd-strat${on ? " is-active" : ""}`} style={on ? { borderColor: c, background: `${c}14` } : undefined} onClick={() => setStrategy(s.id)}>
-                <ShapeIcon strategy={s.id} color={on ? c : C.textMuted} />
-                <b style={on ? { color: c } : undefined}>{s.label}</b>
-                <em>{s.blurb}</em>
-              </button>
-            );
-          })}
-        </div>
+    {/* strategy selector — full width */}
+    <div className="vd-card vd-strats">
+      {STRATS.map((s) => {
+        const on = s.id === strategy;
+        const c = sideColor(s.side);
+        return (
+          <button key={s.id} className={`vd-strat${on ? " is-active" : ""}`} style={on ? { borderColor: c, background: `${c}14` } : undefined} onClick={() => setStrategy(s.id)}>
+            <ShapeIcon strategy={s.id} color={on ? c : C.textMuted} />
+            <b style={on ? { color: c } : undefined}>{s.label}</b>
+            <em>{s.blurb}</em>
+          </button>
+        );
+      })}
+    </div>
 
-        {/* controls: amount + horizon + plain-English description */}
-        <div className="vd-card vd-ctrls">
+    {/* payoff (left, the visual) + order entry (right: amount/horizon + ticket) */}
+    <div className="vd-grid">
+      <div className="vd-main">
+        <div className="vd-card vd-payoff">
+          <div className="vd-card-head"><Cap>Payoff at expiry · {q?.strategy_label ?? meta.label}</Cap><span className="vd-dim">P&L vs BTC settlement</span></div>
+          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={accent} />
+        </div>
+      </div>
+
+      <div className="vd-side">
+        {/* controls — amount + horizon + plain description (stacked) */}
+        <div className="vd-card vd-ctrls vd-ctrls-v">
           <div className="vd-amount">
             <Cap>Amount · dUSDC</Cap>
             <div className="vd-amount-in">
@@ -353,24 +364,25 @@ function BasicDesk(p: DeskProps) {
               })}
             </div>
           </div>
-          <div className="vd-ctrl-meta">
-            <p>{PLAIN_THESIS[strategy]}</p>
-            <div><Cap>Expires in</Cap><strong>{q ? q.tenor_label : horizonSlice?.tenor_label ?? "—"}</strong></div>
+          <p className="vd-ctrls-desc">{PLAIN_THESIS[strategy]} <span>Expires in {q ? q.tenor_label : horizonSlice?.tenor_label ?? "—"}.</span></p>
+        </div>
+
+        {/* ticket — Open launches the review modal (optional delta hedge → sign) */}
+        <div className="vd-card vd-ticket">
+          <div className="vd-card-head"><Cap>{meta.label} · {meta.side} vol</Cap><span className="vd-dim">{tradeable}/{q?.strip.buckets.length ?? 0} legs</span></div>
+          <div className="vd-hedge-rows">
+            <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
+            <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
+            <Row k="Max loss" v={q ? money(q.max_loss_usd) : "—"} hint="premium" />
           </div>
+          {!wallet.connected ? (
+            <ConnectModal trigger={<button className="vd-open-btn" style={{ background: accent }}>Connect a wallet</button>} />
+          ) : (
+            <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} onClick={() => setShowExecute(true)}>
+              {`Open ${meta.label} · ${q ? usd(q.strip.total_cost_raw) : ""}`}
+            </button>
+          )}
         </div>
-
-        {/* payoff diagram */}
-        <div className="vd-card vd-payoff">
-          <div className="vd-card-head"><Cap>Payoff at expiry · {q?.strategy_label ?? meta.label}</Cap><span className="vd-dim">P&L vs BTC settlement</span></div>
-          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={accent} />
-        </div>
-
-      </div>
-
-      {/* RIGHT — hedge + ticket */}
-      <div className="vd-side">
-        <HedgePanel {...p} />
-        <TicketPanel {...p} />
       </div>
     </div>
 
@@ -389,7 +401,73 @@ function BasicDesk(p: DeskProps) {
         )) : <div className="vd-leg-empty">pricing…</div>}
       </div>
     </div>
+
+    {showExecute && (
+      <ExecuteModal p={p} hedgeOn={hedgeOn} setHedgeOn={setHedgeOn} onClose={() => setShowExecute(false)} />
+    )}
     </>
+  );
+}
+
+// Review-and-sign modal for Basic. Surfaces the trade summary + an OPTIONAL
+// delta-neutral perp hedge before the on-chain mint is signed.
+function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedgeOn: boolean; setHedgeOn: (v: boolean) => void; onClose: () => void }) {
+  const { q, meta, accent, busy, stage, result, openErr, openPosition, runDelta, hedgeSide, hedgeBtc, markPrice, gammaPnl, routeHedge, hedged } = p;
+  const hasDelta = hedgeSide !== "flat" && Math.abs(runDelta) > 1e-3;
+  const confirm = () => {
+    if (hedgeOn && hasDelta && !hedged) routeHedge();
+    openPosition();
+  };
+  return (
+    <div className="vd-modal-bg" onClick={onClose}>
+      <div className="vd-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="vd-modal-head">
+          <Cap>Review order</Cap>
+          <button className="vd-modal-x" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="vd-modal-title">
+          <span className="vd-modal-badge" style={{ color: accent, background: `${accent}1c` }}>{meta.label}</span>
+          {meta.side} vol · {q?.tenor_label ?? "—"}
+        </div>
+        <div className="vd-hedge-rows">
+          <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
+          <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
+          <Row k="Max loss" v={q ? money(q.max_loss_usd) : "—"} hint="premium" />
+        </div>
+
+        {hasDelta && (
+          <div className={`vd-modal-hedge${hedgeOn ? " on" : ""}`}>
+            <label className="vd-modal-toggle">
+              <input type="checkbox" checked={hedgeOn} onChange={(e) => setHedgeOn(e.target.checked)} />
+              <span>Add a delta-neutral hedge</span>
+              <i>optional</i>
+            </label>
+            <p>
+              This {meta.label.toLowerCase()} carries {runDelta >= 0 ? "+" : ""}{runDelta.toFixed(3)} BTC of delta.
+              Hedging {hedgeBtc.toFixed(3)} BTC on a perp keeps you direction-neutral — pure volatility exposure.
+              <i> Perp routing is simulated on testnet.</i>
+            </p>
+            {hedgeOn && (
+              <div className="vd-hedge-rows">
+                <Row k="Hedge order" v={`${hedgeSide === "short" ? "Short" : "Long"} ${hedgeBtc.toFixed(4)} BTC`} color={accent} />
+                <Row k="BTC-PERP mark" v={dollars(markPrice)} live />
+                <Row k="Gamma P&L" v={`${gammaPnl >= 0 ? "+" : ""}${money(gammaPnl)}`} color={gammaPnl >= 0 ? C.green : C.red} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {result ? (
+          <ResultLine digest={result} label={`${meta.label} opened${hedgeOn && hasDelta ? " + hedged" : ""}`} />
+        ) : (
+          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q} onClick={confirm}>
+            {busy ? (stage ?? "Submitting…") : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
+          </button>
+        )}
+        {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}
+        <p className="vd-note">Structure minted on-chain on Sui (wallet-signed).{hedgeOn && hasDelta ? " Delta hedge simulated on testnet." : ""}</p>
+      </div>
+    </div>
   );
 }
 
@@ -554,21 +632,6 @@ function HedgePanel(p: DeskProps) {
       </button>
       {hedged && <div className="vd-sim">✓ {hedged}</div>}
       <p className="vd-note">Structure minted on‑chain on Sui. BTC mark live from {venue}; perp routing simulated on testnet.</p>
-    </div>
-  );
-}
-
-function TicketPanel(p: DeskProps) {
-  const { q, meta, tradeable } = p;
-  return (
-    <div className="vd-card vd-ticket">
-      <div className="vd-card-head"><Cap>{meta.label} · {meta.side} vol</Cap><span className="vd-dim">{tradeable}/{q?.strip.buckets.length ?? 0}</span></div>
-      <div className="vd-hedge-rows">
-        <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
-        <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
-        <Row k="Max loss" v={q ? money(q.max_loss_usd) : "—"} hint="premium" />
-      </div>
-      <OpenControls {...p} />
     </div>
   );
 }
@@ -836,6 +899,31 @@ const VD_CSS = `
   .vd-ctrl-meta div { display: flex; align-items: baseline; gap: 8px; }
   .vd-ctrl-meta strong { font-family: ${FD}; font-size: 14px; font-weight: 600; color: ${C.textPrimary}; }
   .vd-ctrl-meta p { margin: 0; font-family: ${FS}; font-size: 13px; line-height: 1.5; color: ${C.textPrimary}; }
+
+  /* Basic: controls stacked vertically in the right-rail order-entry column. */
+  .vd-ctrls-v { grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
+  .vd-ctrls-desc { margin: 0; font-family: ${FS}; font-size: 12.5px; line-height: 1.55; color: ${C.textSecondary}; }
+  .vd-ctrls-desc span { color: ${C.textMuted}; }
+
+  /* Execute / review modal (optional delta-neutral hedge before signing). */
+  .vd-modal-bg { position: fixed; inset: 0; z-index: 60; background: rgba(2, 10, 20, 0.62); backdrop-filter: blur(3px); display: grid; place-items: center; padding: 20px; animation: vd-fade 0.14s ${EASE}; }
+  @keyframes vd-fade { from { opacity: 0; } to { opacity: 1; } }
+  .vd-modal { width: min(440px, 100%); background: ${C.card}; border: 0.5px solid ${C.borderStrong}; border-radius: 16px; padding: 18px; display: grid; gap: 13px; box-shadow: 0 24px 60px rgba(0,0,0,0.45); }
+  .vd-modal-head { display: flex; justify-content: space-between; align-items: center; }
+  .vd-modal-x { appearance: none; border: none; background: transparent; color: ${C.textMuted}; font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 6px; line-height: 1; }
+  .vd-modal-x:hover { color: ${C.textPrimary}; background: ${C.cardHover}; }
+  .vd-modal-title { font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; display: flex; align-items: center; gap: 8px; }
+  .vd-modal-badge { font-family: ${FM}; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 6px; text-transform: capitalize; }
+  .vd-modal-hedge { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 12px; display: grid; gap: 9px; transition: border-color 0.15s ${EASE}; }
+  .vd-modal-hedge.on { border-color: ${C.tealLight}66; }
+  .vd-modal-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; font-family: ${FD}; font-size: 13px; font-weight: 600; color: ${C.textPrimary}; }
+  .vd-modal-toggle input { width: 15px; height: 15px; accent-color: #4da2ff; cursor: pointer; flex-shrink: 0; }
+  .vd-modal-toggle i { margin-left: auto; font-style: normal; font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; }
+  .vd-modal-hedge p { margin: 0; font-family: ${FS}; font-size: 11.5px; line-height: 1.55; color: ${C.textSecondary}; }
+  .vd-modal-hedge p i { font-style: normal; color: ${C.textMuted}; }
+  .vd-modal-confirm { width: 100%; height: 46px; border: none; border-radius: 12px; color: #04121d; font-family: ${FD}; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform 0.15s ${EASE}, opacity 0.15s ${EASE}; }
+  .vd-modal-confirm:hover:not(:disabled) { transform: translateY(-1px); }
+  .vd-modal-confirm:disabled { opacity: 0.6; cursor: default; }
 
   .vd-payoff-empty { display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
 

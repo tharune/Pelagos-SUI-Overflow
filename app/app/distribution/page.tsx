@@ -128,10 +128,14 @@ function BasicOptionsChain() {
   const selExp = sel && chain ? chain.expiries[sel.expiryIdx] : null;
 
   const pickStrike = useCallback((strikeIdx: number, side: Side) => {
+    // Guard: never select an infeasible (non-mintable) strike, even if a stray
+    // click reaches here — the ticket should only ever load a tradeable contract.
+    const q = chain?.expiries[expIdx]?.strikes[strikeIdx]?.[side];
+    if (!q || !q.tradeable) return;
     setSel({ expiryIdx: expIdx, strikeIdx, side });
     setResult(null);
     setOpenErr(null);
-  }, [expIdx]);
+  }, [expIdx, chain]);
 
   // Reset selection when switching expiries (strike indices map across expiries,
   // but the chosen side may collapse to 0 premium — clearer to re-pick).
@@ -253,12 +257,23 @@ function BasicOptionsChain() {
                     const putSelected = sel?.expiryIdx === expIdx && sel?.strikeIdx === i && sel?.side === "put";
                     return (
                       <div className={`oc-row${isAtm ? " atm" : ""}`} key={s.strike}>
-                        <SideCells q={s.call} side="call" selected={callSelected} dim={s.moneyness > 1} onClick={() => pickStrike(i, "call")} />
-                        <button className={`oc-k${isAtm ? " atm" : ""}`} onClick={() => pickStrike(i, s.moneyness <= 1 ? "call" : "put")}>
+                        <SideCells q={s.call} side="call" selected={callSelected} onClick={() => pickStrike(i, "call")} />
+                        <button
+                          className={`oc-k${isAtm ? " atm" : ""}`}
+                          onClick={() => {
+                            // Pick the natural side for this strike, but only if it's
+                            // tradeable; fall back to the other tradeable side, else no-op.
+                            const pref: Side = s.moneyness <= 1 ? "call" : "put";
+                            const chosen: Side | null = s[pref].tradeable
+                              ? pref
+                              : s.call.tradeable ? "call" : s.put.tradeable ? "put" : null;
+                            if (chosen) pickStrike(i, chosen);
+                          }}
+                        >
                           {strikeFmt(s.strike)}
                           {isAtm && <i>ATM</i>}
                         </button>
-                        <SideCells q={s.put} side="put" selected={putSelected} dim={s.moneyness < 1} onClick={() => pickStrike(i, "put")} />
+                        <SideCells q={s.put} side="put" selected={putSelected} onClick={() => pickStrike(i, "put")} />
                       </div>
                     );
                   })
@@ -267,7 +282,7 @@ function BasicOptionsChain() {
                 )}
               </div>
               <div className="oc-chain-foot">
-                Near expiry, far-OTM premiums collapse to 0 on testnet — that&apos;s correct. ITM legs mark near intrinsic.
+                Greyed strikes sit outside the protocol&apos;s mintable 2–98% band (deep ITM / OTM) — the pool won&apos;t underwrite them, so they aren&apos;t tradeable. Live strikes price off the DeepBook book; a call and put at the same strike sum to ~$1.00 (the ATM pair is ~$0.50 each — correct for a $1-payout binary).
               </div>
             </div>
 
@@ -293,7 +308,7 @@ function BasicOptionsChain() {
 
                   <div className="oc-quote">
                     <div className="oc-q-mid">
-                      <span>Mid · per contract</span>
+                      <span>Mid · per contract <i className="oc-dot" style={{ display: "inline-block", marginLeft: 5, verticalAlign: "middle" }} /></span>
                       <strong>{liveMid > 0 ? `$${px(liveMid)}` : "$0.00"}</strong>
                     </div>
                     <div className="oc-q-ba">
@@ -366,14 +381,24 @@ function BasicOptionsChain() {
 }
 
 // One cell-group for one side of a chain row (3 columns: mid / iv / delta).
-function SideCells({ q, side, selected, dim, onClick }: { q: OptionQuote; side: Side; selected: boolean; dim: boolean; onClick: () => void }) {
+function SideCells({ q, side, selected, onClick }: { q: OptionQuote; side: Side; selected: boolean; onClick: () => void }) {
   const mid = q.mid;
-  const zero = !(mid > 0.005);
+  // A non-tradeable leg sits OUTSIDE the protocol's mintable [2%,98%] band — a $1
+  // payout for ~$1 (deep ITM) or a ~$0 lottery (deep OTM). The pool won't
+  // underwrite it, so black it out and make it non-interactive: you can never
+  // select / open an infeasible position.
+  if (!q.tradeable) {
+    return (
+      <div className={`oc-cells ${side} blackout`} title="Not tradeable — outside the protocol's mintable 2–98% band">
+        <span className="oc-mid">{mid > 0.005 ? px(mid) : "·"}</span>
+        <span className="oc-iv">{ivFmt(q.iv)}</span>
+        <span className="oc-dlt">—</span>
+      </div>
+    );
+  }
   return (
-    <button className={`oc-cells ${side}${selected ? " sel" : ""}${dim ? " dim" : ""}`} onClick={onClick}>
-      <span className="oc-mid" style={{ color: zero ? C.textMuted : side === "call" ? C.textPrimary : C.textPrimary }}>
-        {zero ? "·" : px(mid)}
-      </span>
+    <button className={`oc-cells ${side}${selected ? " sel" : ""}`} onClick={onClick}>
+      <span className="oc-mid">{px(mid)}</span>
       <span className="oc-iv">{ivFmt(q.iv)}</span>
       <span className="oc-dlt">{dltFmt(q.delta)}</span>
     </button>
@@ -468,7 +493,9 @@ const OC_CSS = `
   .oc-cells.put span { text-align: right; direction: ltr; }
   .oc-cells:hover { background: ${C.cardHover}; }
   .oc-cells.sel { background: ${C.tealLight}1c; box-shadow: inset 0 0 0 1px ${C.tealLight}66; }
-  .oc-cells.dim span { opacity: 0.5; }
+  .oc-cells.blackout { cursor: default; opacity: 0.26; }
+  .oc-cells.blackout:hover { background: transparent; }
+  .oc-cells.blackout span { color: ${C.textMuted}; }
   .oc-mid { color: ${C.textPrimary}; font-weight: 500; }
   .oc-iv { color: ${C.textSecondary}; }
   .oc-dlt { color: ${C.textMuted}; }

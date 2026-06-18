@@ -293,7 +293,7 @@ type DeskProps = {
 // BASIC — the guided 4-strategy desk + horizon selector.
 // ===========================================================================
 function BasicDesk(p: DeskProps) {
-  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd, wallet, busy, markPrice, venue, onSui } = p;
+  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, ivPct, rvPct, vrp, fwd, wallet, busy, markPrice, venue, onSui } = p;
   const horizonSlice = sliceForHorizon(surface, horizon);
   // The delta-neutral hedge is now an OPTIONAL step inside the execute modal,
   // surfaced when you click Open — not a permanent panel cluttering the desk.
@@ -325,21 +325,19 @@ function BasicDesk(p: DeskProps) {
 
   return (
     <>
-    {/* metrics — 4 market + 4 position stats on the left; live BTC price on the right */}
-    <div className="vd-metrics-bar">
-      <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front month"} color={C.tealLight} />
-      <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h trailing` : "trailing"} />
-      <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint={Math.abs(vrp) < 0.05 ? "fairly priced" : vrp > 0 ? "vol looks rich" : "vol looks cheap"} color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
-      <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="BTC at quote" />
-      <div className="vd-mark-cell">
+    {/* metrics — 4 market stats in one box + a separate live BTC price box */}
+    <div className="vd-metrics2">
+      <div className="vd-stat4">
+        <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front month"} color={C.tealLight} />
+        <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h trailing` : "trailing"} />
+        <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint={Math.abs(vrp) < 0.05 ? "fairly priced" : vrp > 0 ? "vol looks rich" : "vol looks cheap"} color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
+        <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="BTC at quote" />
+      </div>
+      <div className="vd-pricebox">
         <span className="vd-mark-k">BTC mark</span>
         <strong key={Math.round(markPrice)}>{dollars(markPrice)}</strong>
         <span className="vd-mark-v"><i className={`vd-dot${onSui ? " on" : ""}`} />{venue} · live</span>
       </div>
-      <Stat label="Delta" value={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(3)} BTC` : "—"} hint="net direction" />
-      <Stat label="Gamma" value={g ? g.gamma.toFixed(4) : "—"} hint="convexity" color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
-      <Stat label="Vega" value={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} hint="per vol point" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-      <Stat label="Theta" value={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} hint="daily time decay" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
     </div>
 
     {/* strategy selector — full width */}
@@ -834,7 +832,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
     return { pts, lo, hi, fwd, cost, yMin: Math.min(...ys, 0), yMax: Math.max(...ys, 0) };
   }, [quote]);
 
-  if (!model) return <div className="vd-payoff-empty" style={{ height: H }}>pricing…</div>;
+  if (!model) return <div className="vd-payoff-empty" style={compact ? { height: H } : { flex: 1, minHeight: 240 }}>pricing…</div>;
   const { pts, lo, hi, fwd, yMin, yMax } = model;
   const sx = (x: number) => PL + ((x - lo) / (hi - lo || 1)) * (W - PL - PR);
   const yPad = (yMax - yMin) * 0.12 || 1;
@@ -846,7 +844,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
   const markX = Math.max(lo, Math.min(hi, markPrice));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={compact ? H : "100%"} preserveAspectRatio="none" style={{ display: "block", ...(compact ? {} : { flex: 1, minHeight: 240 }) }}>
       <defs>
         <clipPath id="vd-pos"><rect x={PL} y={PT} width={W - PL - PR} height={Math.max(0, zeroY - PT)} /></clipPath>
         <clipPath id="vd-neg"><rect x={PL} y={zeroY} width={W - PL - PR} height={Math.max(0, H - PB - zeroY)} /></clipPath>
@@ -889,22 +887,24 @@ const VD_CSS = `
   .vd-stat strong { font-family: ${FD}; font-size: 17px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
   .vd-stat-h { font-family: ${FM}; font-size: 9.5px; color: ${C.textMuted}; }
 
-  /* Metrics bar: 4 market + 4 position stats (left, two rows) + a tall live BTC
-     price cell (right, spanning both rows) — so the price isn't a box up top. */
-  .vd-metrics-bar { display: grid; grid-template-columns: repeat(4, 1fr) minmax(180px, 0.85fr); gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 12px; overflow: hidden; }
-  .vd-metrics-bar > .vd-stat { background: ${C.card}; }
-  .vd-metrics-bar > .vd-stat:nth-child(n+6) { background: ${C.surface}; }
-  .vd-mark-cell { grid-column: 5; grid-row: 1 / 3; background: ${C.card}; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 4px; text-align: right; }
+  /* Metrics: one box of 4 market stats + a separate live BTC price box. */
+  .vd-metrics2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, 0.32fr); gap: 14px; }
+  .vd-stat4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 12px; overflow: hidden; }
+  .vd-stat4 > .vd-stat { background: ${C.card}; }
+  .vd-pricebox { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; padding: 13px 18px; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 4px; text-align: right; }
   .vd-mark-k { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
-  .vd-mark-cell strong { font-family: ${FD}; font-size: 26px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; animation: vd-flash 0.5s ${EASE}; }
+  .vd-pricebox strong { font-family: ${FD}; font-size: 30px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; animation: vd-flash 0.5s ${EASE}; }
   .vd-mark-v { font-family: ${FM}; font-size: 10px; color: ${C.textMuted}; display: inline-flex; align-items: center; gap: 5px; }
-  @media (max-width: 1080px) { .vd-metrics-bar { grid-template-columns: repeat(2, 1fr); } .vd-mark-cell { grid-column: 1 / -1; grid-row: auto; align-items: flex-start; text-align: left; } }
+  @media (max-width: 1080px) { .vd-metrics2 { grid-template-columns: 1fr; } .vd-stat4 { grid-template-columns: repeat(2, 1fr); } .vd-pricebox { align-items: flex-start; text-align: left; } }
 
   .vd-err { border: 0.5px solid ${C.red}55; background: ${C.redBg}; border-radius: 10px; padding: 11px 14px; font-family: ${FM}; font-size: 12px; color: ${C.red}; }
 
-  .vd-grid { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(330px, 0.92fr); gap: 14px; align-items: start; }
+  .vd-grid { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(330px, 0.92fr); gap: 14px; align-items: stretch; }
   @media (max-width: 1080px) { .vd-grid { grid-template-columns: 1fr; } .vd-stats { grid-template-columns: repeat(2, 1fr); } .vd-top { flex-direction: column; } .vd-ticker { text-align: left; } }
-  .vd-main, .vd-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
+  .vd-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .vd-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
+  /* Basic payoff card fills the left column so the graph extends down (no dead space). */
+  .vd-payoff { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .vd-card { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 14px; padding: 15px 16px; min-width: 0; }
   .vd-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
   .vd-dim, .vd-live { font-family: ${FM}; font-size: 10px; color: ${C.textMuted}; }

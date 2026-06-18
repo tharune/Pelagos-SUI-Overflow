@@ -2,6 +2,12 @@
 
 _Last updated: 2026-06-18 · branch `Tharun-Pelagos` · synced with `sui/Tharun-Pelagos`_
 
+> **⭐ 2026-06-18 dual-mode overhaul:** the app now has a global **Basic/Advanced** toggle and a
+> combined IA (Portfolio · Distributed Options · Volatility · Baskets · DeepBook · About), 5 new live
+> backend engines, and a new on-chain Move package (`pelagos_strategies`, pkg
+> `0x30932e4e…f5d93a57`). **Read `OVERNIGHT_BUILD.md` first** — it's the full report + UAT guide +
+> the short fast-follow list (top item: wire the wallet-signed note-deposit PTB).
+
 This is a self-contained handoff so a fresh session can continue without re-discovering the
 codebase. Read this first, then `AGENTS.md` (it warns the Next.js fork is non-standard — read
 `node_modules/next/dist/docs/` before writing Next code).
@@ -198,6 +204,10 @@ simulated, and they're labeled.**
 ## 6. Work log (newest first, all pushed)
 
 ```
+895fc23 products: 5 dual-mode (Basic/Advanced) surfaces + IA restructure + on-chain note
+47b8d27 backend+onchain: 5 new product engines + deploy pelagos_strategies (structured_note)
+29c73b0 foundation: global Basic/Advanced mode + Distributed Options rename + BetaTag
+(… see OVERNIGHT_BUILD.md for the full dual-mode build report …)
 657da30 distribution: fade the tenor list bottom so a scrolled card doesn't read as clipped
 1ed8dc1 qa sweep: fix docs MID copy, vol polish, constituents, landing + table nits
 ddfb1e9 vol UI: institutional $25k default notional + $-labeled payoff axis

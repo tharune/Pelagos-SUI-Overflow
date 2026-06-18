@@ -238,13 +238,15 @@ export default function VolatilityPage() {
                   : "Bet on how much BTC will move — not which way. Pick a strategy, set your size, and see the payoff before you open it on Sui."}
               </p>
             </div>
-            <div className="vd-ticker">
-              <span className="vd-ticker-k">BTC mark</span>
-              <strong key={Math.round(markPrice)}>{dollars(markPrice)}</strong>
-              <span className="vd-ticker-v">
-                <i className={`vd-dot${onSui ? " on" : ""}`} />{venue} · live
-              </span>
-            </div>
+            {mode === "advanced" && (
+              <div className="vd-ticker">
+                <span className="vd-ticker-k">BTC mark</span>
+                <strong key={Math.round(markPrice)}>{dollars(markPrice)}</strong>
+                <span className="vd-ticker-v">
+                  <i className={`vd-dot${onSui ? " on" : ""}`} />{venue} · live
+                </span>
+              </div>
+            )}
           </div>
 
           {/* market stat strip — Advanced shows it standalone; Basic folds these
@@ -291,7 +293,7 @@ type DeskProps = {
 // BASIC — the guided 4-strategy desk + horizon selector.
 // ===========================================================================
 function BasicDesk(p: DeskProps) {
-  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd, wallet, busy } = p;
+  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd, wallet, busy, markPrice, venue, onSui } = p;
   const horizonSlice = sliceForHorizon(surface, horizon);
   // The delta-neutral hedge is now an OPTIONAL step inside the execute modal,
   // surfaced when you click Open — not a permanent panel cluttering the desk.
@@ -323,20 +325,21 @@ function BasicDesk(p: DeskProps) {
 
   return (
     <>
-    {/* combined metrics — market context (top) + your position (bottom) in one block */}
-    <div className="vd-metrics">
-      <div className="vd-metrics-row">
-        <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front month"} color={C.tealLight} />
-        <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h trailing` : "trailing"} />
-        <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint={Math.abs(vrp) < 0.05 ? "fairly priced" : vrp > 0 ? "vol looks rich" : "vol looks cheap"} color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
-        <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="BTC at quote" />
+    {/* metrics — 4 market + 4 position stats on the left; live BTC price on the right */}
+    <div className="vd-metrics-bar">
+      <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front month"} color={C.tealLight} />
+      <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h trailing` : "trailing"} />
+      <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint={Math.abs(vrp) < 0.05 ? "fairly priced" : vrp > 0 ? "vol looks rich" : "vol looks cheap"} color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
+      <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="BTC at quote" />
+      <div className="vd-mark-cell">
+        <span className="vd-mark-k">BTC mark</span>
+        <strong key={Math.round(markPrice)}>{dollars(markPrice)}</strong>
+        <span className="vd-mark-v"><i className={`vd-dot${onSui ? " on" : ""}`} />{venue} · live</span>
       </div>
-      <div className="vd-metrics-row vd-metrics-pos">
-        <Stat label="Delta" value={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(3)} BTC` : "—"} hint="net direction" />
-        <Stat label="Gamma" value={g ? g.gamma.toFixed(4) : "—"} hint="convexity" color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
-        <Stat label="Vega" value={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} hint="per vol point" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-        <Stat label="Theta" value={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} hint="daily time decay" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
-      </div>
+      <Stat label="Delta" value={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(3)} BTC` : "—"} hint="net direction" />
+      <Stat label="Gamma" value={g ? g.gamma.toFixed(4) : "—"} hint="convexity" color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
+      <Stat label="Vega" value={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} hint="per vol point" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
+      <Stat label="Theta" value={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} hint="daily time decay" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
     </div>
 
     {/* strategy selector — full width */}
@@ -886,12 +889,16 @@ const VD_CSS = `
   .vd-stat strong { font-family: ${FD}; font-size: 17px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
   .vd-stat-h { font-family: ${FM}; font-size: 9.5px; color: ${C.textMuted}; }
 
-  /* Combined metrics — market context (top row) + your position (bottom row). */
-  .vd-metrics { display: grid; gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 12px; overflow: hidden; }
-  .vd-metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: ${C.border}; }
-  .vd-metrics-row .vd-stat { background: ${C.card}; }
-  .vd-metrics-pos .vd-stat { background: ${C.surface}; }
-  @media (max-width: 1080px) { .vd-metrics-row { grid-template-columns: repeat(2, 1fr); } }
+  /* Metrics bar: 4 market + 4 position stats (left, two rows) + a tall live BTC
+     price cell (right, spanning both rows) — so the price isn't a box up top. */
+  .vd-metrics-bar { display: grid; grid-template-columns: repeat(4, 1fr) minmax(180px, 0.85fr); gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 12px; overflow: hidden; }
+  .vd-metrics-bar > .vd-stat { background: ${C.card}; }
+  .vd-metrics-bar > .vd-stat:nth-child(n+6) { background: ${C.surface}; }
+  .vd-mark-cell { grid-column: 5; grid-row: 1 / 3; background: ${C.card}; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 4px; text-align: right; }
+  .vd-mark-k { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
+  .vd-mark-cell strong { font-family: ${FD}; font-size: 26px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; animation: vd-flash 0.5s ${EASE}; }
+  .vd-mark-v { font-family: ${FM}; font-size: 10px; color: ${C.textMuted}; display: inline-flex; align-items: center; gap: 5px; }
+  @media (max-width: 1080px) { .vd-metrics-bar { grid-template-columns: repeat(2, 1fr); } .vd-mark-cell { grid-column: 1 / -1; grid-row: auto; align-items: flex-start; text-align: left; } }
 
   .vd-err { border: 0.5px solid ${C.red}55; background: ${C.redBg}; border-radius: 10px; padding: 11px 14px; font-family: ${FM}; font-size: 12px; color: ${C.red}; }
 

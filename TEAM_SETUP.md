@@ -18,18 +18,19 @@ cd backend && npm run dev
 # terminal 2 — frontend (port 13100)
 npm run dev
 ```
-Open http://localhost:13100. Backend health: http://localhost:13101/api/sui/status
+Open http://localhost:13100. Backend health: http://localhost:13101/api/health
 
 ## 2. What's already wired (committed in `.env` / `backend/.env`)
 
-- **Supabase** — project `fhklafbywulainknvuyp`, anon key included. 9 bundles /
-  90 live Polymarket legs already seeded; reads + writes work out of the box.
-- **On-chain (Sui testnet)** — the live vault is configured:
-  - `VAULT_PACKAGE_ID` `0xa88c4e60…cdb670`, `VAULT_OBJECT_ID` (shared
-    `Vault<MOCK_USDC>`) `0xeb8402f9…81e3fd`, `VAULT_ADMIN_CAP_ID` `0xafe1cf30…`
-  - mock-USDC package `0xa630b97e…a2af`, TreasuryCap, AdminCap, metadata.
-  - deployer/admin wallet `0x78f0be0d…29ec411`.
-- **Data sources** — Polymarket (Gamma + CLOB), DefiLlama, Sui RPC — all live, no keys needed.
+- **Supabase** — project `fhklafbywulainknvuyp`, anon key included. Bundles + live
+  Polymarket legs already seeded; reads + writes work out of the box.
+- **On-chain (Sui testnet)** — every package + object ID is committed in `backend/.env`
+  and documented in **[`DEPLOYMENT.md`](DEPLOYMENT.md)** (live deploy 2026-06-16:
+  `pelagos_sui` `0x598434be…`, `pelagos_vault` `0xcaff49f8…`, `pelagos_strategies`
+  `0x30932e4e…`, deployer/admin wallet `0xcad0f800…`). DeepBook Predict is Mysten's
+  testnet protocol — we call it, don't deploy it.
+- **Data sources** — DeepBook Predict, Polymarket (Gamma + CLOB), DeFiLlama, Coinbase,
+  Sui RPC — all live, no keys needed.
 
 ## 3. Signing access — everything is in `backend/.env`
 

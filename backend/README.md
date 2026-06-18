@@ -87,4 +87,4 @@ with the configured Sui dev key. Production should replace that with:
 - Persistent portfolio state from indexed chain objects.
 - Sui-native monitor metrics for package health and indexer lag.
 
-See the root `detailed.md` for the full production-readiness plan.
+See the root `README.md` and `ARCHITECTURE.md` for the full product + topology overview.

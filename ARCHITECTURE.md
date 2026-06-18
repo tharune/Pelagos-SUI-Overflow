@@ -1,102 +1,68 @@
-# Pelagos Sui Architecture
+# Pelagos — Architecture
 
-Pelagos packages prediction-market outcomes into structured products and runs
-the local hackathon build against Sui testnet. The product surfaces are market
-baskets, risk slices, protected notes, distribution markets, and portfolio
-views.
+Pelagos packages prediction-market outcomes into structured products on **Sui testnet**, priced off
+real on-chain liquidity (DeepBook Predict + Polymarket CLOB) and minted via **wallet-signed**
+programmable transaction blocks. The backend is a pricing/orchestration layer that builds *unsigned*
+transactions — it never custodies user funds.
 
-## Local Topology
-
-```text
-Next.js frontend :13100
-        |
-        v
-Express API :13101 -------- Polymarket Gamma/CLOB
-        |
-        +---- /api/sui/* ---- Sui CLI ---- Sui testnet package
-        |
-        +---- /api/distribution/* ---- live market discovery + quote engine
-        |
-        +---- monitor :13102 ---- process, API, Sui, and market-filter metrics
-```
-
-The active chain path is Sui:
-
-- Move package: `pelagos_sui/`
-- Testnet package ID: `0xa630b97e9c5f1cd9804553018c9c14cf38a3ce51c341899ba7bc92a5f7c6a2af`
-- Modules: `mock_usdc`, `prediction_market`
-- Backend route prefix: `/api/sui`
-- Frontend mode: `NEXT_PUBLIC_CHAIN=sui`
-
-## Repository Layout
+## Topology
 
 ```text
-app/             Next.js app and product UI
-backend/         Express API, Sui local harness, monitor, pricing services
-pelagos_sui/     Sui Move package and Move tests
-public/          Pelagos visual assets
-README.md        Quickstart and active deployment IDs
-detailed.md      Production-readiness plan
+Next.js frontend  :13100   (forked Next.js; app dir = app/app/)
+      │  wallet-signed PTBs (@mysten/dapp-kit)
+      ▼
+Express API       :13101   ── builds UNSIGNED tx_bytes; non-custodial
+      ├── DeepBook Predict (Mysten testnet) ── range pricing · SVI surface · native settlement
+      ├── Polymarket Gamma + CLOB           ── basket markets + midpoint pricing
+      ├── DeFiLlama                         ── live Sui USDC lending APY (protected notes)
+      ├── Coinbase                          ── BTC candles (backtests)
+      ├── Supabase                          ── persistence (bundles, positions)
+      └── Sui RPC                           ── pelagos_sui / _vault / _strategies moveCalls
+      │
+      └── Monitor   :13102   ── process / API / on-chain / market-filter metrics
 ```
 
-## Local Setup
+## On-chain packages (Sui testnet · chain `4c78adac`)
+
+| Package | Modules | Role |
+|---|---|---|
+| `pelagos_sui` | `mock_usdc`, `prediction_market` | freely-mintable test collateral + binary markets |
+| `pelagos_vault` | `vault` | generic `Vault<T>` (NAV share-price); baskets + Predict-backed wrappers |
+| `pelagos_strategies` | `structured_note` | principal-protection floor + admin settlement |
+| DeepBook Predict (Mysten) | — | range markets we price against + settle on (not deployed by us) |
+
+Deployed IDs live in **`DEPLOYMENT.md`**. Pricing uses the protocol's own `get_range_trade_amounts`
+(real MM bid/ask + slippage); a mintable-band filter ([2%, 98%]) keeps every surfaced bucket actually
+mintable. Settlement is native to DeepBook Predict (oracle settles → permissionless `redeem_range`).
+
+## Backend engines (`backend/src/services`)
+
+- **`options-chain`** — the BTC options chain: each strike priced off DeepBook Predict range liquidity,
+  IV from the live SVI smile, depth/risk caps per strike.
+- **`predict/`** — SVI surface, implied density, range-strip pricing + mint PTBs (the shared core under
+  Distributed Options *and* Volatility).
+- **`volatility`** — prebuilt vol structures + greeks.
+- **`custom-basket` / `baskets` / `market-filter` / `nlp`** — Polymarket discovery → 5-stage NLP quality
+  filter → correlation-decorrelated weighting → tranching.
+- **`deepbook` / `notes` / `notes-allocation`** — prebuilt range strategies + protected-note DeFi-yield sleeve.
+- **`backtest`** — per-strategy backtests on Coinbase candles + Polymarket price history.
+- **`vault/` · `sui` · `pelagos-chain`** — on-chain moveCall / PTB builders.
+
+The live API surface is ~30 route groups mounted under `/api/*` (see `backend/src/index.ts`).
+
+## Frontend (`app/app`)
+
+Forked Next.js (App Router; routes under `app/app/` — see `AGENTS.md`). A global **Basic/Advanced**
+mode (`_lib/mode.tsx`) and **light/dark** theme (`_lib/theme.tsx`) reskin every product; both support a
+`?mode=` / `?theme=` deep-link override. One product page per tab, with typed backend clients in
+`app/app/_lib/`.
+
+## Verify
 
 ```bash
-npm install
-(cd backend && npm install)
-
-cp .env.local.example .env.local
-cp backend/.env.example backend/.env
-```
-
-Confirm the Sui CLI is configured for testnet:
-
-```bash
-sui client active-env
-sui client active-address
-```
-
-Run locally:
-
-```bash
-(cd backend && npm run dev)
-npm run dev
-```
-
-Open:
-
-- Frontend: `http://localhost:13100`
-- Backend status: `http://localhost:13101/api/sui/status`
-- API docs: `http://localhost:13101/api/docs`
-- Monitor: `http://localhost:13102`
-
-## Runtime Responsibilities
-
-The frontend keeps the existing Pelagos UI and branches on
-`NEXT_PUBLIC_CHAIN=sui` for product actions. In Sui mode, basket, risk-slice,
-and protected-note actions call backend `/api/sui/local/basket/*` routes.
-
-The backend is a local Sui testnet harness. It shells out to the Sui CLI using
-`SUI_KEYSTORE_PATH` and `SUI_ACTIVE_ADDRESS`, then signs with the configured dev
-key. Production should replace this with wallet-signed programmable transaction
-blocks and indexed Sui state.
-
-The Move package provides the current testnet primitive:
-
-- `mock_usdc` mints testnet-only mUSDC through a TreasuryCap.
-- `prediction_market` creates binary markets, opens YES/NO position objects,
-  resolves outcomes, and pays winning positions pro rata.
-
-Distribution Markets are built from live Polymarket event groups. The backend
-filters candidates, builds a CLOB-implied reference curve, quotes submitted
-target curves, and returns local launch plans.
-
-## Verification
-
-```bash
-npm run build
-(cd backend && npm run build)
-sui move test --path pelagos_sui
-curl http://localhost:13101/api/sui/status
+(cd app && npx tsc --noEmit)
+(cd backend && npx tsc --noEmit)
+(cd pelagos_strategies && sui move test)
+curl http://localhost:13101/api/health
 curl http://localhost:13102/data
 ```

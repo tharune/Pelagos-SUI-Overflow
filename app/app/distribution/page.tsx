@@ -537,7 +537,9 @@ const OC_CSS = `
   .oc-cells.put { direction: rtl; }
   .oc-cells.put span { text-align: left; direction: ltr; }
   .oc-cells:hover { background: ${C.cardHover}; }
-  .oc-cells.sel { background: ${C.tealLight}1c; box-shadow: inset 0 0 0 1px ${C.tealLight}66; }
+  .oc-cells.sel { background: ${C.tealLight}22; }
+  .oc-cells.call.sel { box-shadow: inset 3px 0 0 ${C.tealLight}; }
+  .oc-cells.put.sel { box-shadow: inset -3px 0 0 ${C.tealLight}; }
   .oc-cells.blackout { cursor: default; opacity: 0.5; }
   .oc-cells.blackout:hover { background: transparent; }
   .oc-cells.blackout span { color: ${C.textMuted}; }

@@ -56,7 +56,10 @@ function shortVenue(m?: BtcMark | null): string {
 export default function VolatilityPage() {
   const wallet = useWalletSigner();
   const [strategy, setStrategy] = useState<VolStrategy>("straddle");
-  const [notional, setNotional] = useState("100");
+  // Institutional default: at $100 the gamma/delta-hedge numbers round to
+  // 0.0000 and the desk reads as dead. A $25k ticket makes the Greeks, the
+  // payoff P&L axis, and the live delta-hedge all read meaningfully.
+  const [notional, setNotional] = useState("25000");
   const [surface, setSurface] = useState<VolDeskSurface | null>(null);
   const [q, setQ] = useState<VolQuote | null>(null);
   const [liveMark, setLiveMark] = useState<BtcMark | null>(null);
@@ -396,7 +399,7 @@ function PayoffDiagram({ quote, markPrice, accent }: { quote: VolQuote | null; m
       {[yMax, 0, yMin].map((v, i) => (
         <g key={i}>
           <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={v === 0 ? 0.9 : 0.4} vectorEffect="non-scaling-stroke" />
-          <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">{v >= 0 ? "+" : ""}{Math.round(v)}</text>
+          <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">{v >= 0 ? "+$" : "-$"}{Math.abs(Math.round(v)).toLocaleString()}</text>
         </g>
       ))}
       {/* profit / loss shading */}

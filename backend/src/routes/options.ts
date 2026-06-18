@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getOptionsChain } from '../services/options-chain';
+import { getOptionsChain, getBandDepth } from '../services/options-chain';
 
 const router = Router();
 
@@ -26,6 +26,32 @@ router.get('/chain', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'no active oracles' });
     }
     console.error('GET /api/options/chain error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
+/**
+ * GET /api/options/depth?oracle_id=…&expiry=…&lower=…&higher=…
+ *
+ * Liquidity-depth / risk cap for ONE strike band. Probes DeepBook Predict at a
+ * ladder of sizes and returns the largest order that stays inside the market-
+ * impact cap (≤15% slippage, ≤98% mintable) AND the pool-capacity cap (≤2% of
+ * available pool liquidity). The UI clamps the order size to `max_contracts` so
+ * a single order can't hammer the book or pump a thin strike.
+ */
+router.get('/depth', async (req: Request, res: Response) => {
+  try {
+    const oracle_id = String(req.query.oracle_id ?? '');
+    const expiry = String(req.query.expiry ?? '');
+    const lower = String(req.query.lower ?? '');
+    const higher = String(req.query.higher ?? '');
+    if (!oracle_id || !expiry || !lower || !higher) {
+      return res.status(400).json({ error: 'oracle_id, expiry, lower, higher are required' });
+    }
+    res.json(await getBandDepth(oracle_id, expiry, lower, higher));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/options/depth error:', err);
     res.status(500).json({ error: message });
   }
 });

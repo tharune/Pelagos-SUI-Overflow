@@ -384,3 +384,129 @@ export async function getOptionsChain(underlying = 'BTC'): Promise<OptionsChain>
   _inflight.set(key, p);
   return p;
 }
+
+// ---------------------------------------------------------------------------
+// LIQUIDITY DEPTH / RISK CAP
+//
+// DeepBook Predict never aborts on order size — it just prices worse against the
+// post-trade vault state (slippage is baked into mint_cost). So to stop anyone
+// hammering the book / pumping a thin strike, we PROBE the band at a ladder of
+// sizes and find the largest order that stays within BOTH:
+//   • a market-impact cap   (avg fill ≤ marginal · (1+SLIP_CAP), and ≤ 98% mintable)
+//   • a pool-capacity cap   (max payout ≤ POOL_FRACTION · available pool liquidity)
+// Extreme-OTM/ITM strikes (marginal already near the band edge, or thin) therefore
+// cap to a tiny size — you can't overwrite a position the pool can't safely back.
+// ---------------------------------------------------------------------------
+
+const DEPTH_LADDER = [1, 10, 50, 200, 800, 3200, 12800, 51200]; // contracts ($1 each)
+const SLIP_CAP = 0.15; // avg fill price ≤ marginal × 1.15 (≤15% market impact)
+const POOL_FRACTION = 0.02; // one order's max payout ≤ 2% of available pool liquidity
+const DEPTH_CACHE_TTL_MS = 4_000;
+
+export interface BandDepth {
+  oracle_id: string;
+  lower: string;
+  higher: string;
+  marginal_price: number; // per-contract ask at 1 contract (0..1)
+  max_contracts: number; // largest safe order size (whole contracts)
+  binding: 'slippage' | 'mintable' | 'pool' | 'depth-floor' | 'none';
+  pool_capacity_contracts: number; // POOL_FRACTION · available liquidity ($ = contracts)
+  slip_cap: number;
+  ladder: Array<{ contracts: number; avg_price: number; slippage_pct: number; ok: boolean }>;
+}
+
+let _vaultCap: { at: number; contracts: number } = { at: 0, contracts: Infinity };
+async function poolCapacityContracts(): Promise<number> {
+  if (Date.now() - _vaultCap.at < 30_000) return _vaultCap.contracts;
+  try {
+    const vs = (await predictServer.vaultSummary()) as Record<string, unknown>;
+    const availRaw = Number(vs.available_liquidity ?? vs.vault_value ?? 0);
+    const avail = Number.isFinite(availRaw) && availRaw > 0 ? availRaw / DUSDC_UNIT : 0; // $
+    const contracts = avail > 0 ? POOL_FRACTION * avail : Infinity; // 1 contract = $1 max payout
+    _vaultCap = { at: Date.now(), contracts };
+    return contracts;
+  } catch {
+    return _vaultCap.contracts;
+  }
+}
+
+const _depthCache = new Map<string, { at: number; depth: BandDepth }>();
+
+export async function getBandDepth(
+  oracleId: string,
+  expiry: string,
+  lower: string,
+  higher: string,
+): Promise<BandDepth> {
+  const key = `${oracleId}|${lower}|${higher}`;
+  const hit = _depthCache.get(key);
+  if (hit && Date.now() - hit.at < DEPTH_CACHE_TTL_MS) return hit.depth;
+
+  const poolCap = await poolCapacityContracts();
+  const bands = DEPTH_LADDER.map((c) => ({ lower, higher, quantity: BigInt(c) * CONTRACT_QTY }));
+  const priced = await previewRangeBatch({ oracleId, expiry: String(expiry), bands });
+
+  const avgAt = (i: number): number => {
+    const p = priced[i];
+    const c = DEPTH_LADDER[i];
+    return p && p.ok && c > 0 ? Number(p.mint_cost) / DUSDC_UNIT / c : NaN;
+  };
+  const marginal = avgAt(0);
+  // Cap on the average fill: never exceed the mintable ceiling, and never let a
+  // sized order push the average more than SLIP_CAP above the marginal.
+  const priceLimit = Number.isFinite(marginal) && marginal > 0
+    ? Math.min(MAX_MINTABLE, marginal * (1 + SLIP_CAP))
+    : MAX_MINTABLE;
+
+  const ladder = DEPTH_LADDER.map((c, i) => {
+    const avg = avgAt(i);
+    const slip = Number.isFinite(avg) && marginal > 0 ? avg / marginal - 1 : 0;
+    const ok = Number.isFinite(avg) && avg <= priceLimit + 1e-9 && c <= poolCap;
+    return {
+      contracts: c,
+      avg_price: Number.isFinite(avg) ? Number(avg.toFixed(4)) : 0,
+      slippage_pct: Number((slip * 100).toFixed(1)),
+      ok,
+    };
+  });
+
+  // Largest passing ladder point; then linearly interpolate to the first failing
+  // point on the avg-price curve to recover a tight (not just ladder-snapped) cap.
+  let lastPass = -1;
+  for (let i = 0; i < ladder.length; i++) if (ladder[i].ok) lastPass = i; else break;
+
+  let maxContracts: number;
+  let binding: BandDepth['binding'] = 'none';
+  if (lastPass < 0) {
+    maxContracts = 1; // even 1 contract is at the edge — allow the minimum
+    binding = 'depth-floor';
+  } else if (lastPass === ladder.length - 1) {
+    maxContracts = Math.floor(Math.min(DEPTH_LADDER[lastPass], poolCap));
+    binding = poolCap <= DEPTH_LADDER[lastPass] ? 'pool' : 'none';
+  } else {
+    const qLo = DEPTH_LADDER[lastPass];
+    const qHi = DEPTH_LADDER[lastPass + 1];
+    const aLo = avgAt(lastPass);
+    const aHi = avgAt(lastPass + 1);
+    let interp = qHi;
+    if (Number.isFinite(aLo) && Number.isFinite(aHi) && aHi > aLo) {
+      interp = qLo + ((priceLimit - aLo) / (aHi - aLo)) * (qHi - qLo);
+    }
+    maxContracts = Math.max(1, Math.floor(Math.min(interp, poolCap)));
+    binding = poolCap <= interp ? 'pool' : (priceLimit >= MAX_MINTABLE ? 'mintable' : 'slippage');
+  }
+
+  const depth: BandDepth = {
+    oracle_id: oracleId,
+    lower,
+    higher,
+    marginal_price: Number.isFinite(marginal) ? Number(marginal.toFixed(4)) : 0,
+    max_contracts: maxContracts,
+    binding,
+    pool_capacity_contracts: Number.isFinite(poolCap) ? Math.floor(poolCap) : 0,
+    slip_cap: SLIP_CAP,
+    ladder,
+  };
+  _depthCache.set(key, { at: Date.now(), depth });
+  return depth;
+}

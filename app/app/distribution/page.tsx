@@ -21,10 +21,12 @@ import {
 } from "../_lib/predict-strip-client";
 import {
   fetchOptionsChain,
+  fetchBandDepth,
   type OptionsChain,
   type OptionExpiry,
   type OptionStrike,
   type OptionQuote,
+  type BandDepth,
 } from "../_lib/v2-clients";
 
 const usd = (v: number) => `$${v.toFixed(2)}`;
@@ -77,6 +79,7 @@ function BasicOptionsChain() {
   const [stage, setStage] = useState<string | null>(null);
   const [result, setResult] = useState<{ digest: string } | null>(null);
   const [openErr, setOpenErr] = useState<string | null>(null);
+  const [depth, setDepth] = useState<BandDepth | null>(null);
 
   // Poll the live chain every 10s so marks/IV stay fresh.
   useEffect(() => {
@@ -127,6 +130,22 @@ function BasicOptionsChain() {
   const selQuote: OptionQuote | null = selStrike ? selStrike[sel!.side] : null;
   const selExp = sel && chain ? chain.expiries[sel.expiryIdx] : null;
 
+  // Live liquidity-depth / risk cap for the selected band. Re-fetched only when the
+  // strike/side (band) changes — not on every 3s chain poll (server-cached too).
+  const selLower = selQuote?.lower_strike;
+  const selHigher = selQuote?.higher_strike;
+  const selOracle = selExp?.oracle_id;
+  useEffect(() => {
+    if (!selOracle || !selExp || !selLower || !selHigher || !selQuote?.tradeable) { setDepth(null); return; }
+    let alive = true;
+    setDepth(null);
+    fetchBandDepth({ oracle_id: selOracle, expiry: selExp.expiry, lower: selLower, higher: selHigher })
+      .then((d) => { if (alive) setDepth(d); })
+      .catch(() => { if (alive) setDepth(null); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selOracle, selLower, selHigher]);
+
   const pickStrike = useCallback((strikeIdx: number, side: Side) => {
     // Guard: never select an infeasible (non-mintable) strike, even if a stray
     // click reaches here — the ticket should only ever load a tradeable contract.
@@ -155,6 +174,10 @@ function BasicOptionsChain() {
   const nContracts = Math.max(0, Math.floor(Number(contracts) || 0));
   const orderCost = selQuote ? selQuote.ask * nContracts : 0; // dUSDC you pay (ask × qty)
   const maxGain = Math.max(0, nContracts - orderCost); // net profit if it settles ITM
+  // Liquidity-depth / risk cap: the pool can't safely back more than this in one
+  // order (≤15% market impact AND ≤2% of available pool liquidity).
+  const maxContracts = depth?.max_contracts ?? null;
+  const overCap = maxContracts != null && nContracts > maxContracts;
   // ITM / OTM / ATM for the selected leg. For a $1 binary the mid IS ~P(pays), so
   // mid>0.5 ⟺ in-the-money (high probability, high cost, low convexity).
   const moneyState: "ITM" | "OTM" | "ATM" =
@@ -166,6 +189,10 @@ function BasicOptionsChain() {
   async function openStrike() {
     if (!selExp || !selQuote || !selStrike || !openable || busy) return;
     if (nContracts < 1) { setOpenErr("Enter a whole number of contracts (minimum 1)."); return; }
+    if (maxContracts != null && nContracts > maxContracts) {
+      setOpenErr(`Order exceeds pool depth — max ${maxContracts.toLocaleString()} contracts for this strike.`);
+      return;
+    }
     setBusy(true); setOpenErr(null); setResult(null);
     try {
       setStage("Preparing manager…");
@@ -345,7 +372,12 @@ function BasicOptionsChain() {
                   {openable ? (
                     <>
                       <div className="oc-budget">
-                        <span className="oc-tkt-cap">Contracts · whole only</span>
+                        <div className="oc-budget-cap">
+                          <span className="oc-tkt-cap">Contracts · whole only</span>
+                          {maxContracts != null && (
+                            <span className={`oc-depth${overCap ? " over" : ""}`}>max {maxContracts.toLocaleString()} · pool depth</span>
+                          )}
+                        </div>
                         <div className="oc-budget-in">
                           <input inputMode="numeric" value={contracts} onChange={(e) => setContracts(e.target.value.replace(/[^0-9]/g, ""))} placeholder="1" />
                           <span>× $1 payout</span>
@@ -356,16 +388,11 @@ function BasicOptionsChain() {
                         <Info k="Max gain" v={`$${maxGain.toFixed(2)} dUSDC`} />
                         <Info k="Max loss" v={`$${orderCost.toFixed(2)} dUSDC`} />
                       </div>
-                      {moneyState === "ITM" && (
-                        <p className="oc-note oc-warn">
-                          Deep in-the-money: BTC is ~{(liveMid * 100).toFixed(0)}% likely to settle this side of {strikeFmt(selStrike.strike)} by expiry, so a $1 payout fairly costs ${px(liveMid)}. You risk ${orderCost.toFixed(2)} to make ${maxGain.toFixed(2)} — correctly priced, but low convexity. For more upside, pick a strike nearer or past the forward.
-                        </p>
-                      )}
                       {!wallet.connected ? (
                         <ConnectModal trigger={<button className="oc-open">Connect a wallet to trade</button>} />
                       ) : (
-                        <button className="oc-open" disabled={busy || nContracts < 1} onClick={openStrike} style={{ opacity: busy || nContracts < 1 ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
-                          {busy ? (stage ?? "Submitting…") : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
+                        <button className="oc-open" disabled={busy || nContracts < 1 || overCap} onClick={openStrike} style={{ opacity: busy || nContracts < 1 || overCap ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
+                          {busy ? (stage ?? "Submitting…") : overCap ? `Exceeds pool depth · max ${maxContracts!.toLocaleString()}` : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
                       )}
                       <p className="oc-note">Buys {nContracts} whole {sel!.side} {nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.</p>
@@ -495,7 +522,7 @@ const OC_CSS = `
   .oc-colhead { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 0 14px; }
   .oc-colhead span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; text-align: right; }
   .oc-colhead.put { direction: rtl; }
-  .oc-colhead.put span { direction: ltr; text-align: right; }
+  .oc-colhead.put span { direction: ltr; text-align: left; }
   .oc-cols .oc-kcol { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; text-align: center; }
 
   .oc-rows { display: grid; }
@@ -508,7 +535,7 @@ const OC_CSS = `
   .oc-cells span { font-family: ${FM}; font-size: 12px; }
   .oc-cells.call span { text-align: right; }
   .oc-cells.put { direction: rtl; }
-  .oc-cells.put span { text-align: right; direction: ltr; }
+  .oc-cells.put span { text-align: left; direction: ltr; }
   .oc-cells:hover { background: ${C.cardHover}; }
   .oc-cells.sel { background: ${C.tealLight}1c; box-shadow: inset 0 0 0 1px ${C.tealLight}66; }
   .oc-cells.blackout { cursor: default; opacity: 0.5; }
@@ -562,6 +589,9 @@ const OC_CSS = `
   .oc-info b { font-family: ${FD}; font-size: 12.5px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
 
   .oc-budget { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 10px 13px; display: grid; gap: 6px; }
+  .oc-budget-cap { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .oc-depth { font-family: ${FM}; font-size: 9px; letter-spacing: 0.04em; color: ${C.textMuted}; white-space: nowrap; }
+  .oc-depth.over { color: ${C.amber}; }
   .oc-budget-in { display: flex; align-items: baseline; gap: 8px; }
   .oc-budget-in input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 20px; font-weight: 600; padding: 0; }
   .oc-budget-in span { font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
@@ -616,6 +646,7 @@ function AdvancedDistribution() {
   const [markets, setMarkets] = useState<DeepBookMarket[]>([]);
   const [marketId, setMarketId] = useState<string | null>(null);
   const [poolTvl, setPoolTvl] = useState<number | null>(null);
+  const [poolCapUsd, setPoolCapUsd] = useState<number | null>(null); // 2% of available pool liquidity
   const [mu, setMu] = useState(0);
   const [sigma, setSigma] = useState(0);
   const [budget, setBudget] = useState("100");
@@ -657,7 +688,13 @@ function AdvancedDistribution() {
       .catch((e) => setLoadErr(e instanceof Error ? e.message : String(e)));
     fetch(`${BACKEND_URL}/api/predict/vault/summary`)
       .then((r) => r.json())
-      .then((v) => { if (v && typeof v.vault_value === "number") setPoolTvl(v.vault_value / 1e6); })
+      .then((v) => {
+        if (v && typeof v.vault_value === "number") setPoolTvl(v.vault_value / 1e6);
+        // Same risk cap as the Basic chain: one position's max payout ≤ 2% of the
+        // pool's available liquidity, so a custom strip can't over-extend the book.
+        const avail = Number(v?.available_liquidity ?? v?.vault_value);
+        if (Number.isFinite(avail) && avail > 0) setPoolCapUsd((avail / 1e6) * 0.02);
+      })
       .catch(() => {});
   }, []);
 
@@ -705,7 +742,11 @@ function AdvancedDistribution() {
 
   const tradeable = quote ? quote.buckets.filter((b) => b.tradeable && Number(b.quantity) > 0).length : 0;
   const flat = !quote || tradeable === 0;
-  const canOpen = wallet.connected && !!quote && !flat && !busy;
+  // Pool-depth / risk cap (same as Basic): the strip's total max payout — the
+  // pool's liability if it lands worst-case — must stay ≤ 2% of available liquidity.
+  const stripMaxPayout = quote ? r6(quote.total_max_payout_raw) : 0;
+  const overPoolCap = poolCapUsd != null && stripMaxPayout > poolCapUsd;
+  const canOpen = wallet.connected && !!quote && !flat && !busy && !overPoolCap;
 
   const lock = quote ? r6(quote.total_cost_raw) : 0;
   const maxProfit = quote ? r6(quote.realized_max_payout_raw) - r6(quote.total_cost_raw) : 0;
@@ -713,6 +754,7 @@ function AdvancedDistribution() {
 
   async function open() {
     if (!market || !quote) return;
+    if (overPoolCap) { setError(`Strip max payout ($${stripMaxPayout.toFixed(0)}) exceeds pool depth — reduce budget (max ≈ $${poolCapUsd!.toFixed(0)}).`); return; }
     setBusy(true);
     setError(null);
     setResult(null);
@@ -881,7 +923,7 @@ function AdvancedDistribution() {
                 <ConnectModal trigger={<button className="dc-open" style={{ marginTop: 18, cursor: "pointer" }}>Connect a wallet to trade</button>} />
               ) : (
                 <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
-                  {busy ? stage ?? "Submitting…" : flat ? "Widen σ to build a tradeable strip" : `Open strip · lock ${quote ? usd(lock) : ""}`}
+                  {busy ? stage ?? "Submitting…" : flat ? "Widen σ to build a tradeable strip" : overPoolCap ? `Exceeds pool depth · reduce budget` : `Open strip · lock ${quote ? usd(lock) : ""}`}
                 </button>
               )}
 

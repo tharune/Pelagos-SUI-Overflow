@@ -42,6 +42,21 @@ export function fetchOptionsChain(underlying = "BTC"): Promise<OptionsChain> {
   return getJson<OptionsChain>(`/api/options/chain?underlying=${encodeURIComponent(underlying)}`);
 }
 
+// Liquidity-depth / risk cap for one strike band — the largest order the pool can
+// safely back (≤15% market impact, ≤2% of available pool liquidity). The UI clamps
+// the order size to `max_contracts` so nobody can hammer the book or pump a strike.
+export type BandDepth = {
+  oracle_id: string; lower: string; higher: string;
+  marginal_price: number; max_contracts: number;
+  binding: "slippage" | "mintable" | "pool" | "depth-floor" | "none";
+  pool_capacity_contracts: number; slip_cap: number;
+  ladder: { contracts: number; avg_price: number; slippage_pct: number; ok: boolean }[];
+};
+export function fetchBandDepth(p: { oracle_id: string; expiry: string | number; lower: string; higher: string }): Promise<BandDepth> {
+  const q = `oracle_id=${encodeURIComponent(p.oracle_id)}&expiry=${encodeURIComponent(String(p.expiry))}&lower=${encodeURIComponent(p.lower)}&higher=${encodeURIComponent(p.higher)}`;
+  return getJson<BandDepth>(`/api/options/depth?${q}`);
+}
+
 // ───────────────────────── Custom baskets (Baskets · Advanced) ────────────────
 export type CustomTheme = { id: string; label: string; description: string; tier: 90 | 50; keywords: string[] };
 export type CustomLeg = {

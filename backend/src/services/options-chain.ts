@@ -38,7 +38,9 @@ const PRICE_SCALE = 1_000_000_000; // 1e9 strike / forward / SVI fixed-point
 const DUSDC_UNIT = 1_000_000; // 1e6 raw dUSDC; 1 contract (1e6 qty) pays $1
 const CONTRACT_QTY = 1_000_000n; // 1 contract
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
-const MAX_EXPIRIES = 12;
+// Span the FULL tenor ladder DeepBook lists (minutes → hours → days), one pill
+// per distinct tenor. Testnet currently lists ~5m … 22d.
+const MAX_EXPIRIES = 16;
 const CACHE_TTL_MS = 4_000;
 
 const STRIKE_STEPS = 13;
@@ -189,15 +191,26 @@ export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChai
   const want = underlying.toUpperCase();
 
   const all = await predictServer.predictOracles().catch(() => predictServer.oracles());
-  const active = all
+  const sorted = all
     .filter(
       (o: PredictOracle) =>
         o.status === 'active' &&
         o.expiry > now &&
         (o.underlying_asset ?? '').toUpperCase() === want,
     )
-    .sort((a, b) => a.expiry - b.expiry)
-    .slice(0, MAX_EXPIRIES);
+    .sort((a, b) => a.expiry - b.expiry);
+  // Build a tenor ladder spanning minutes → hours → days: one oracle per distinct
+  // human tenor label (the indexer lists several oracles at the same tenor, e.g.
+  // three "2h" / two "8d"), so the expiry row is a clean, full-range ladder.
+  const active: PredictOracle[] = [];
+  const seenTenor = new Set<string>();
+  for (const o of sorted) {
+    const lab = tenorLabel(o.expiry - now);
+    if (seenTenor.has(lab)) continue;
+    seenTenor.add(lab);
+    active.push(o);
+    if (active.length >= MAX_EXPIRIES) break;
+  }
 
   const expiries: OptionExpiry[] = [];
   let spot = 0;
@@ -229,20 +242,27 @@ export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChai
         forward * atmIv * Math.sqrt(Math.max(tYears, 1e-9)),
         forward * 2e-4,
       );
+      const minStrikeUsd = o.min_strike / PRICE_SCALE;
+      const tickUsd = (o.tick_size || PRICE_SCALE) / PRICE_SCALE;
+      // Strikes span forward ± 3σ, clamped on-grid above the oracle's min strike
+      // (far-dated oracles have −3σ below the $50k floor).
+      const hiUsd = forward + GRID_SIGMA * sigmaUsd;
+      const loUsd = Math.max(minStrikeUsd + tickUsd, forward - GRID_SIGMA * sigmaUsd);
+      // Digital wings: call [K, F+4σ], put [floor, K]. Floor sits BELOW the lowest
+      // strike so [floor, K] is always a valid, non-empty range.
       const farRaw = snapStrikeToGrid(o, Math.round((forward + WING_SIGMA * sigmaUsd) * PRICE_SCALE));
       const floorRaw = Math.max(
         o.min_strike,
-        snapStrikeToGrid(o, Math.round((forward - WING_SIGMA * sigmaUsd) * PRICE_SCALE)),
+        snapStrikeToGrid(o, Math.round(Math.min(loUsd, forward - WING_SIGMA * sigmaUsd) * PRICE_SCALE)),
       );
 
       type StrikeDef = { strike: number; moneyness: number; kRaw: number; iv: number };
       const defs: StrikeDef[] = [];
       const seenK = new Set<number>();
-      const loUsd = forward - GRID_SIGMA * sigmaUsd;
-      const stepUsd = (2 * GRID_SIGMA * sigmaUsd) / (STRIKE_STEPS - 1);
+      const stepUsd = (hiUsd - loUsd) / (STRIKE_STEPS - 1);
       for (let i = 0; i < STRIKE_STEPS; i++) {
         const kRaw = snapStrikeToGrid(o, Math.round((loUsd + i * stepUsd) * PRICE_SCALE));
-        if (seenK.has(kRaw)) continue; // σ tiny → grid points collapsed; keep distinct
+        if (seenK.has(kRaw) || kRaw <= floorRaw || kRaw >= farRaw) continue; // distinct, valid range
         seenK.add(kRaw);
         const strike = kRaw / PRICE_SCALE;
         const iv = sviImpliedVol(params, Math.log(Math.max(strike, 1) / forward), tYears);

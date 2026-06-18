@@ -400,15 +400,16 @@ function Grk({ k, v, accent }: { k: string; v: string; accent?: string }) {
 function Info({ k, v }: { k: string; v: string }) {
   return <div className="oc-info"><span>{k}</span><b>{v}</b></div>;
 }
-// Greeks like gamma/vega/theta can be astronomically small (1e-259) near expiry.
-// Render those as a clean 0, scientific only when meaningfully nonzero.
+// Greek display: ALWAYS a plain decimal, never scientific notation — a small
+// vega should read "0.0018", not "1.8e-3". Trailing zeros trimmed; truly
+// negligible values collapse to a clean "0".
 function fmtSmall(v: number): string {
   if (!Number.isFinite(v)) return "—";
   const a = Math.abs(v);
-  if (a < 1e-6) return "0.00";
-  if (a < 0.01) return v.toExponential(1);
-  if (a < 1) return v.toFixed(4);
-  return v.toFixed(2);
+  if (a < 5e-8) return "0";
+  if (a >= 1) return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(4);
+  return v.toFixed(7).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 const OC_CSS = `

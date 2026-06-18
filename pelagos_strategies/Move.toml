@@ -1,0 +1,8 @@
+[package]
+name = "pelagos_strategies"
+edition = "2024"
+
+[dependencies]
+
+[addresses]
+pelagos_strategies = "0x0"

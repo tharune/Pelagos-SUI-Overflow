@@ -154,6 +154,11 @@ function BasicOptionsChain() {
   // Whole contracts only — 1 contract pays $1 if in-the-money.
   const nContracts = Math.max(0, Math.floor(Number(contracts) || 0));
   const orderCost = selQuote ? selQuote.ask * nContracts : 0; // dUSDC you pay (ask × qty)
+  const maxGain = Math.max(0, nContracts - orderCost); // net profit if it settles ITM
+  // ITM / OTM / ATM for the selected leg. For a $1 binary the mid IS ~P(pays), so
+  // mid>0.5 ⟺ in-the-money (high probability, high cost, low convexity).
+  const moneyState: "ITM" | "OTM" | "ATM" =
+    liveMid >= 0.56 ? "ITM" : liveMid <= 0.44 ? "OTM" : "ATM";
 
   // --- Open flow: mint EXACTLY this contract's live on-chain range band at `n`
   // whole contracts (the quote's [lower,higher] from get_range_trade_amounts),
@@ -261,9 +266,12 @@ function BasicOptionsChain() {
                         <button
                           className={`oc-k${isAtm ? " atm" : ""}`}
                           onClick={() => {
-                            // Pick the natural side for this strike, but only if it's
-                            // tradeable; fall back to the other tradeable side, else no-op.
-                            const pref: Side = s.moneyness <= 1 ? "call" : "put";
+                            // Default to the OUT-of-the-money (convex) side at this
+                            // strike: above the forward → the cheap OTM CALL; below →
+                            // the cheap OTM PUT. Buying the ITM side is a low-convexity
+                            // trade (pay ~$0.9 to win ~$0.1) — you can still click that
+                            // cell directly, but a strike click shouldn't default there.
+                            const pref: Side = s.moneyness >= 1 ? "call" : "put";
                             const chosen: Side | null = s[pref].tradeable
                               ? pref
                               : s.call.tradeable ? "call" : s.put.tradeable ? "put" : null;
@@ -301,6 +309,7 @@ function BasicOptionsChain() {
                       <div className="oc-tkt-title">
                         <span className={`oc-badge ${sel!.side}`}>{sel!.side === "call" ? "CALL" : "PUT"}</span>
                         BTC {strikeFmt(selStrike.strike)} · {selExp.tenor_label}
+                        <span className={`oc-mny ${moneyState.toLowerCase()}`}>{moneyState}</span>
                       </div>
                     </div>
                     {!openable && <span className="oc-indicative">indicative</span>}
@@ -344,9 +353,14 @@ function BasicOptionsChain() {
                       </div>
                       <div className="oc-rows-info">
                         <Info k="Cost · ask × qty" v={`$${orderCost.toFixed(2)} dUSDC`} />
-                        <Info k="Max payout" v={`$${nContracts.toLocaleString()}.00 dUSDC`} />
+                        <Info k="Max gain" v={`$${maxGain.toFixed(2)} dUSDC`} />
                         <Info k="Max loss" v={`$${orderCost.toFixed(2)} dUSDC`} />
                       </div>
+                      {moneyState === "ITM" && (
+                        <p className="oc-note oc-warn">
+                          Deep in-the-money: BTC is ~{(liveMid * 100).toFixed(0)}% likely to settle this side of {strikeFmt(selStrike.strike)} by expiry, so a $1 payout fairly costs ${px(liveMid)}. You risk ${orderCost.toFixed(2)} to make ${maxGain.toFixed(2)} — correctly priced, but low convexity. For more upside, pick a strike nearer or past the forward.
+                        </p>
+                      )}
                       {!wallet.connected ? (
                         <ConnectModal trigger={<button className="oc-open">Connect a wallet to trade</button>} />
                       ) : (
@@ -497,7 +511,7 @@ const OC_CSS = `
   .oc-cells.put span { text-align: right; direction: ltr; }
   .oc-cells:hover { background: ${C.cardHover}; }
   .oc-cells.sel { background: ${C.tealLight}1c; box-shadow: inset 0 0 0 1px ${C.tealLight}66; }
-  .oc-cells.blackout { cursor: default; opacity: 0.26; }
+  .oc-cells.blackout { cursor: default; opacity: 0.5; }
   .oc-cells.blackout:hover { background: transparent; }
   .oc-cells.blackout span { color: ${C.textMuted}; }
   .oc-mid { color: ${C.textPrimary}; font-weight: 500; }
@@ -512,15 +526,20 @@ const OC_CSS = `
   .oc-chain-foot { padding: 9px 14px; border-top: 0.5px solid ${C.border}; font-family: ${FM}; font-size: 10px; line-height: 1.5; color: ${C.textMuted}; background: ${C.surface}; }
 
   /* ticket */
-  .oc-ticket { padding: 15px 16px; display: grid; gap: 13px; align-content: start; }
+  .oc-ticket { padding: 12px 16px 16px; display: grid; gap: 13px; align-content: start; }
   .oc-tkt-cap { font-family: ${FM}; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: ${C.textMuted}; }
-  .oc-ticket-empty { display: grid; gap: 10px; padding: 8px 0; }
+  .oc-ticket-empty { display: grid; gap: 10px; padding: 0 0 8px; }
   .oc-ticket-empty p { margin: 0; font-family: ${FS}; font-size: 12.5px; line-height: 1.55; color: ${C.textSecondary}; }
   .oc-tkt-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   .oc-tkt-title { margin-top: 6px; font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
   .oc-badge { font-family: ${FM}; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; padding: 3px 7px; border-radius: 5px; }
   .oc-badge.call { color: ${C.green}; background: ${C.green}1c; }
   .oc-badge.put { color: ${C.violet}; background: ${C.violet}22; }
+  .oc-mny { font-family: ${FM}; font-size: 8.5px; font-weight: 600; letter-spacing: 0.08em; padding: 2px 6px; border-radius: 4px; margin-left: 2px; }
+  .oc-mny.itm { color: ${C.amber}; background: ${C.amber}1f; }
+  .oc-mny.otm { color: ${C.teal}; background: ${C.teal}1f; }
+  .oc-mny.atm { color: ${C.textSecondary}; background: ${C.textMuted}1f; }
+  .oc-note.oc-warn { color: ${C.amber}; border-left: 2px solid ${C.amber}66; padding-left: 9px; }
   .oc-indicative { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.amber}; border: 0.5px solid ${C.amber}66; background: ${C.amber}14; border-radius: 5px; padding: 3px 7px; white-space: nowrap; }
 
   .oc-quote { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 12px 14px; display: grid; gap: 10px; }
@@ -615,7 +634,7 @@ function AdvancedDistribution() {
   useEffect(() => {
     fetchVolSurface("BTC")
       .then((s) => {
-        const T_MIN = 300 / 31_557_600;
+        const T_MIN = (12 * 60) / 31_557_600; // 12-min floor — same market set as Basic
         const mk: DeepBookMarket[] = s.slices
           .filter((sl) => sl.t_years > T_MIN)
           .map((sl) => ({

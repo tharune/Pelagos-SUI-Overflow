@@ -284,8 +284,9 @@ function BasicDesk(p: DeskProps) {
   const horizonSlice = sliceForHorizon(surface, horizon);
 
   return (
+    <>
     <div className="vd-grid">
-      {/* LEFT */}
+      {/* LEFT — strategy, controls, payoff */}
       <div className="vd-main">
         {/* strategy selector */}
         <div className="vd-card vd-strats">
@@ -338,37 +339,39 @@ function BasicDesk(p: DeskProps) {
           <PayoffDiagram quote={q} markPrice={p.markPrice} accent={accent} />
         </div>
 
-        {/* greeks */}
-        <div className="vd-card vd-greeks">
-          <Greek sym="Δ" name="Delta" val={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
-          <Greek sym="Γ" name="Gamma" val={g ? g.gamma.toFixed(5) : "—"} color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
-          <Greek sym="ν" name="Vega" val={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} unit="/pt" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-          <Greek sym="Θ" name="Theta" val={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} unit="/day" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
-        </div>
-
-        {/* structure legs */}
-        <div className="vd-card vd-legs">
-          <div className="vd-card-head"><Cap>Structure · {tradeable} legs</Cap><span className="vd-dim">range strikes on Sui</span></div>
-          <div className="vd-legs-table">
-            <div className="vd-leg vd-leg-h"><span>Strike band</span><span>Contracts</span><span>Cost</span><span>Pays</span></div>
-            {q ? q.strip.buckets.filter((b) => b.tradeable).map((b, i) => (
-              <div className="vd-leg" key={i}>
-                <span className="vd-leg-band">{dollars(b.lower_usd)}–{dollars(b.higher_usd)}</span>
-                <span>{(Number(b.quantity) / 1e6).toFixed(0)}</span>
-                <span>{usd(b.mint_cost_raw)}</span>
-                <span style={{ color: accent }}>{usd(b.max_payout_raw)}</span>
-              </div>
-            )) : <div className="vd-leg-empty">pricing…</div>}
-          </div>
-        </div>
       </div>
 
-      {/* RIGHT */}
+      {/* RIGHT — hedge + ticket */}
       <div className="vd-side">
         <HedgePanel {...p} />
         <TicketPanel {...p} />
       </div>
     </div>
+
+    {/* greeks — full-width strip under the balanced two-column region */}
+    <div className="vd-card vd-greeks">
+      <Greek sym="Δ" name="Delta" val={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
+      <Greek sym="Γ" name="Gamma" val={g ? g.gamma.toFixed(5) : "—"} color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
+      <Greek sym="ν" name="Vega" val={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} unit="/pt" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
+      <Greek sym="Θ" name="Theta" val={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} unit="/day" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+    </div>
+
+    {/* structure legs — full-width */}
+    <div className="vd-card vd-legs">
+      <div className="vd-card-head"><Cap>Structure · {tradeable} legs</Cap><span className="vd-dim">range strikes on Sui</span></div>
+      <div className="vd-legs-table">
+        <div className="vd-leg vd-leg-h"><span>Strike band</span><span>Contracts</span><span>Cost</span><span>Pays</span></div>
+        {q ? q.strip.buckets.filter((b) => b.tradeable).map((b, i) => (
+          <div className="vd-leg" key={i}>
+            <span className="vd-leg-band">{dollars(b.lower_usd)}–{dollars(b.higher_usd)}</span>
+            <span>{(Number(b.quantity) / 1e6).toFixed(0)}</span>
+            <span>{usd(b.mint_cost_raw)}</span>
+            <span style={{ color: accent }}>{usd(b.max_payout_raw)}</span>
+          </div>
+        )) : <div className="vd-leg-empty">pricing…</div>}
+      </div>
+    </div>
+    </>
   );
 }
 

@@ -14,9 +14,16 @@ codebase. Read this first, then `AGENTS.md` (it warns the Next.js fork is non-st
   RPC + signer + vault + DeepBook Predict pricing all verified on-chain; Polymarket live; the whole
   pricing surface is wired to **real live data** (only MM spreads / synthetic-market outcomes are
   simulated, and they're labeled).
-- **Recently rebuilt:** the **Volatility desk** (`/app/volatility`) — wide institutional layout, 4
-  structured option strategies, options payoff diagram, live-ticking hedge. **Mid (70) tier restored**
-  to Baskets + Risk Slices. **"DeepBook Predict" branding removed** from user-facing labels.
+- **Recently rebuilt (latest session):** Event Baskets now build **on the backend** (`GET /api/baskets`
+  / `/:id`, service `backend/src/services/baskets.ts`) from a ~1,200-market live universe, pricing
+  **every constituent leg off the Polymarket CLOB midpoint** (batched `POST clob.polymarket.com/midpoints`,
+  BBO→Gamma fallback). Frontend `useLiveBaskets` fetches that; the old client `buildLiveBaskets` is now a
+  fallback only. The **MID (tier 70) basket tier was fully retired** — Baskets + Risk Slices ship High/Low
+  only (2×3 = 6 baskets). **Volatility desk** default notional is now **$25k** (at $100 every Greek/hedge
+  read 0.0000). A full screenshot QA sweep fixed docs MID copy, the basket-detail constituents table
+  (all legs, scrollable), landing $-billions formatting, the DeepBook EXPIRY column, the junior-APY
+  "300%+" cap label, and assorted polish.
+- **Earlier:** Volatility desk build, "DeepBook Predict" de-branding.
 - **Conventions (do not break):** commit + push every change to `sui/Tharun-Pelagos`, author
   "Tharun Ekambaram", **NEVER add Claude/AI co-author or "Generated with" trailers**. Mac is
   disk-constrained — never write large data locally.
@@ -147,8 +154,12 @@ simulated, and they're labeled.**
 **LIVE (real):**
 - **DeepBook Predict pricing** — real `get_range_trade_amounts` devInspect (strips, vol legs, term
   baskets, PPN upside). The vol leg + Distribution + Baskets-term all price on-chain.
-- **Polymarket** — Gamma markets + CLOB books. `getMarketProbability` (live odds) drives bundle NAV;
-  `getPolymarketBasketNAVs` is volume-weighted live (no jitter).
+- **Polymarket** — Gamma markets + CLOB books. `getMarketProbability` (live odds) drives bundle NAV.
+- **Event Baskets (`GET /api/baskets`)** — `backend/src/services/baskets.ts` buckets the live universe
+  into 6 baskets (High/Low × Short/Med/Long) and prices **every constituent leg off the CLOB midpoint**
+  (`POST clob.polymarket.com/midpoints`, batched; BBO→Gamma fallback). Each leg carries a `priceSource`
+  (`clob`/`bbo`/`gamma`) — currently 167/167 legs priced from CLOB. NAV = volume-weighted CLOB mids with
+  a per-tier NAV tilt (HIGH→0.95, LOW→0.05). Frontend renders this; client `buildLiveBaskets` is fallback.
 - **BTC mark** (vol hedge) — Sui-DeFi-first: Bluefin BTC-PERP → **DeepBook XBTC/USDC** on-chain CLOB
   mid → Pyth → Coinbase → Predict forward, tagged `chain: sui|cex|forward`. Currently serves DeepBook
   (Bluefin DAPI was down). `services/bluefin.ts`.
@@ -184,9 +195,14 @@ simulated, and they're labeled.**
 
 ---
 
-## 6. This session's work log (newest first, all pushed)
+## 6. Work log (newest first, all pushed)
 
 ```
+657da30 distribution: fade the tenor list bottom so a scrolled card doesn't read as clipped
+1ed8dc1 qa sweep: fix docs MID copy, vol polish, constituents, landing + table nits
+ddfb1e9 vol UI: institutional $25k default notional + $-labeled payoff axis
+e4691e6 baskets: backend CLOB-priced Event Baskets + retire the MID tier
+73f8388 status: in-depth handoff doc (STATUS.md) + fix landing duplicate stat
 f2c605f de-brand: remove 'DeepBook Predict' from user-facing labels
 284f851 products: restore the Mid (70) tier on Baskets + Risk Slices
 683a9ef vol UI: wide institutional desk — strategies, payoff diagram, live hedge
@@ -211,16 +227,16 @@ e10deaa mm: anchor the secondary-market bid to a LIVE mark, simulate only the sp
   Open (vol/basket/PPN/distribution) and the MM sell need a funded testnet wallet to click through and
   confirm an on-chain digest. **Highest-value next step.** (Signer has SUI+mUSDC; users get dUSDC via
   the faucet at https://tally.so/r/Xx102L for DeepBook products.)
-- **Mid-tier event baskets currently render from seed** (the live Polymarket feed has only ~3
-  mid-probability markets right now, below the 4-leg minimum). Both pages overlay live data on the seed
-  per id, so the full High/Mid/Low suite always shows — but Mid will switch to live automatically when
-  enough mid-prob markets exist. Verify the basket/tranche **detail** routes (`/app/basket/[id]`,
-  `/app/tranche/[id]`) render the seed Mid baskets cleanly.
-- **UI polish not re-reviewed this session:** Portfolio, Protected Notes, About/docs, landing (`/`),
-  and the basket/tranche detail pages. Core product pages (Volatility, Distribution, Baskets, Risk
-  Slices) are verified clean & consistent. Do a screenshot pass on the rest.
-- **Vol hedge drift is subtle at $100 notional** (gamma is small → net delta moves in the 4th decimal
-  per tick). It IS live; bump notional or default to a larger size if it should read more dramatically.
+- **MID tier retired** — Baskets + Risk Slices ship High/Low only. If you re-add a tier, touch
+  `services/baskets.ts` (TIER_RANGE/TARGET_COMBOS) + the frontend `live-baskets.ts` mirror + tier
+  filters/labels in `basket/page.tsx`, `tranche/page.tsx`, `tokens.ts:tc()`.
+- **Deferred low-priority polish (from the QA sweep, not yet done):** portfolio empty-wallet messaging
+  (triple "no positions", `+$0.00` shown in gain-green), PPN order-book 6-ask/7-bid asymmetry + dUSDC-vs-`$`
+  unit labels, DeepBook basket left-card empty lower halves, basket-detail question-text truncation
+  (full text only via the external link). All cosmetic; the screenshots are clean otherwise.
+- **`/api/markets` is hard-capped at 100** (route-level) — the wide universe for baskets comes from the
+  internal `fetchMarkets({limit:1200})` service, not that public route. Don't "fix" the cap expecting
+  baskets to change.
 - **Bluefin DAPI** was returning "no healthy upstream" — the mark falls through to DeepBook (still Sui,
   still live). Will auto-use Bluefin's perp mark + real funding when their gateway returns.
 - **pelagos-chain.ts** `estimateDeposit/estimateRedeem` are dead code (no callers); `getYieldSleeveState`
@@ -244,6 +260,9 @@ curl -s "$B/api/predict/forward?underlying=BTC"
 curl -s -X POST "$B/api/vol/quote" -H 'content-type: application/json' -d '{"strategy":"straddle","notional_usd":100}'
 curl -s "$B/api/vol/mark"        # fast live BTC mark
 curl -s "$B/api/vol/surface"     # IV term structure + RV + VRP
+# Event Baskets — 6 baskets (High/Low × Short/Med/Long), every leg CLOB-priced
+curl -s "$B/api/baskets" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['count'],'baskets ·',d['clob_priced_legs'],'/',d['total_legs'],'legs CLOB-priced')"
+curl -s "$B/api/baskets/PBU-LOW-SHORT" | python3 -c "import sys,json;b=json.load(sys.stdin)['basket'];print(b['id'],'nav',b['nav'],'legs',b['totalLegs'])"
 # baskets / tranches / lending / vault yields / leaderboard
 curl -s "$B/api/bundles" | python3 -c "import sys,json;print(len(json.load(sys.stdin)),'bundles')"
 curl -s "$B/api/lending" | python3 -c "import sys,json;d=json.load(sys.stdin);print('rate_source',d['rate_source'],'market_supply',d['market_supply_apy'])"

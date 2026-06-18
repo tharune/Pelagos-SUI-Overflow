@@ -223,7 +223,7 @@ export default function DistributionPage() {
             Distribution
           </h1>
           <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 680, lineHeight: 1.6 }}>
-            Trade your <strong style={{ color: C.textPrimary }}>whole view</strong> of where BTC settles, not one strike.
+            Trade your <strong style={{ color: C.textPrimary }}>whole view</strong>{" "}of where BTC settles, not one strike.
             f(x) is the market&apos;s live implied distribution from the DeepBook SVI surface. Move μ and σ to set your view
             g(x), then mint the matching range strip. Priced and settled on-chain.
           </p>

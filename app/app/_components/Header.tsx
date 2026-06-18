@@ -7,15 +7,19 @@ import { ConnectButton } from "./ConnectButton";
 import { TestnetBadge } from "./TestnetBadge";
 import { C, FD } from "../_lib/tokens";
 import { ThemeToggle } from "../_lib/theme";
+import { ModeToggle } from "../_lib/mode";
 
+// IA note: the combined surfaces land incrementally so the app never breaks —
+// Baskets will absorb Risk Slices, and a new DeepBook product will absorb
+// Protected Notes. Until each combined page ships, all routes stay reachable.
 const NAV_LEFT = [
-  { id: "portfolio",    label: "Portfolio",       href: "/app/portfolio" },
-  { id: "distribution", label: "Distribution",    href: "/app/distribution" },
-  { id: "volatility",   label: "Volatility",      href: "/app/volatility" },
-  { id: "tranche",      label: "Risk Slices",     href: "/app/tranche" },
-  { id: "ppn",          label: "Protected Notes", href: "/app/ppn" },
-  { id: "basket",       label: "Baskets",         href: "/app/basket" },
-  { id: "docs",         label: "About",           href: "/app/docs" },
+  { id: "portfolio",    label: "Portfolio",           href: "/app/portfolio" },
+  { id: "distribution", label: "Distributed Options", href: "/app/distribution" },
+  { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
+  { id: "tranche",      label: "Risk Slices",         href: "/app/tranche" },
+  { id: "ppn",          label: "Protected Notes",     href: "/app/ppn" },
+  { id: "basket",       label: "Baskets",             href: "/app/basket" },
+  { id: "docs",         label: "About",               href: "/app/docs" },
 ];
 
 function PelagosMark() {
@@ -122,6 +126,7 @@ export function Header() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <ModeToggle />
           <ThemeToggle />
           <TestnetBadge />
           <ConnectButton variant="header" />

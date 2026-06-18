@@ -1,5 +1,6 @@
 import React from "react";
 import { SandboxProvider } from "./_lib/demo-state";
+import { ModeProvider } from "./_lib/mode";
 
 /**
  * Authenticated-app shell layout.
@@ -14,5 +15,9 @@ import { SandboxProvider } from "./_lib/demo-state";
  * validator.
  */
 export default function AppShellLayout({ children }: LayoutProps<'/app'>) {
-  return <SandboxProvider>{children}</SandboxProvider>;
+  return (
+    <ModeProvider>
+      <SandboxProvider>{children}</SandboxProvider>
+    </ModeProvider>
+  );
 }

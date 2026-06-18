@@ -32,7 +32,6 @@
  */
 
 import { searchMarkets, getHighLiquidityMarkets, fetchMarkets } from './polymarket';
-import { filterMarkets } from './market-filter';
 import { optimizeWeights, assessBasketRisk, scoreLegPair, LegMetadata } from './correlation';
 import { classifyCategory } from './nlp';
 import { basketSigmaFromLegs, quoteTranches, TrancheQuote } from './tranching';
@@ -244,8 +243,10 @@ function bestSideFor(
     m.tokens?.[1]?.token_id ??
     m.clob_token_ids?.[1] ?? '';
 
-  // Tier-preferred probability band (post-side selection).
-  const band: [number, number] = tier === 90 ? [0.55, 0.97] : [0.03, 0.35];
+  // Tier-preferred probability band (post-side selection). Kept generous so the
+  // candidate pool is rich enough to field a diversified basket after the
+  // decorrelation pass thins it.
+  const band: [number, number] = tier === 90 ? [0.5, 0.98] : [0.02, 0.42];
   const center = tier === 90 ? 0.85 : 0.1;
 
   const sides: Array<{ side: 'YES' | 'NO'; prob: number; question: string; token: string }> = [
@@ -348,7 +349,13 @@ function legMeta(c: Candidate): LegMetadata {
     question: c.question,
     end_date_iso: c.endDateIso,
     probability: c.probability,
-    tags: [c.category],
+    // IMPORTANT: do NOT tag with the coarse category here. scoreLegPair treats
+    // shared tags as a strong correlation signal (tag-Jaccard), so tagging every
+    // same-category leg identically made any two collapse to ~1.0 correlation —
+    // capping the basket at one leg per category. The per-category CAP already
+    // limits concentration; correlation is measured on question text + shared
+    // event + resolution-date proximity, which is the real co-movement signal.
+    tags: [],
   };
 }
 
@@ -368,13 +375,13 @@ function selectDecorrelated(
   const takenMarkets = new Set<string>();
   const takenEvents = new Set<string>();
 
-  const tryAdmit = (corrCeil: number) => {
+  const tryAdmit = (corrCeil: number, catCap: number) => {
     for (const c of candidates) {
       if (selected.length >= targetLegs) break;
       if (takenMarkets.has(c.marketId)) continue;
       if (c.eventId && takenEvents.has(c.eventId)) continue;
       const catSoFar = catCounts.get(c.category) ?? 0;
-      if (catSoFar >= maxPerCategory) continue;
+      if (catSoFar >= catCap) continue;
       // Max predicted pair-correlation against the already-selected set.
       const meta = legMeta(c);
       let maxCorr = 0;
@@ -391,9 +398,17 @@ function selectDecorrelated(
     }
   };
 
-  tryAdmit(PAIR_CORR_CEIL);
-  if (selected.length < Math.min(targetLegs, MIN_TARGET_LEGS)) {
-    tryAdmit(Math.min(0.6, PAIR_CORR_CEIL + 0.2));
+  // Progressive relaxation: start truly uncorrelated, then step the ceiling up
+  // until we reach the target or exhaust candidates. Topically-narrow inputs
+  // (e.g. a "bitcoin" query) are inherently correlated, so the basket fills at a
+  // higher ceiling — `avg_pair_corr` in the response reports that honestly.
+  for (const ceil of [PAIR_CORR_CEIL, 0.5, 0.65, 0.8, 0.92]) {
+    if (selected.length >= targetLegs) break;
+    tryAdmit(ceil, maxPerCategory);
+  }
+  // Still short of a usable basket → relax the per-category cap too.
+  if (selected.length < Math.min(targetLegs, MIN_TARGET_LEGS + 2)) {
+    tryAdmit(0.97, Math.max(maxPerCategory, Math.ceil(targetLegs / 2)));
   }
   return selected;
 }
@@ -455,7 +470,17 @@ export async function buildCustomBasket(args: BuildArgs): Promise<CustomBasketRe
     raw = await searchMarkets(query, QUERY_FETCH);
     universeSource = 'search';
   } else if (theme) {
-    raw = await getHighLiquidityMarkets(MIN_VOLUME_USD, THEME_FETCH);
+    // Pull the broad live universe and keyword-match it, UNION the volume-sorted
+    // high-liquidity feed. The high-liquidity feed alone clusters on a few hot
+    // markets and starves a themed, cross-topic basket; the keyword-matched
+    // universe gives the decorrelation pass a diverse pool to draw from.
+    const [universe, liquid] = await Promise.all([
+      fetchMarkets({ limit: UNIVERSE_FALLBACK_LIMIT, active: true, closed: false }),
+      getHighLiquidityMarkets(MIN_VOLUME_USD, THEME_FETCH),
+    ]);
+    const onTheme = universe.filter((m) => themeMatchScore(m.question ?? '', theme.keywords) > 0);
+    const liquidOnTheme = liquid.filter((m) => themeMatchScore(m.question ?? '', theme.keywords) > 0);
+    raw = onTheme.concat(liquidOnTheme);
     universeSource = 'theme';
   }
   // Fallback to the cached live universe when the targeted pull is thin.
@@ -481,13 +506,14 @@ export async function buildCustomBasket(args: BuildArgs): Promise<CustomBasketRe
   }
   const candidatesScanned = raw.length;
 
-  // 2) Five-stage filter funnel.
-  const filtered = filterMarkets(raw, { minVolumeUsd: MIN_VOLUME_USD });
-  const keptMarkets = filtered.kept.map((k) => k.market);
-
-  // 3) Normalise each survivor into its single best side.
+  // 2) Normalise each market into its single best side directly off the live
+  //    universe. `bestSideFor` already enforces active / liquidity floor /
+  //    valid-probability / tier band, and the decorrelation pass + per-category
+  //    cap below do the diversification — so we deliberately do NOT run the
+  //    strict 5-stage curation funnel here, which over-prunes a bespoke build
+  //    down to a handful of legs.
   let candidates: Candidate[] = [];
-  for (const m of keptMarkets) {
+  for (const m of raw) {
     const category = classifyCategory(m.question).category as Category;
     const c = bestSideFor(m, tier, category);
     if (c) candidates.push(c);
@@ -617,7 +643,7 @@ export async function buildCustomBasket(args: BuildArgs): Promise<CustomBasketRe
     sources: {
       universe: universeSource,
       candidates_scanned: candidatesScanned,
-      kept_after_filter: filtered.kept.length,
+      kept_after_filter: candidates.length,
       clob_priced_legs: clobPricedLegs,
       price: clobPricedLegs > 0 ? 'clob+gamma' : 'gamma',
       correlation_model: wr.model_version,

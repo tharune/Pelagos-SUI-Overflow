@@ -3,8 +3,8 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";
-import { LivePortfolioChart, type ChartScope } from "../_components/live-portfolio-chart";
 import { C, FS, FD, FM, EASE, tc, trancheColor, fmtUsd } from "../_lib/tokens";
+import { useMode, BetaTag } from "../_lib/mode";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
 import { useSandbox, type BasketPosition } from "../_lib/demo-state";
@@ -18,7 +18,7 @@ import {
   clearVirtualPositionsByUiBundleId,
   type GroupedVirtualPosition,
 } from "../_lib/virtual-positions";
-import { BacktestPanel } from "../_components/backtest-panel";
+import { StrategyBacktestPanel } from "../_components/strategy-backtest-panel";
 import { History } from "./_history";
 import {
   fetchContinuousPositions,
@@ -27,188 +27,8 @@ import {
 
 type View = "positions" | "backtest" | "history";
 
-// Catmull-Rom → cubic-bezier smoothing for a clean institutional curve.
-function smoothLine(pts: Array<[number, number]>, tension = 0.18): string {
-  if (pts.length < 2) return "";
-  const d = [`M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[i + 2] ?? p2;
-    const c1x = p1[0] + (p2[0] - p0[0]) * tension;
-    const c1y = p1[1] + (p2[1] - p0[1]) * tension;
-    const c2x = p2[0] - (p3[0] - p1[0]) * tension;
-    const c2y = p2[1] - (p3[1] - p1[1]) * tension;
-    d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`);
-  }
-  return d.join(" ");
-}
-
-const DAY_MS = 86_400_000;
-const ACCOUNT_TF = [
-  { key: "1D", label: "1D", ms: DAY_MS, n: 24, x: ["24h ago", "12h", "now"] },
-  { key: "7D", label: "7D", ms: 7 * DAY_MS, n: 28, x: ["7d ago", "3d", "now"] },
-  { key: "30D", label: "30D", ms: 30 * DAY_MS, n: 30, x: ["30d ago", "15d", "now"] },
-  { key: "1Y", label: "1Y", ms: 365 * DAY_MS, n: 48, x: ["1y ago", "6m", "now"] },
-] as const;
-type AccountTfKey = (typeof ACCOUNT_TF)[number]["key"];
-
-// A real net-value timeline is event-driven: it only moves when money actually
-// moves (realized P&L from a settle/redeem) or as a yield position accrues. We
-// reconstruct it from those real events instead of fabricating a price wobble.
-type ValueEvent = { t: number; delta: number };          // realized P&L, at its tx time
-type ValueAccrual = { startMs: number; ratePerDay: number; maxDays: number };
-
-function accruedBy(accruals: ValueAccrual[], tMs: number): number {
-  let s = 0;
-  for (const a of accruals) {
-    const days = Math.min(Math.max(0, (tMs - a.startMs) / DAY_MS), a.maxDays);
-    s += a.ratePerDay * days;
-  }
-  return s;
-}
-
-// True net-value series for a window. The right edge is the live value; walking
-// back from it we undo realized P&L booked after each sample and the yield
-// accrued since it — so the curve is flat where nothing happened (no fake wobble)
-// and steps / slopes exactly where real events occurred. The pre-funding ramp is
-// intentionally omitted (we anchor to the current funded value).
-function buildValueSeries(
-  value: number,
-  tf: (typeof ACCOUNT_TF)[number],
-  events: ValueEvent[],
-  accruals: ValueAccrual[],
-  nowMs: number,
-): number[] {
-  const start = nowMs - tf.ms;
-  const accruedNow = accruedBy(accruals, nowMs);
-  const out: number[] = [];
-  for (let i = 0; i < tf.n; i++) {
-    const t = start + (tf.ms * i) / (tf.n - 1);
-    const realizedAfter = events.reduce((s, e) => (e.t > t ? s + e.delta : s), 0);
-    out.push(Math.max(0, value - (accruedNow - accruedBy(accruals, t)) - realizedAfter));
-  }
-  out[tf.n - 1] = value;
-  return out;
-}
-
-const fmtAxisUsd = (v: number): string =>
-  v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(0)}`;
-
-function AccountValueChart({
-  value,
-  pnl,
-  events,
-  accruals,
-  nowMs,
-}: {
-  value: number;
-  pnl: number;
-  events: ValueEvent[];
-  accruals: ValueAccrual[];
-  nowMs: number;
-}) {
-  const [tf, setTf] = useState<AccountTfKey>("30D");
-  const cfg = ACCOUNT_TF.find((t) => t.key === tf) ?? ACCOUNT_TF[2];
-  const series = React.useMemo(
-    () => buildValueSeries(value, cfg, events, accruals, nowMs),
-    [value, cfg, events, accruals, nowMs],
-  );
-
-  const W = 560, H = 244, PL = 52, PR = 14, PT = 16, PB = 26;
-  const n = series.length;
-  const lo = Math.min(...series), hi = Math.max(...series);
-  const dataSpan = hi - lo;
-  const isFlat = dataSpan < 0.0001;
-  const pad = dataSpan > 0 ? dataSpan * 0.22 : Math.max(value * 0.01, 1);
-  const yMin = Math.max(0, lo - pad), yMax = hi + pad;
-  const sx = (i: number) => PL + (i / Math.max(1, n - 1)) * (W - PL - PR);
-  const sy = (v: number) => PT + (1 - (v - yMin) / (yMax - yMin || 1)) * (H - PT - PB);
-  const pts = series.map((v, i): [number, number] => [sx(i), sy(v)]);
-  const line = smoothLine(pts);
-  const area = `${line} L ${sx(n - 1).toFixed(1)} ${(H - PB).toFixed(1)} L ${sx(0).toFixed(1)} ${(H - PB).toFixed(1)} Z`;
-  const stroke = pnl >= 0 ? C.tealLight : C.coral;
-  const end = pts[pts.length - 1];
-  const yTicks = [yMax, (yMax + yMin) / 2, yMin];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 12 }}>
-        {ACCOUNT_TF.map((t) => {
-          const on = t.key === tf;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTf(t.key)}
-              style={{
-                padding: "4px 11px",
-                borderRadius: 7,
-                border: `0.5px solid ${on ? C.borderHover : C.border}`,
-                background: on ? C.cardHover : "transparent",
-                color: on ? C.textPrimary : C.textMuted,
-                fontFamily: FM,
-                fontSize: 11,
-                cursor: "pointer",
-                transition: `all 0.15s ${EASE}`,
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} aria-label="Account value trend" style={{ display: "block" }}>
-        <defs>
-          <linearGradient id="portfolioValueFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={stroke} stopOpacity={isFlat ? "0.1" : "0.2"} />
-            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {yTicks.map((v, i) => (
-          <g key={i}>
-            <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} />
-            <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">
-              {fmtAxisUsd(v)}
-            </text>
-          </g>
-        ))}
-        <path d={area} fill="url(#portfolioValueFill)" />
-        <path
-          d={line}
-          fill="none"
-          stroke={stroke}
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeOpacity={isFlat ? 0.7 : 1}
-          style={{ filter: `drop-shadow(0 1px 6px ${stroke}33)` }}
-        />
-        <circle cx={end[0]} cy={end[1]} r={4} fill={stroke} />
-        <circle cx={end[0]} cy={end[1]} r={8} fill="none" stroke={stroke} strokeWidth="1" opacity="0.3" />
-        {cfg.x.map((lbl, i) => (
-          <text
-            key={i}
-            x={PL + (i / 2) * (W - PL - PR)}
-            y={H - 6}
-            textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"}
-            fill={C.textMuted}
-            fontFamily={FM}
-            fontSize="9.5"
-          >
-            {lbl}
-          </text>
-        ))}
-      </svg>
-      <div style={{ fontFamily: FM, fontSize: 9, color: C.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "right", marginTop: 2 }}>
-        Live · realized P&L + yield accrual
-      </div>
-    </div>
-  );
-}
-
 export default function PortfolioPage() {
+  const { mode } = useMode();
   const { state, totals, dispatch } = useSandbox();
   const appWalletAddress = useActiveWalletAddress();
   const usdc = useUsdcBalance();
@@ -216,20 +36,11 @@ export default function PortfolioPage() {
   const [redeemBusy, setRedeemBusy] = useState<string | null>(null);
   const [redeemError, setRedeemError] = useState<Record<string, string>>({});
   const basketState = useLiveBaskets();
-  // Authoritative on-chain PBU unit balances per bundle. Polls the active
-  // chain every 15s and zeroes out to empty entries when the wallet is
-  // disconnected. This is the ONLY source we trust for "how many basket
-  // tokens does this wallet actually own" — any cancelled deposit never
-  // mints PBU so it contributes $0 here regardless of what optimistic UI
-  // state or stale Supabase rows claim.
+
+  // Authoritative on-chain PBU unit balances per bundle. The ONLY source we
+  // trust for "how many basket tokens does this wallet actually own"; cancelled
+  // deposits never mint PBU so they contribute $0 here regardless of stale UI.
   const pbuBalances = usePbuBalances();
-  // Authoritative on-chain PBU qty per bundle UUID. Computed once here and
-  // reused by every gating path below (tranches, PPNs, virtual groups,
-  // residuals). Bundles without a positive balance are absent from the map.
-  // Hoisted out of the render block so the headline / donut / breakdown
-  // totals can share the same filter as the card list — previously the
-  // totals used reducer state directly and leaked cancelled-tx rows into
-  // the top-of-page numbers even though the cards below filtered them out.
   const pbuTokensByUuid = React.useMemo(() => {
     const out: Record<string, number> = {};
     for (const entry of pbuBalances.balances) {
@@ -237,11 +48,8 @@ export default function PortfolioPage() {
     }
     return out;
   }, [pbuBalances.balances]);
-  // Single source of truth for "is there a wallet we can attribute balances
-  // to". Every aggregate downstream (donut, PnL, totals, position rows) is
-  // gated on this so a disconnected session can never show a stale balance
-  // leftover from a previous connection. Fixes portfolio reporting non-zero
-  // numbers both on fresh load (before wallet connect) and after disconnect.
+
+  // Single source of truth for "is there a wallet we can attribute balances to".
   const walletReady = Boolean(appWalletAddress);
   const virtualGroupsForWallet: GroupedVirtualPosition[] =
     walletReady && appWalletAddress
@@ -256,10 +64,8 @@ export default function PortfolioPage() {
   );
   const onchainTokensByUuid =
     Object.keys(suiTokensByUuid).length > 0 ? suiTokensByUuid : pbuTokensByUuid;
-  // Cash line is the real on-chain USDC in the connected wallet. When
-  // disconnected we fall back to 0 so the donut + positions list simply
-  // omit the cash slice instead of flashing a stale sandbox counter.
   const liveUsdc = walletReady ? usdc.uiAmount : 0;
+
   const [activeId, setActiveId] = useState<string | null>(null);
   const [renderNow, setRenderNow] = useState<number>(() => Date.now());
   const [view, setView] = useState<View>("positions");
@@ -269,54 +75,27 @@ export default function PortfolioPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Position buckets are independent on the three product rails:
-  //   - Baskets are the user's PBU unit balance × live NAV. PBU only
-  //     lands in the user's wallet via a basket deposit (PPN / tranche
-  //     deposits swap USDC into a product-owned Sui position and hand back
-  //     a product receipt, so on-chain PBU presence IS the
-  //     source of truth for basket exposure.
-  //   - Tranche / PPN rows come from the backend, which we've taught
-  //     to filter by `onchain_tx_signature IS NOT NULL` — i.e. only
-  //     rows where the user's note-initialize tx actually landed.
-  //     Cancelled-in-wallet deposits therefore never reach the reducer,
-  //     so we can trust reducer state directly here.
-  // There is no double-counting between the buckets: a user's PBU
-  // balance and a note vault's principal are different assets.
   const effectiveTranches = walletReady ? state.tranchePositions : [];
   const effectivePpnVaults = walletReady ? state.ppnVaults : [];
-  // PPN accrued yield, ticking with renderNow so the top-of-page P&L moves
-  // in real time. Matches the per-vault card math (`principal * apy% / 365`
-  // capped at maturity). This is what makes PPN positions contribute to
-  // unrealized P&L — the demo-state totals only know about basket drift.
+
+  // PPN accrued yield (ticks with renderNow). principal * apy% / 365 capped at
+  // maturity. Every field guarded against an indexer race producing NaN.
   const ppnAccruedYield = effectivePpnVaults.reduce((sum, v) => {
-    // Guard every field: a freshly-opened note can arrive before the indexer
-    // has filled in created_at / days_* / estimated_apy, which would otherwise
-    // make this term NaN and poison the headline, P&L, and allocation totals.
     const principal = Number.isFinite(v.principal) ? v.principal : 0;
     const apy = Number.isFinite(v.apy) ? v.apy : 0;
     const maturityDays = Number.isFinite(v.maturityDays) ? v.maturityDays : 0;
     const createdAt = Number.isFinite(v.createdAt) ? v.createdAt : renderNow;
     const elapsedDays = Math.max(0, (renderNow - createdAt) / 86_400_000);
-    const accrued =
-      principal * (apy / 100 / 365) * Math.min(elapsedDays, maturityDays);
-    return sum + accrued;
+    return sum + principal * (apy / 100 / 365) * Math.min(elapsedDays, maturityDays);
   }, 0);
-  // Tranche accrued yield. Principal is qty*avgCost (frozen at entry) because
-  // the backend doesn't mark tranches to market — so without this term the
-  // Risk Slices row and the headline P&L would never move, no matter how long
-  // the position had been held. Straight-line accrual against `estimated_apy`
-  // is the same approximation used for PPNs, capped at maturity.
+  // Tranche accrued yield. Same straight-line approximation, capped at maturity.
   const trancheAccruedYield = effectiveTranches.reduce((sum, p) => {
     if (p.apy == null || p.createdAt == null || p.maturityDays == null) return sum;
     const principal = p.qty * p.avgCost;
     const elapsedDays = Math.max(0, (renderNow - p.createdAt) / 86_400_000);
-    const accrued =
-      principal * (p.apy / 100 / 365) * Math.min(elapsedDays, p.maturityDays);
-    return sum + accrued;
+    return sum + principal * (p.apy / 100 / 365) * Math.min(elapsedDays, p.maturityDays);
   }, 0);
-  // Principal sums for the filtered (on-chain-backed) rows. Replace
-  // `totals.trancheValue` / `totals.ppnValue` everywhere below so the
-  // headline, donut, and breakdown all agree with the card list.
+
   const effectiveTrancheValue = effectiveTranches.reduce((sum, p) => {
     const v = p.qty * p.avgCost;
     return sum + (Number.isFinite(v) ? v : 0);
@@ -325,10 +104,8 @@ export default function PortfolioPage() {
     (sum, v) => sum + (Number.isFinite(v.principal) ? v.principal : 0),
     0,
   );
-  // Open continuous distribution positions. Collateral is escrowed on-chain
-  // at open; we surface it as value-at-risk in the headline + a product row.
-  // Settled positions have already paid out to USDC (counted in liveUsdc), so
-  // only unsettled positions contribute here — no double counting.
+
+  // Open continuous distribution positions: collateral escrowed at open.
   const effectiveDistPositions = walletReady
     ? distPositions.filter((p) => !p.settled)
     : [];
@@ -336,46 +113,17 @@ export default function PortfolioPage() {
     (sum, p) => sum + (Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0),
     0,
   );
-  // On-chain basket value used in the top-line total. We value each
-  // bundle at the wallet's **cost basis** (avgCost × qty) whenever the
-  // reducer has a hydrated position for that bundleId, and only fall
-  // back to live NAV when we don't know what the user paid. Reasoning:
-  // the vault mints units at a fixed `issue_price_bps`, which is
-  // typically below live NAV, so valuing at NAV right after a deposit
-  // makes the orbit appear to grow by the issue-vs-NAV differential
-  // (user-reported bug: spend $100, see total go up $4). The NAV delta
-  // still shows up in the separate `displayPnl` line below.
+
+  // Basket value at the wallet's cost basis (issue price ≈ deposited USDC). We
+  // intentionally don't mark baskets to NAV pre-resolution (exit_active pays the
+  // pool ratio, not qty×NAV), so basket unrealized P&L stays 0 until redeem.
   const onchainBasketValue = walletReady
     ? virtualGroupsForWallet.reduce((sum, g) => sum + g.depositedUsdc, 0)
     : 0;
-
-  // Basket unrealized P&L is intentionally zero for active positions.
-  //
-  // The old computation (qty × (nav - avgCost)) is a NAV-based fantasy:
-  //   - the Sui product issues PBU at a fixed `issue_price_bps` (set at
-  //     bundle init), so depositing at a moment when live NAV > issue
-  //     price immediately produces a "gain" that didn't exist,
-  //   - early exit via `exit_active` pays the user's pro-rata share of
-  //     the USDC pool (which ≈ what was deposited, net of fees), NOT
-  //     qty × NAV — so any NAV drift doesn't actually materialize until
-  //     the vault is finalized and redeemed at resolution.
-  //
-  // Showing a positive "Unrealized P&L" on a fresh deposit + then a small
-  // loss on sell (because fees were real, the NAV gain wasn't) confused
-  // every tester. We now return 0 for active baskets; real P&L surfaces
-  // through (a) USDC credit after sell/redeem, and (b) PPN + tranche
-  // yield accrual below, which are real Sui product accruals.
   const onchainBasketPnl = 0;
 
-  // Top-line value: USDC + basket value (PBU × NAV) + tranche / PPN
-  // principal + accrued yield + lend/loan. Tranche/PPN rows come from
-  // the reducer, which is hydrated from the backend; the backend only
-  // returns rows with `onchain_tx_signature IS NOT NULL`, so cancelled
-  // rows never get here. lend/loan are pure reducer (no Sui object
-  // token behind them) and unaffected by this pass.
-  //
-  // When disconnected every term is already zero (via walletReady gating
-  // above), so the headline collapses to 0 without a separate guard.
+  // Top-line value + P&L. Every term is already 0 when disconnected (walletReady
+  // gating), so the headline collapses to 0 without a separate guard.
   const displayTotal = walletReady
     ? liveUsdc +
       onchainBasketValue +
@@ -391,44 +139,7 @@ export default function PortfolioPage() {
     ? onchainBasketPnl + ppnAccruedYield + trancheAccruedYield
     : 0;
 
-  // Real, timestamped inputs for the net-value chart (no fabricated history):
-  //  - realized P&L from settled distribution positions, booked at settle time;
-  //  - linear yield accrual from PPN + tranche positions (same math as the
-  //    headline ppn/trancheAccruedYield above), so the curve's right edge agrees
-  //    with the live total.
-  const valueEvents = React.useMemo<ValueEvent[]>(() => {
-    const evs: ValueEvent[] = [];
-    for (const p of distPositions) {
-      if (!p.settled || !p.settled_at) continue;
-      const payoff = Number.isFinite(p.payoff_usdc as number)
-        ? (p.payoff_usdc as number)
-        : (Number(p.net_usdc) || 0) - (Number(p.collateral_usdc) || 0);
-      if (Number.isFinite(payoff) && Math.abs(payoff) > 1e-9) evs.push({ t: p.settled_at, delta: payoff });
-    }
-    return evs;
-  }, [distPositions]);
-  const valueAccruals = React.useMemo<ValueAccrual[]>(() => {
-    const acc: ValueAccrual[] = [];
-    for (const v of effectivePpnVaults) {
-      const principal = Number.isFinite(v.principal) ? v.principal : 0;
-      const apy = Number.isFinite(v.apy) ? v.apy : 0;
-      const maxDays = Number.isFinite(v.maturityDays) ? (v.maturityDays as number) : 0;
-      const startMs = Number.isFinite(v.createdAt) ? (v.createdAt as number) : renderNow;
-      if (principal > 0 && apy > 0) acc.push({ startMs, ratePerDay: principal * (apy / 100 / 365), maxDays });
-    }
-    for (const p of effectiveTranches) {
-      if (p.apy == null || p.createdAt == null || p.maturityDays == null) continue;
-      const principal = p.qty * p.avgCost;
-      if (principal > 0 && p.apy > 0)
-        acc.push({ startMs: p.createdAt, ratePerDay: principal * (p.apy / 100 / 365), maxDays: p.maturityDays });
-    }
-    return acc;
-  }, [effectivePpnVaults, effectiveTranches, renderNow]);
-
-  // Hydrate basket positions from Supabase whenever the wallet connects
-  // or changes. The reducer is in-memory only, so without this the portfolio
-  // tab would look empty after any browser reload even when the user has
-  // on-chain deposits in the DB.
+  // Hydrate basket / note / distribution positions whenever the wallet changes.
   const hydratePortfolio = React.useCallback(async () => {
     if (!appWalletAddress) return;
     const wallet = appWalletAddress;
@@ -437,14 +148,8 @@ export default function PortfolioPage() {
         dispatch({ type: "basket/hydrate", positions }),
       ),
       fetchPpnPortfolio(wallet).then((portfolio) => {
-        // Merge policy (dupe `bundle_id` → one card, dupe
-        // `(bundle_id, tranche_kind)` → one card) lives in _lib/ppn-hydrate
-        // so the PPN page sees the same merged shape on standalone visits.
         dispatch({ type: "ppn/hydrate", vaults: mergePpnVaults(portfolio) });
-        dispatch({
-          type: "tranche/hydrate",
-          positions: mergeTranches(portfolio),
-        });
+        dispatch({ type: "tranche/hydrate", positions: mergeTranches(portfolio) });
       }),
       fetchContinuousPositions(wallet).then((r) =>
         setDistPositions(Array.isArray(r?.positions) ? r.positions : []),
@@ -485,10 +190,6 @@ export default function PortfolioPage() {
               ? "Transaction was rejected in your wallet."
               : err.message
             : String(err);
-      // "No vault positions" means nothing is on-chain behind this card — it's
-      // an orphaned optimistic/virtual position (e.g. a deposit that never
-      // landed, or an already-redeemed bundle). Clear it so the stale card
-      // disappears instead of lingering with an un-redeemable balance.
       if (/no vault position/i.test(msg) && appWalletAddress) {
         clearVirtualPositionsByUiBundleId(appWalletAddress, bundleId, uiBundleId);
         await hydratePortfolio();
@@ -501,14 +202,6 @@ export default function PortfolioPage() {
     }
   }
 
-  /**
-   * Redeem a PPN or tranche position. Both ride the `initialize_note` rail so
-   * a single `ppnRedeem` call handles both. When `vaultIds` has more than
-   * one id, the merged card stands for multiple on-chain notes (same
-   * bundle_id, two deposits) and we redeem each in sequence. Falls back to
-   * (bundleId, wallet) when no explicit vault ids are provided so the
-   * backend can resolve via `getActivePPNVault`.
-   */
   async function handleRedeemPpn(rowKey: string, opts: { vaultIds?: string[]; bundleId?: string }) {
     setRedeemError((prev) => {
       const next = { ...prev };
@@ -519,18 +212,11 @@ export default function PortfolioPage() {
     try {
       const ids = opts.vaultIds?.filter(Boolean) ?? [];
       if (ids.length > 0) {
-        // Redeem every underlying vault sequentially. Sequential keeps the
-        // wallet popup flow deterministic (one approval at a time) and lets
-        // us bail on the first failure without leaving a partial state on
-        // subsequent vaults.
         for (const vaultId of ids) {
           await ppnRedeem({ wallet: walletSigner, vaultId, bundleId: opts.bundleId });
         }
       } else {
-        await ppnRedeem({
-          wallet: walletSigner,
-          bundleId: opts.bundleId,
-        });
+        await ppnRedeem({ wallet: walletSigner, bundleId: opts.bundleId });
       }
       await hydratePortfolio();
       void usdc.refresh();
@@ -549,29 +235,16 @@ export default function PortfolioPage() {
     }
   }
 
-  // Live-first basket metadata lookup: if the live pipeline has this
-  // id we use the live NAV so open positions track the real feed, and
-  // fall back to the seed Bundle only when the live feed doesn't have
-  // coverage for that id (offline mode, missing live row, etc.).
   const resolveBasket = (id: string) => {
     if (basketState.status === "ok") {
       const live = basketState.baskets.find((b) => b.id === id);
-      if (live) {
-        return {
-          id: live.id,
-          tier: live.tier,
-          nav: live.nav,
-        };
-      }
+      if (live) return { id: live.id, tier: live.tier, nav: live.nav };
     }
     const seed = bundleById(id);
-    return seed
-      ? { id: seed.id, tier: seed.tier, nav: seed.nav }
-      : null;
+    return seed ? { id: seed.id, tier: seed.tier, nav: seed.nav } : null;
   };
 
-  // Live row values — same sources as displayTotal so the headline, product
-  // cards, and detailed position rows all reconcile.
+  // Allocation rows — same sources as displayTotal so headline + rows reconcile.
   const productRows: Array<{
     id: string;
     label: string;
@@ -580,68 +253,17 @@ export default function PortfolioPage() {
     color: string;
     href?: string;
   }> = [
-    {
-      id: "cash",
-      label: "Cash",
-      description: "Sui testnet mUSDC available",
-      value: liveUsdc,
-      color: C.textMuted,
-    },
-    {
-      id: "baskets",
-      label: "Market Baskets",
-      description: "Basket units held directly",
-      value: onchainBasketValue,
-      color: C.tealLight,
-      href: "/app/basket",
-    },
-    {
-      id: "tranches",
-      label: "Risk Slices",
-      description: "Senior, mezzanine, and junior exposure",
-      value: effectiveTrancheValue + trancheAccruedYield,
-      color: C.amber,
-      href: "/app/tranche",
-    },
-    {
-      id: "ppn",
-      label: "Protected Notes",
-      description: "Principal-protected notes",
-      value: effectivePpnValue + ppnAccruedYield,
-      color: C.violet,
-      href: "/app/ppn",
-    },
-    {
-      id: "distribution",
-      label: "Distribution Markets",
-      description: "Continuous μ/σ positions · collateral at risk",
-      value: distValue,
-      color: C.coral,
-      href: "/app/distribution",
-    },
-    {
-      id: "lending",
-      label: "Lending",
-      description: "Sui DeFi routing",
-      value: totals.lendValue,
-      color: C.blue,
-    },
+    { id: "cash", label: "Cash", description: "Sui testnet mUSDC available", value: liveUsdc, color: C.textMuted },
+    { id: "baskets", label: "Market Baskets", description: "Basket units held directly", value: onchainBasketValue, color: C.tealLight, href: "/app/basket" },
+    { id: "tranches", label: "Risk Slices", description: "Senior / mezzanine / junior", value: effectiveTrancheValue + trancheAccruedYield, color: C.amber, href: "/app/tranche" },
+    { id: "ppn", label: "Protected Notes", description: "Principal-protected notes", value: effectivePpnValue + ppnAccruedYield, color: C.violet, href: "/app/ppn" },
+    { id: "distribution", label: "Distribution Markets", description: "Continuous μ/σ · collateral at risk", value: distValue, color: C.coral, href: "/app/distribution" },
+    { id: "lending", label: "Lending", description: "Sui DeFi routing", value: totals.lendValue, color: C.blue },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
-  // Scopes for the live chart: whole portfolio (added inside the chart) + each
-  // funded product/position the user actually holds.
-  const chartScopes: ChartScope[] = productRows
-    .filter((row) => row.id !== "cash" && row.value > 0)
-    .map((row) => ({ id: row.id, label: row.label, valueUsd: row.value }));
-  // Capital actually put to work (everything that isn't idle cash) as a share
-  // of net account value. More telling than a raw "funded products" count — it
-  // answers how hard the capital is working, and moves as you deploy/redeem.
+
   const deployedValue = Math.max(0, displayTotal - liveUsdc);
   const deployedPct = displayTotal > 0 ? (deployedValue / displayTotal) * 100 : 0;
-  // Open-position count across every product rail: distinct on-chain basket
-  // holdings + risk slices + protected notes + unsettled distribution
-  // positions. A truer "how many things am I holding" than a product-type
-  // count — it grows with each deposit rather than topping out at six.
   const positionCount =
     Object.keys(onchainTokensByUuid).length +
     effectiveTranches.length +
@@ -651,103 +273,86 @@ export default function PortfolioPage() {
   return (
     <>
       <style>{`
-        .portfolio-tabs {
+        .pf-tabs {
           display: flex; gap: 2px; padding: 3px; background: ${C.surface};
           border: 0.5px solid ${C.border}; border-radius: 8px;
         }
-        .portfolio-tab {
+        .pf-tab {
           border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
           font-family: ${FD}; font-size: 12px; letter-spacing: 0.01em;
           background: transparent; color: ${C.textSecondary};
           transition: color 0.15s ${EASE}, background 0.15s ${EASE};
         }
-        .portfolio-tab:hover { color: ${C.textPrimary}; }
-        .portfolio-tab.active { background: ${C.card}; color: ${C.tealLight}; font-weight: 600; }
-        .portfolio-overview {
-          display: grid; grid-template-columns: 1fr 1fr;
-          gap: 14px; margin-bottom: 18px; align-items: stretch;
+        .pf-tab:hover { color: ${C.textPrimary}; }
+        .pf-tab.active { background: ${C.card}; color: ${C.tealLight}; font-weight: 600; }
+        .pf-overview {
+          display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+          gap: 14px; margin-bottom: 22px; align-items: stretch;
         }
-        .portfolio-panel {
-          background: ${C.card}; border: 0.5px solid ${C.border}; border-radius: 10px; padding: 22px;
+        .pf-panel {
+          background: ${C.card}; border: 0.5px solid ${C.border}; border-radius: 12px; padding: 20px;
         }
-        .portfolio-card {
-          background: ${C.card}; border: 0.5px solid ${C.border}; border-radius: 10px; padding: 18px;
+        .pf-card {
+          background: ${C.card}; border: 0.5px solid ${C.border}; border-radius: 12px; padding: 18px;
         }
-        .portfolio-metric-row {
-          display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px;
-          margin-top: 28px; padding-top: 20px; border-top: 0.5px solid ${C.border};
+        .pf-summary-metrics {
+          display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+          margin-top: 20px; padding-top: 18px; border-top: 0.5px solid ${C.border};
         }
-        .portfolio-allocation {
-          display: grid; gap: 0;
-        }
-        .portfolio-allocation-row {
-          display: grid; grid-template-columns: minmax(0, 1fr) 116px 74px;
-          gap: 16px; align-items: center; padding: 15px 0;
+        .pf-alloc-row {
+          display: grid; grid-template-columns: minmax(0, 1fr) 96px 78px;
+          gap: 16px; align-items: center; padding: 13px 0;
           border-top: 0.5px solid ${C.border}; text-decoration: none;
-          transition: opacity 0.15s ${EASE}, background 0.15s ${EASE};
+          transition: opacity 0.15s ${EASE};
         }
-        .portfolio-allocation-row:first-child { border-top: 0; }
-        .portfolio-allocation-row:hover { opacity: 0.86; }
-        .portfolio-spark {
-          height: 6px; border-radius: 999px; background: ${C.surface}; overflow: hidden;
+        .pf-alloc-row:first-child { border-top: 0; }
+        .pf-alloc-row:hover { opacity: 0.84; }
+        .pf-spark { height: 5px; border-radius: 999px; background: ${C.surface}; overflow: hidden; }
+        .pf-spark span { display: block; height: 100%; border-radius: inherit; }
+        .pf-positions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        @media (max-width: 1180px) {
+          .pf-overview { grid-template-columns: 1fr; }
         }
-        .portfolio-spark span { display: block; height: 100%; border-radius: inherit; }
-        .portfolio-section-head {
-          display: flex; align-items: end; justify-content: space-between; gap: 16px;
-          margin: 16px 0 10px;
-        }
-        .portfolio-value-chart {
-          margin-top: 22px;
-          border-top: 0.5px solid ${C.border};
-          padding-top: 16px;
-        }
-        @media (max-width: 1120px) {
-          .portfolio-overview { grid-template-columns: 1fr; }
+        @media (max-width: 900px) {
+          .pf-positions { grid-template-columns: 1fr; }
         }
         @media (max-width: 760px) {
-          .portfolio-page-head { align-items: flex-start !important; flex-direction: column; }
-          .portfolio-tabs { width: 100%; overflow-x: auto; }
-          .portfolio-metric-row { grid-template-columns: 1fr; gap: 12px; }
-          .portfolio-allocation-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+          .pf-head { align-items: flex-start !important; flex-direction: column; }
+          .pf-tabs { width: 100%; overflow-x: auto; }
+          .pf-summary-metrics { grid-template-columns: 1fr; gap: 12px; }
+          .pf-alloc-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
         }
       `}</style>
       <Header />
-      <PageFrame>
-        <div className="portfolio-page-head" style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 20, marginBottom: 18, paddingBottom: 14, borderBottom: `0.5px solid ${C.border}` }}>
+      <PageFrame wide>
+        <div className="pf-head" style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 20, marginBottom: 22, paddingBottom: 16, borderBottom: `0.5px solid ${C.border}` }}>
           <div>
             <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", color: C.tealLight, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>
-              {view === "positions"
-                ? "Portfolio"
-                : view === "backtest"
-                  ? "Strategy"
-                  : "Portfolio ledger"}
+              {view === "positions" ? "Account" : view === "backtest" ? "Strategy lab" : "Ledger"}
             </div>
-            <h1 style={{ margin: 0, color: C.textPrimary, fontFamily: FD, fontSize: "clamp(30px, 3.4vw, 46px)", lineHeight: 1.04, letterSpacing: "-0.03em", fontWeight: 500 }}>
-              {view === "positions"
-                ? "Portfolio"
-                : view === "backtest"
-                  ? "Backtest"
-                  : "Activity"}
+            <h1 style={{ margin: 0, color: C.textPrimary, fontFamily: FD, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.02em", fontWeight: 600, display: "flex", alignItems: "center", gap: 12 }}>
+              {view === "positions" ? "Portfolio" : view === "backtest" ? "Backtests" : "Activity"}
+              <BetaTag />
             </h1>
-            {view !== "positions" && (
-              <div style={{ fontSize: 14, color: C.textSecondary, fontFamily: FS, marginTop: 8, maxWidth: 720, lineHeight: 1.55 }}>
-                {view === "backtest"
-                  ? "The PLP “be-the-house” vault strategy, replayed across thousands of settled BTC oracles — live from the protocol’s own indexer."
+            <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: FS, marginTop: 8, maxWidth: 680, lineHeight: 1.55 }}>
+              {view === "positions"
+                ? "Your holdings, live mark-to-market value, and a clean P&L summary."
+                : view === "backtest"
+                  ? "Replay each strategy class against real Coinbase / Polymarket history — a transparent proxy, not a forecast."
                   : "A chronological ledger of buys, exits, and note actions."}
-              </div>
-            )}
+            </div>
           </div>
-          <div className="portfolio-tabs">
+          <div className="pf-tabs">
             {([
-              { id: "positions", label: "Overview" },
-              { id: "backtest", label: "Backtest" },
+              { id: "positions", label: "Holdings" },
+              { id: "backtest", label: "Backtests" },
               { id: "history", label: "History" },
             ] as const).map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setView(t.id)}
-                className={`portfolio-tab${view === t.id ? " active" : ""}`}
+                className={`pf-tab${view === t.id ? " active" : ""}`}
               >
                 {t.label}
               </button>
@@ -756,778 +361,550 @@ export default function PortfolioPage() {
         </div>
 
         {view === "backtest" ? (
-          <BacktestPanel />
+          <StrategyBacktestPanel />
         ) : view === "history" ? (
-          <History
-            walletAddress={appWalletAddress}
-            connected={walletReady}
-          />
+          <History walletAddress={appWalletAddress} connected={walletReady} />
         ) : (
-        <>
-        <section className="portfolio-overview" aria-label="Portfolio account overview">
-          <div className="portfolio-panel" style={{ display: "grid", alignContent: "space-between", minHeight: 256 }}>
-            <div>
-              <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 12 }}>
-                Live value · mark-to-market
-              </div>
-              <LivePortfolioChart portfolioValue={displayTotal} positions={chartScopes} />
-            </div>
+          <>
+            {/* ── Calm account summary: total value + P&L, and a simple allocation list ── */}
+            <section className="pf-overview" aria-label="Portfolio account overview">
+              <div className="pf-panel" style={{ display: "grid", alignContent: "space-between" }}>
+                <div>
+                  <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 12 }}>
+                    Net account value
+                  </div>
+                  <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 42, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                    {fmtUsd(displayTotal, 2)}
+                  </div>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 12 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: displayPnl >= 0 ? C.green : C.red }} />
+                    <span style={{ color: displayPnl >= 0 ? C.green : C.red, fontFamily: FM, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+                      {displayPnl >= 0 ? "+" : ""}{fmtUsd(displayPnl, 2)}
+                    </span>
+                    <span style={{ color: C.textMuted, fontFamily: FM, fontSize: 11, letterSpacing: "0.04em" }}>
+                      unrealized P&amp;L · accrued yield
+                    </span>
+                  </div>
+                </div>
 
-            <div className="portfolio-metric-row">
-              <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>P&L</div>
-                <div style={{ color: displayPnl >= 0 ? C.green : C.red, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>
-                  {displayPnl >= 0 ? "+" : ""}{fmtUsd(displayPnl, 2)}
+                <div className="pf-summary-metrics">
+                  <div>
+                    <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" }}>Cash</div>
+                    <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 18, fontWeight: 600, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(liveUsdc, 2)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" }}>Deployed</div>
+                    <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 18, fontWeight: 600, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{deployedPct.toFixed(0)}%</div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" }}>Positions</div>
+                    <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 18, fontWeight: 600, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{positionCount}</div>
+                  </div>
                 </div>
               </div>
-              <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Deployed</div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{deployedPct.toFixed(1)}%</div>
-              </div>
-              <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>Positions</div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600, marginTop: 7 }}>{positionCount}</div>
-              </div>
-            </div>
-          </div>
 
-          <div className="portfolio-panel">
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 18, marginBottom: 8 }}>
-              <div>
-                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
-                  Allocation
+              <div className="pf-panel">
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 18, marginBottom: 4 }}>
+                  <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+                    Allocation
+                  </div>
+                  <div style={{ color: C.textSecondary, fontFamily: FM, fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(productTotal, 2)}</div>
                 </div>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 20, fontWeight: 600 }}>
-                  Product balances
-                </div>
-              </div>
-              <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13 }}>{fmtUsd(productTotal, 2)}</div>
-            </div>
 
-            <div className="portfolio-allocation">
-              {productRows.map((row) => {
-                const share = productTotal > 0 ? (row.value / productTotal) * 100 : 0;
-                const active = activeId === row.id;
-                const content = (
-                  <>
-                    <div style={{ display: "grid", gridTemplateColumns: "10px minmax(0, 1fr)", gap: 12, alignItems: "center" }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: row.color, opacity: row.value > 0 ? 1 : 0.45 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {row.label}
+                <div style={{ display: "grid" }}>
+                  {productRows.map((row) => {
+                    const share = productTotal > 0 ? (row.value / productTotal) * 100 : 0;
+                    const content = (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "10px minmax(0, 1fr)", gap: 12, alignItems: "center" }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: row.color, opacity: row.value > 0 ? 1 : 0.4 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.label}</div>
+                            <div style={{ color: C.textMuted, fontFamily: FS, fontSize: 11, lineHeight: 1.35, marginTop: 2 }}>{row.description}</div>
+                          </div>
                         </div>
-                        <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>
-                          {row.description}
+                        <div className="pf-spark">
+                          <span style={{ width: `${Math.max(1, Math.min(100, share))}%`, background: row.color, opacity: row.value > 0 ? 0.95 : 0.16 }} />
                         </div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="portfolio-spark">
-                        <span style={{ width: `${Math.max(1, Math.min(100, share))}%`, background: row.color, opacity: row.value > 0 ? 0.95 : 0.18 }} />
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 14, fontWeight: 600 }}>{fmtUsd(row.value, 2)}</div>
-                      <div style={{ color: active ? row.color : C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{(share ?? 0).toFixed(1)}%</div>
-                    </div>
-                  </>
-                );
-                const commonProps = {
-                  className: "portfolio-allocation-row",
-                  onMouseEnter: () => setActiveId(row.id),
-                  onMouseLeave: () => setActiveId(null),
-                };
-                return row.href ? (
-                  <Link key={row.id} href={row.href} {...commonProps}>
-                    {content}
-                  </Link>
-                ) : (
-                  <div key={row.id} {...commonProps}>
-                    {content}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        <div className="portfolio-section-head">
-          <div>
-            <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 5 }}>
-              Positions
-            </div>
-          </div>
-        </div>
-
-        {/* Positions - sorted by value descending, USDC included */}
-        {(() => {
-          // No wallet → no position cards. The disconnect-sweep useEffect
-          // above clears the reducer, but until React re-runs this pass
-          // we could still iterate stale state.basketPositions for one
-          // tick; hard-gating here closes that race so no card ever flashes
-          // on a disconnected portfolio.
-          if (!walletReady) {
-            return (
-              <div className="portfolio-card" style={{ textAlign: "center", padding: "34px 20px" }}>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
-                  Connect a wallet to view balances
-                </div>
-                <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13 }}>
-                  Portfolio data is pulled from the connected account and the Sui-backed backend indexer.
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 13.5, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(row.value, 2)}</div>
+                          <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{share.toFixed(1)}%</div>
+                        </div>
+                      </>
+                    );
+                    return row.href ? (
+                      <Link key={row.id} href={row.href} className="pf-alloc-row">{content}</Link>
+                    ) : (
+                      <div key={row.id} className="pf-alloc-row">{content}</div>
+                    );
+                  })}
                 </div>
               </div>
-            );
-          }
-          // Build all position rows with value for sorting
-          const rows: { value: number; el: React.ReactNode; key: string }[] = [];
+            </section>
 
-          // Pull every virtual-position group the user has deposited. Each
-          // group corresponds to a distinct synthetic id (e.g. PBU-HIGH-
-          // SHORT) and becomes its own card, even when multiple synthetic
-          // ids share a single on-chain UUID.
-          const virtualGroups: GroupedVirtualPosition[] = virtualGroupsForWallet;
-          // `onchainTokensByUuid` is hoisted to component scope (shared with
-          // the headline/donut totals). Basket cards gate on positive
-          // on-chain PBU balance so stale reducer rows can't
-          // produce ghost cards that don't match the wallet.
-          const virtualTokensByUuid = virtualGroups.reduce<Record<string, number>>(
-            (acc, g) => {
-              acc[g.uuid] = (acc[g.uuid] ?? 0) + g.tokens;
-              return acc;
-            },
-            {},
-          );
-          // Map uuid → a representative uiBundleId from any virtual group.
-          // When a residual position exists for a UUID the user has ALSO
-          // deposited into via a synthetic id, borrowing that id gives us
-          // the user's intent (they picked PBU-MID-SHORT, so the residual
-          // card should label + route the same way). Picking the largest
-          // group by token count stays stable under duplicate ids.
-          const uiBundleIdByUuid = virtualGroups.reduce<Record<string, { id: string; tokens: number }>>(
-            (acc, g) => {
-              const prev = acc[g.uuid];
-              if (!prev || g.tokens > prev.tokens) {
-                acc[g.uuid] = { id: g.uiBundleId, tokens: g.tokens };
-              }
-              return acc;
-            },
-            {},
-          );
-
-          // Derive a frontend PBU- label for a residual on-chain position
-          // whose bundleId is a backend UUID (so resolveBasket misses).
-          // Preference order:
-          //   1. Use p.displayName if the backend already stored a
-          //      PBU-TIER-WINDOW name (new seed) — that's the authoritative
-          //      basket identity and it routes directly to /app/basket/[id].
-          //   2. Borrow the user's own uiBundleId if they have any virtual
-          //      group for this UUID — that's their actual intent.
-          //   3. Match the live grid by tier + closest daysLeft to the
-          //      backend's maturityAt. Keeps (tier, window) semantics even
-          //      for pre-ledger deposits.
-          //   4. Match any seed bundle with the same tier (window unknown,
-          //      but at least the tier + PBU- format is correct).
-          // Returns null when even the tier is unknown — caller falls back
-          // to whatever p.displayName was.
-          const deriveResidualLabel = (p: BasketPosition): {
-            labelId: string;
-            tier: 90 | 70 | 50;
-            nav: number;
-          } | null => {
-            if (p.displayName && /^PBU-(HIGH|MID|LOW)-(SHORT|MED|LONG)$/.test(p.displayName)) {
-              const live = basketState.status === "ok"
-                ? basketState.baskets.find((b) => b.id === p.displayName)
-                : null;
-              const tier = live?.tier ?? p.tier;
-              const nav = live?.nav ?? p.navHint;
-              if (tier != null && nav != null) {
-                return { labelId: p.displayName, tier, nav };
-              }
-            }
-            const borrowed = uiBundleIdByUuid[p.bundleId];
-            if (borrowed) {
-              const live = basketState.status === "ok"
-                ? basketState.baskets.find((b) => b.id === borrowed.id)
-                : null;
-              const tier = live?.tier ?? p.tier;
-              const nav = live?.nav ?? p.navHint;
-              if (tier != null && nav != null) {
-                return { labelId: borrowed.id, tier, nav };
-              }
-            }
-            const tierGuess = p.tier;
-            if (tierGuess == null) return null;
-            if (basketState.status === "ok") {
-              const candidates = basketState.baskets.filter((b) => b.tier === tierGuess);
-              if (candidates.length) {
-                const target = p.maturityAt;
-                const pick = target == null
-                  ? candidates[0]
-                  : candidates
-                      .map((b) => {
-                        const bMaturity = b.daysLeft != null
-                          ? Date.now() + b.daysLeft * 86_400_000
-                          : null;
-                        const diff = bMaturity == null
-                          ? Number.POSITIVE_INFINITY
-                          : Math.abs(bMaturity - target);
-                        return { b, diff };
-                      })
-                      .sort((a, z) => a.diff - z.diff)[0].b;
-                return { labelId: pick.id, tier: pick.tier, nav: pick.nav };
-              }
-            }
-            const seed = bundleById(`PBU-${tierGuess === 90 ? "HIGH" : tierGuess === 70 ? "MID" : "LOW"}-SHORT`);
-            if (seed) {
-              return { labelId: seed.id, tier: seed.tier, nav: p.navHint ?? seed.nav };
-            }
-            return null;
-          };
-
-          const renderBasketCard = (opts: {
-            cardKey: string;
-            uuid: string;
-            labelId: string;
-            qty: number;
-            avgCost: number;
-            nav: number;
-            tier: 90 | 70 | 50;
-            maturityAt?: number | null;
-            status?: string;
-          }) => {
-            const { cardKey, uuid, labelId, qty, avgCost, nav, tier, maturityAt, status } = opts;
-            // Cost basis for the card value — matches the top-line Total,
-            // donut slice, and breakdown row. We intentionally do NOT
-            // show a NAV-based unrealized P&L badge here: early-exit
-            // uses `exit_active`'s pool-ratio payout (≈ cost), so the
-            // NAV drift isn't realizable until the vault is finalized
-            // at resolution. Keeping pnl=0 on the card (and in the
-            // top-line onchainBasketPnl above) prevents the confusing
-            // "appears +$4 right after buying → evaporates on sell"
-            // sequence; real gains/losses still land on the USDC line
-            // when the user actually transacts.
-            const value = qty * avgCost;
-            const pnl = 0;
-            // Reference: `nav` is left unused on purpose. If we ever
-            // resurface a NAV-vs-cost indicator it should be labelled
-            // "Forward payout at resolution" (or similar) rather than
-            // "Unrealized P&L", and plumbed through a separate field
-            // so the top-line sums stay clean.
-            void nav;
-            const liveMatchById =
-              basketState.status === "ok"
-                ? basketState.baskets.find((b) => b.id === labelId)
-                : null;
-            const liveMaturityMs =
-              liveMatchById?.daysLeft != null
-                ? Date.now() + liveMatchById.daysLeft * 86_400_000
-                : null;
-            const effectiveMaturityMs = liveMaturityMs ?? maturityAt ?? null;
-            const matured =
-              status === "resolved" ||
-              (effectiveMaturityMs != null && effectiveMaturityMs <= renderNow);
-            const maturityDate = liveMatchById?.date
-              ? liveMatchById.date
-              : maturityAt
-                ? (() => {
-                    const d = new Date(maturityAt);
-                    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-                  })()
-                : null;
-            const maturityLabel =
-              typeof maturityDate === "string"
-                ? maturityDate
-                : maturityDate
-                  ? maturityDate.toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })
-                  : null;
-            const isBusy = redeemBusy === uuid;
-            const errMsg = redeemError[uuid];
-            // Human-readable conviction tag. Matches the wording on /basket
-            // where each card shows "high/mid/low probability" under the id.
-            const tierLabel = tier === 90 ? "High" : tier === 70 ? "Mid" : "Low";
-            // Days-to-close: prefer the live feed, fall back to maturityAt
-            // from the DB hydrate. Mirrors `formatDaysLeft` on /basket so the
-            // wording is consistent between the index card and portfolio card.
-            const daysLeftMs =
-              liveMatchById?.daysLeft != null
-                ? liveMatchById.daysLeft * 86_400_000
-                : maturityAt != null
-                  ? Math.max(0, maturityAt - renderNow)
-                  : null;
-            const closesInLabel =
-              daysLeftMs == null
-                ? null
-                : daysLeftMs <= 0
-                  ? "Resolving now"
-                  : (() => {
-                      const d = Math.round(daysLeftMs / 86_400_000);
-                      if (d === 0) return "Closes today";
-                      if (d === 1) return "Closes in 1 day";
-                      return `Closes in ${d} days`;
-                    })();
-            const contextLine = closesInLabel
-              ? `${tierLabel}-conviction · ${closesInLabel}`
-              : `${tierLabel}-conviction basket`;
-            rows.push({
-              key: cardKey,
-              value,
-              el: (
-                <div key={cardKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em" }}>MARKET BASKET</div>
-                    <Link href="/app/basket" style={{ fontSize: 11, color: C.teal, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
-                  </div>
-                  <Link href={`/app/basket/${labelId}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", textDecoration: "none" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <div style={{ width: 4, height: 24, borderRadius: 2, background: tc(tier) }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{labelId}</div>
-                        <div style={{ fontSize: 11, color: C.textSecondary, fontFamily: FS, marginTop: 2 }}>{contextLine}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{(qty ?? 0).toFixed(2)} units · avg ${(avgCost ?? 0).toFixed(3)}</div>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(value, 2)}</div>
-                      <div style={{ fontSize: 11, color: pnl >= 0 ? C.green : C.red, fontFamily: FS, marginTop: 2 }}>{pnl >= 0 ? "+" : ""}{fmtUsd(pnl, 2)}</div>
-                    </div>
-                  </Link>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
-                    <div style={{ fontSize: 11, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
-                      {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleRedeem(uuid, labelId, qty);
-                      }}
-                      disabled={isBusy || !walletReady}
-                      title={matured ? "Redeem at maturity" : "Exit this position early — pro-rata payout, small exit fee"}
-                      style={{
-                        padding: "7px 16px",
-                        fontSize: 12,
-                        fontFamily: FD,
-                        fontWeight: 500,
-                        letterSpacing: "0.02em",
-                        borderRadius: 8,
-                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${!isBusy && walletReady ? C.teal : "rgba(255,255,255,0.08)"}`,
-                        background: !isBusy && walletReady ? "rgba(45, 212, 191, 0.12)" : "transparent",
-                        color: !isBusy && walletReady ? C.tealLight : C.textMuted,
-                        opacity: isBusy ? 0.6 : 1,
-                        transition: `all 0.15s ${EASE}`,
-                      }}
-                    >
-                      {isBusy ? "Redeeming…" : "Redeem"}
-                    </button>
-                  </div>
-                  {errMsg && (
-                    <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>
-                      {errMsg}
-                    </div>
-                  )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, margin: "0 0 12px" }}>
+              <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+                Open positions
+              </div>
+              {walletReady && positionCount > 0 && (
+                <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10.5, fontVariantNumeric: "tabular-nums" }}>
+                  {positionCount} held · sorted by value
                 </div>
-              ),
-            });
-          };
+              )}
+            </div>
 
-          // Render one card per virtual group, using the NAV at deposit
-          // time as the cost basis so PnL starts at zero. Crucially, we
-          // cap qty at the wallet's on-chain PBU balance: if the user
-          // redeemed / burned / transferred the tokens the virtual ledger
-          // can't catch up on its own, so the chain is the final word.
-          virtualGroups.forEach((g) => {
-            const liveMatch =
-              basketState.status === "ok"
-                ? basketState.baskets.find((b) => b.id === g.uiBundleId)
-                : null;
-            const dbMatch = state.basketPositions.find((p) => p.bundleId === g.uuid);
-            const tier = liveMatch?.tier ?? dbMatch?.tier;
-            const nav = liveMatch?.nav ?? dbMatch?.navHint;
-            if (tier == null || nav == null) return;
-            // Gate every card on the authoritative on-chain balance. If
-            // the wallet holds nothing for this bundle UUID, the card
-            // disappears regardless of what the virtual ledger remembers.
-            const onchainForUuid = onchainTokensByUuid[g.uuid] ?? 0;
-            if (onchainForUuid <= 0.000001) return;
-            const totalVirtualForUuid = virtualTokensByUuid[g.uuid] ?? 0;
-            const share =
-              totalVirtualForUuid > 0 ? g.tokens / totalVirtualForUuid : 1;
-            const effectiveQty = Math.min(g.tokens, onchainForUuid * share);
-            if (effectiveQty <= 0.000001) return;
-            renderBasketCard({
-              cardKey: `${g.uuid}::${g.uiBundleId}`,
-              uuid: g.uuid,
-              labelId: g.uiBundleId,
-              qty: effectiveQty,
-              // Actual USDC-per-token the user paid at deposit, not the
-              // live Polymarket NAV snapshot (avgNavAtDeposit). The chain
-              // mints at a fixed issue_price_bps, so NAV-at-deposit drifts
-              // off the true cost basis whenever NAV != issue price.
-              // Using the real cost keeps card PnL aligned with the
-              // headline Unrealized P&L (which sums qty × (nav - avgCost)
-              // against the hydrated position, also keyed on cost basis).
-              avgCost:
-                g.tokens > 1e-9 && g.depositedUsdc > 0
-                  ? g.depositedUsdc / g.tokens
-                  : g.avgNavAtDeposit,
-              nav,
-              tier,
-              maturityAt: dbMatch?.maturityAt,
-              status: dbMatch?.status,
-            });
-          });
+            {/* Positions — sorted by value descending, USDC included */}
+            <div className="pf-positions">
+            {(() => {
+              if (!walletReady) {
+                return (
+                  <div className="pf-card" style={{ gridColumn: "1 / -1", textAlign: "center", padding: "34px 20px" }}>
+                    <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 17, fontWeight: 600, marginBottom: 6 }}>
+                      Connect a wallet to view balances
+                    </div>
+                    <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13 }}>
+                      Portfolio data is pulled from the connected account and the Sui-backed backend indexer.
+                    </div>
+                  </div>
+                );
+              }
 
-          // For each on-chain position, render a residual card covering
-          // any tokens the virtual ledger hasn't explained (pre-ledger
-          // deposits, localStorage wipes, etc.).
-          // Dedupe by bundleId before rendering residuals: the backend has
-          // historically returned multiple rows for the same bundle (e.g. one
-          // per on-chain deposit event), which would give us two cards with
-          // identical `${bundleId}::residual` keys and the "Encountered two
-          // children with the same key" React warning. Sum their qty so the
-          // user sees one merged residual instead of duplicates.
-          const residualByBundle = new Map<string, BasketPosition>();
-          state.basketPositions.forEach((p) => {
-            const existing = residualByBundle.get(p.bundleId);
-            if (existing) {
-              residualByBundle.set(p.bundleId, {
-                ...existing,
-                qty: existing.qty + p.qty,
+              const rows: { value: number; el: React.ReactNode; key: string }[] = [];
+              const virtualGroups: GroupedVirtualPosition[] = virtualGroupsForWallet;
+              const virtualTokensByUuid = virtualGroups.reduce<Record<string, number>>(
+                (acc, g) => {
+                  acc[g.uuid] = (acc[g.uuid] ?? 0) + g.tokens;
+                  return acc;
+                },
+                {},
+              );
+              const uiBundleIdByUuid = virtualGroups.reduce<Record<string, { id: string; tokens: number }>>(
+                (acc, g) => {
+                  const prev = acc[g.uuid];
+                  if (!prev || g.tokens > prev.tokens) acc[g.uuid] = { id: g.uiBundleId, tokens: g.tokens };
+                  return acc;
+                },
+                {},
+              );
+
+              const deriveResidualLabel = (p: BasketPosition): { labelId: string; tier: 90 | 70 | 50; nav: number } | null => {
+                if (p.displayName && /^PBU-(HIGH|MID|LOW)-(SHORT|MED|LONG)$/.test(p.displayName)) {
+                  const live = basketState.status === "ok" ? basketState.baskets.find((b) => b.id === p.displayName) : null;
+                  const tier = live?.tier ?? p.tier;
+                  const nav = live?.nav ?? p.navHint;
+                  if (tier != null && nav != null) return { labelId: p.displayName, tier, nav };
+                }
+                const borrowed = uiBundleIdByUuid[p.bundleId];
+                if (borrowed) {
+                  const live = basketState.status === "ok" ? basketState.baskets.find((b) => b.id === borrowed.id) : null;
+                  const tier = live?.tier ?? p.tier;
+                  const nav = live?.nav ?? p.navHint;
+                  if (tier != null && nav != null) return { labelId: borrowed.id, tier, nav };
+                }
+                const tierGuess = p.tier;
+                if (tierGuess == null) return null;
+                if (basketState.status === "ok") {
+                  const candidates = basketState.baskets.filter((b) => b.tier === tierGuess);
+                  if (candidates.length) {
+                    const target = p.maturityAt;
+                    const pick = target == null
+                      ? candidates[0]
+                      : candidates
+                          .map((b) => {
+                            const bMaturity = b.daysLeft != null ? Date.now() + b.daysLeft * 86_400_000 : null;
+                            const diff = bMaturity == null ? Number.POSITIVE_INFINITY : Math.abs(bMaturity - target);
+                            return { b, diff };
+                          })
+                          .sort((a, z) => a.diff - z.diff)[0].b;
+                    return { labelId: pick.id, tier: pick.tier, nav: pick.nav };
+                  }
+                }
+                const seed = bundleById(`PBU-${tierGuess === 90 ? "HIGH" : tierGuess === 70 ? "MID" : "LOW"}-SHORT`);
+                if (seed) return { labelId: seed.id, tier: seed.tier, nav: p.navHint ?? seed.nav };
+                return null;
+              };
+
+              const renderBasketCard = (opts: {
+                cardKey: string;
+                uuid: string;
+                labelId: string;
+                qty: number;
+                avgCost: number;
+                nav: number;
+                tier: 90 | 70 | 50;
+                maturityAt?: number | null;
+                status?: string;
+              }) => {
+                const { cardKey, uuid, labelId, qty, avgCost, nav, tier, maturityAt, status } = opts;
+                const value = qty * avgCost;
+                const pnl = 0;
+                void nav;
+                const liveMatchById = basketState.status === "ok" ? basketState.baskets.find((b) => b.id === labelId) : null;
+                const liveMaturityMs = liveMatchById?.daysLeft != null ? Date.now() + liveMatchById.daysLeft * 86_400_000 : null;
+                const effectiveMaturityMs = liveMaturityMs ?? maturityAt ?? null;
+                const matured = status === "resolved" || (effectiveMaturityMs != null && effectiveMaturityMs <= renderNow);
+                const maturityDate = liveMatchById?.date
+                  ? liveMatchById.date
+                  : maturityAt
+                    ? (() => {
+                        const d = new Date(maturityAt);
+                        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+                      })()
+                    : null;
+                const maturityLabel =
+                  typeof maturityDate === "string"
+                    ? maturityDate
+                    : maturityDate
+                      ? maturityDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                      : null;
+                const isBusy = redeemBusy === uuid;
+                const errMsg = redeemError[uuid];
+                const tierLabel = tier === 90 ? "High" : tier === 70 ? "Mid" : "Low";
+                const daysLeftMs =
+                  liveMatchById?.daysLeft != null
+                    ? liveMatchById.daysLeft * 86_400_000
+                    : maturityAt != null
+                      ? Math.max(0, maturityAt - renderNow)
+                      : null;
+                const closesInLabel =
+                  daysLeftMs == null
+                    ? null
+                    : daysLeftMs <= 0
+                      ? "Resolving now"
+                      : (() => {
+                          const d = Math.round(daysLeftMs / 86_400_000);
+                          if (d === 0) return "Closes today";
+                          if (d === 1) return "Closes in 1 day";
+                          return `Closes in ${d} days`;
+                        })();
+                const contextLine = closesInLabel ? `${tierLabel}-conviction · ${closesInLabel}` : `${tierLabel}-conviction basket`;
+                rows.push({
+                  key: cardKey,
+                  value,
+                  el: (
+                    <div key={cardKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <div style={{ fontSize: 9.5, color: C.tealLight, fontFamily: FM, letterSpacing: "0.12em" }}>MARKET BASKET</div>
+                        <Link href="/app/basket" style={{ fontSize: 11, color: C.teal, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
+                      </div>
+                      <Link href={`/app/basket/${labelId}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", textDecoration: "none" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: tc(tier), flexShrink: 0 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{labelId}</div>
+                            <div style={{ fontSize: 11, color: C.textSecondary, fontFamily: FS, marginTop: 2 }}>{contextLine}</div>
+                            {mode === "advanced" && (
+                              <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{(qty ?? 0).toFixed(2)} units · avg ${(avgCost ?? 0).toFixed(3)}</div>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(value, 2)}</div>
+                          <div style={{ fontSize: 11, color: pnl >= 0 ? C.green : C.red, fontFamily: FM, marginTop: 2 }}>{pnl >= 0 ? "+" : ""}{fmtUsd(pnl, 2)}</div>
+                        </div>
+                      </Link>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
+                        <div style={{ fontSize: 10, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
+                          {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRedeem(uuid, labelId, qty)}
+                          disabled={isBusy || !walletReady}
+                          title={matured ? "Redeem at maturity" : "Exit this position early — pro-rata payout, small exit fee"}
+                          style={redeemBtn(C.teal, C.tealLight, isBusy, walletReady)}
+                        >
+                          {isBusy ? "Redeeming…" : "Redeem"}
+                        </button>
+                      </div>
+                      {errMsg && <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>{errMsg}</div>}
+                    </div>
+                  ),
+                });
+              };
+
+              virtualGroups.forEach((g) => {
+                const liveMatch = basketState.status === "ok" ? basketState.baskets.find((b) => b.id === g.uiBundleId) : null;
+                const dbMatch = state.basketPositions.find((p) => p.bundleId === g.uuid);
+                const tier = liveMatch?.tier ?? dbMatch?.tier;
+                const nav = liveMatch?.nav ?? dbMatch?.navHint;
+                if (tier == null || nav == null) return;
+                const onchainForUuid = onchainTokensByUuid[g.uuid] ?? 0;
+                if (onchainForUuid <= 0.000001) return;
+                const totalVirtualForUuid = virtualTokensByUuid[g.uuid] ?? 0;
+                const share = totalVirtualForUuid > 0 ? g.tokens / totalVirtualForUuid : 1;
+                const effectiveQty = Math.min(g.tokens, onchainForUuid * share);
+                if (effectiveQty <= 0.000001) return;
+                renderBasketCard({
+                  cardKey: `${g.uuid}::${g.uiBundleId}`,
+                  uuid: g.uuid,
+                  labelId: g.uiBundleId,
+                  qty: effectiveQty,
+                  avgCost: g.tokens > 1e-9 && g.depositedUsdc > 0 ? g.depositedUsdc / g.tokens : g.avgNavAtDeposit,
+                  nav,
+                  tier,
+                  maturityAt: dbMatch?.maturityAt,
+                  status: dbMatch?.status,
+                });
               });
-            } else {
-              residualByBundle.set(p.bundleId, p);
-            }
-          });
-          residualByBundle.forEach((p) => {
-            // Residual = on-chain tokens the virtual ledger hasn't already
-            // accounted for. Drive the subtraction off the on-chain balance
-            // (not the backend qty) so a stale DB row with ghost tokens the
-            // wallet no longer holds doesn't produce a stale card.
-            const onchainForUuid = onchainTokensByUuid[p.bundleId] ?? 0;
-            if (onchainForUuid <= 0.000001) return;
-            const virtualQty = virtualTokensByUuid[p.bundleId] ?? 0;
-            const coveredByVirtual = Math.min(virtualQty, onchainForUuid);
-            const residual = onchainForUuid - coveredByVirtual;
-            if (residual <= 0.001) return;
-            // First try the catalog (works when bundleId is already a
-            // PBU- id), then fall through to deriveResidualLabel which
-            // maps a backend UUID → the best-guess PBU-TIER-WINDOW id.
-            // Using p.displayName can leak an old bundle id into the
-            // UI and breaks the basket-detail route.
-            const catalogMatch = resolveBasket(p.bundleId);
-            let tier: 90 | 70 | 50 | undefined;
-            let nav: number | undefined;
-            let labelId: string;
-            if (catalogMatch) {
-              tier = catalogMatch.tier;
-              nav = catalogMatch.nav;
-              labelId = catalogMatch.id;
-            } else {
-              const derived = deriveResidualLabel(p);
-              if (!derived) return;
-              tier = derived.tier;
-              nav = derived.nav;
-              labelId = derived.labelId;
-            }
-            if (tier == null || nav == null) return;
-            renderBasketCard({
-              cardKey: `${p.bundleId}::residual`,
-              uuid: p.bundleId,
-              labelId,
-              qty: residual,
-              // Use the DB-hydrated entry price as the cost basis. Pegging
-              // to current NAV forced card PnL = $0 regardless of drift,
-              // which disagreed with the headline (basketDriftLive uses
-              // p.avgCost). Falling back to nav only when the hydrate
-              // produced no avgCost (pre-migration rows) keeps the card
-              // honest without crashing on missing data.
-              avgCost: p.avgCost && p.avgCost > 0 ? p.avgCost : nav,
-              nav,
-              tier,
-              maturityAt: p.maturityAt,
-              status: p.status,
-            });
-          });
 
+              const residualByBundle = new Map<string, BasketPosition>();
+              state.basketPositions.forEach((p) => {
+                const existing = residualByBundle.get(p.bundleId);
+                if (existing) residualByBundle.set(p.bundleId, { ...existing, qty: existing.qty + p.qty });
+                else residualByBundle.set(p.bundleId, p);
+              });
+              residualByBundle.forEach((p) => {
+                const onchainForUuid = onchainTokensByUuid[p.bundleId] ?? 0;
+                if (onchainForUuid <= 0.000001) return;
+                const virtualQty = virtualTokensByUuid[p.bundleId] ?? 0;
+                const coveredByVirtual = Math.min(virtualQty, onchainForUuid);
+                const residual = onchainForUuid - coveredByVirtual;
+                if (residual <= 0.001) return;
+                const catalogMatch = resolveBasket(p.bundleId);
+                let tier: 90 | 70 | 50 | undefined;
+                let nav: number | undefined;
+                let labelId: string;
+                if (catalogMatch) {
+                  tier = catalogMatch.tier;
+                  nav = catalogMatch.nav;
+                  labelId = catalogMatch.id;
+                } else {
+                  const derived = deriveResidualLabel(p);
+                  if (!derived) return;
+                  tier = derived.tier;
+                  nav = derived.nav;
+                  labelId = derived.labelId;
+                }
+                if (tier == null || nav == null) return;
+                renderBasketCard({
+                  cardKey: `${p.bundleId}::residual`,
+                  uuid: p.bundleId,
+                  labelId,
+                  qty: residual,
+                  avgCost: p.avgCost && p.avgCost > 0 ? p.avgCost : nav,
+                  nav,
+                  tier,
+                  maturityAt: p.maturityAt,
+                  status: p.status,
+                });
+              });
 
-          // `effectiveTranches` is the reducer's tranchePositions filtered to
-          // rows backed by on-chain PBU. Rows from cancelled
-          // transactions (backend creates the row before the wallet signs)
-          // never appear here because the wallet holds no matching PBU.
-          effectiveTranches.forEach((p, i) => {
-            const principal = p.qty * p.avgCost;
-            // Per-card accrued yield — same formula as trancheAccruedYield, so
-            // summing cards matches the headline P&L contribution.
-            const trancheAccrued =
-              p.apy != null && p.createdAt != null && p.maturityDays != null
-                ? principal *
-                  (p.apy / 100 / 365) *
-                  Math.min(
-                    Math.max(0, (renderNow - p.createdAt) / 86_400_000),
-                    p.maturityDays,
-                  )
-                : 0;
-            const value = principal + trancheAccrued;
-            const rowKey = `tranche-${p.vaultId ?? `${p.bundleId}-${p.kind}-${i}`}`;
-            const matured = p.maturityAt != null ? p.maturityAt <= renderNow : false;
-            const isBusy = redeemBusy === rowKey;
-            const errMsg = redeemError[rowKey];
-            const maturityLabel = p.maturityAt
-              ? new Date(p.maturityAt).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })
-              : null;
-            rows.push({
-              key: rowKey,
-              value,
-              el: (
-                <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em" }}>TRANCHE</div>
-                    <Link href="/app/tranche" style={{ fontSize: 11, color: C.teal, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
-                  </div>
-                  <Link href={`/app/tranche/${p.bundleName ?? p.bundleId}?tier=${p.kind}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", textDecoration: "none" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <div style={{ width: 4, height: 24, borderRadius: 2, background: trancheColor(p.kind) }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD, textTransform: "capitalize" }}>{p.bundleName ?? p.bundleId} · {p.kind}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{(p.qty ?? 0).toFixed(2)} units · issued ${(p.avgCost ?? 0).toFixed(2)}</div>
+              effectiveTranches.forEach((p, i) => {
+                const principal = p.qty * p.avgCost;
+                const trancheAccrued =
+                  p.apy != null && p.createdAt != null && p.maturityDays != null
+                    ? principal * (p.apy / 100 / 365) * Math.min(Math.max(0, (renderNow - p.createdAt) / 86_400_000), p.maturityDays)
+                    : 0;
+                const value = principal + trancheAccrued;
+                const rowKey = `tranche-${p.vaultId ?? `${p.bundleId}-${p.kind}-${i}`}`;
+                const matured = p.maturityAt != null ? p.maturityAt <= renderNow : false;
+                const isBusy = redeemBusy === rowKey;
+                const errMsg = redeemError[rowKey];
+                const maturityLabel = p.maturityAt
+                  ? new Date(p.maturityAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                  : null;
+                rows.push({
+                  key: rowKey,
+                  value,
+                  el: (
+                    <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <div style={{ fontSize: 9.5, color: C.amber, fontFamily: FM, letterSpacing: "0.12em" }}>RISK SLICE</div>
+                        <Link href="/app/tranche" style={{ fontSize: 11, color: C.teal, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
+                      </div>
+                      <Link href={`/app/tranche/${p.bundleName ?? p.bundleId}?tier=${p.kind}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", textDecoration: "none" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: trancheColor(p.kind), flexShrink: 0 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD, textTransform: "capitalize" }}>{p.bundleName ?? p.bundleId} · {p.kind}</div>
+                            {mode === "advanced" && (
+                              <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{(p.qty ?? 0).toFixed(2)} units · issued ${(p.avgCost ?? 0).toFixed(2)}</div>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(value, 2)}</div>
+                          {trancheAccrued > 0 && <div style={{ fontSize: 11, color: C.green, fontFamily: FM, marginTop: 2 }}>+{fmtUsd(trancheAccrued, 2)}</div>}
+                        </div>
+                      </Link>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
+                        <div style={{ fontSize: 10, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
+                          {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleRedeemPpn(rowKey, {
+                              vaultIds: p.allVaultIds?.length ? p.allVaultIds : p.vaultId ? [p.vaultId] : undefined,
+                              bundleId: p.bundleId,
+                            })
+                          }
+                          disabled={isBusy || !walletReady}
+                          title={matured ? "Redeem at maturity" : "Exit this tranche early — pro-rata payout"}
+                          style={redeemBtn(C.amber, C.amber, isBusy, walletReady)}
+                        >
+                          {isBusy ? "Redeeming…" : "Redeem"}
+                        </button>
+                      </div>
+                      {errMsg && <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>{errMsg}</div>}
+                    </div>
+                  ),
+                });
+              });
+
+              effectivePpnVaults.forEach((v) => {
+                const principal = Number.isFinite(v.principal) ? v.principal : 0;
+                const apy = Number.isFinite(v.apy) ? v.apy : 0;
+                const hasTerm = Number.isFinite(v.createdAt) && Number.isFinite(v.maturityDays);
+                const elapsed = hasTerm ? Math.max(0, (renderNow - v.createdAt) / 86_400_000) : 0;
+                const accrued = hasTerm ? principal * (apy / 100 / 365) * Math.min(elapsed, v.maturityDays) : 0;
+                const value = principal + accrued;
+                const rowKey = `ppn-${v.id}`;
+                const maturityMs = hasTerm ? v.createdAt + v.maturityDays * 86_400_000 : null;
+                const matured = maturityMs != null ? maturityMs <= renderNow : false;
+                const isBusy = redeemBusy === rowKey;
+                const errMsg = redeemError[rowKey];
+                const maturityLabel = maturityMs != null
+                  ? new Date(maturityMs).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                  : null;
+                rows.push({
+                  key: rowKey,
+                  value,
+                  el: (
+                    <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <div style={{ fontSize: 9.5, color: C.violet, fontFamily: FM, letterSpacing: "0.12em" }}>PROTECTED NOTE</div>
+                        <Link href="/app/ppn" style={{ fontSize: 11, color: C.violet, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: C.violet, flexShrink: 0 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{v.bundleId}</div>
+                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{hasTerm ? `${apy.toFixed(2)}% APY · ${Math.round(v.maturityDays)}d maturity` : "Principal-protected note"}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(value, 2)}</div>
+                          {accrued > 0 && <div style={{ fontSize: 11, color: C.green, fontFamily: FM, marginTop: 2 }}>+{fmtUsd(accrued, 2)}</div>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
+                        <div style={{ fontSize: 10, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
+                          {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRedeemPpn(rowKey, { vaultIds: v.allVaultIds ?? [v.id], bundleId: v.bundleId })}
+                          disabled={isBusy || !walletReady}
+                          title={matured ? "Redeem at maturity" : "Redeem this note early — principal-protected payout"}
+                          style={redeemBtn(C.violet, C.violet, isBusy, walletReady)}
+                        >
+                          {isBusy ? "Redeeming…" : "Redeem"}
+                        </button>
+                      </div>
+                      {errMsg && <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>{errMsg}</div>}
+                    </div>
+                  ),
+                });
+              });
+
+              effectiveDistPositions.forEach((p) => {
+                const collateral = Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0;
+                const maxProfit = Number.isFinite(p.max_profit_usdc) ? p.max_profit_usdc : 0;
+                const rowKey = `dist-${p.id}`;
+                rows.push({
+                  key: rowKey,
+                  value: collateral,
+                  el: (
+                    <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <div style={{ fontSize: 9.5, color: C.coral, fontFamily: FM, letterSpacing: "0.12em" }}>DISTRIBUTION MARKET</div>
+                        <Link href="/app/distribution" style={{ fontSize: 11, color: C.coral, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: C.coral, flexShrink: 0 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.question}</div>
+                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>μ {Math.round(p.target_mu)} · σ {Math.round(p.target_sigma)} · max {fmtUsd(maxProfit, 2)}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(collateral, 2)}</div>
+                          <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, marginTop: 2 }}>at risk</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
+                        <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · CONTINUOUS</div>
+                        <Link href="/app/distribution" style={{ padding: "7px 16px", fontSize: 12, fontFamily: FD, fontWeight: 500, letterSpacing: "0.02em", borderRadius: 8, border: `0.5px solid ${C.coral}`, background: `${C.coral}24`, color: C.coral, textDecoration: "none" }}>Settle →</Link>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(value, 2)}</div>
-                      {trancheAccrued > 0 && (
-                        <div style={{ fontSize: 11, color: C.green, fontFamily: FS, marginTop: 2 }}>+{fmtUsd(trancheAccrued, 2)}</div>
-                      )}
-                    </div>
-                  </Link>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
-                    <div style={{ fontSize: 11, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
-                      {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRedeemPpn(rowKey, {
-                          vaultIds: p.allVaultIds?.length
-                            ? p.allVaultIds
-                            : p.vaultId
-                              ? [p.vaultId]
-                              : undefined,
-                          bundleId: p.bundleId,
-                        })
-                      }
-                      disabled={isBusy || !walletReady}
-                      title={matured ? "Redeem at maturity" : "Exit this tranche early — pro-rata payout"}
-                      style={{
-                        padding: "7px 16px",
-                        fontSize: 12,
-                        fontFamily: FD,
-                        fontWeight: 500,
-                        letterSpacing: "0.02em",
-                        borderRadius: 8,
-                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${!isBusy && walletReady ? C.amber : "rgba(255,255,255,0.08)"}`,
-                        background: !isBusy && walletReady ? "rgba(217, 119, 6, 0.14)" : "transparent",
-                        color: !isBusy && walletReady ? C.amber : C.textMuted,
-                        opacity: isBusy ? 0.6 : 1,
-                        transition: `all 0.15s ${EASE}`,
-                      }}
-                    >
-                      {isBusy ? "Redeeming…" : "Redeem"}
-                    </button>
-                  </div>
-                  {errMsg && (
-                    <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>
-                      {errMsg}
-                    </div>
-                  )}
-                </div>
-              ),
-            });
-          });
+                  ),
+                });
+              });
 
-          // Same on-chain gate as the tranche loop above — cancelled-tx rows
-          // never reach this list, so the card count matches the wallet.
-          effectivePpnVaults.forEach((v) => {
-            // On-chain `ppn:` shares carry principal but not the note's term or
-            // created-at, so those hydrate to NaN. Mirror the tranche card's
-            // graceful "MATURITY UNKNOWN" path: when the term is unknown, show
-            // principal as the value with no fabricated accrual or maturity date.
-            const principal = Number.isFinite(v.principal) ? v.principal : 0;
-            const apy = Number.isFinite(v.apy) ? v.apy : 0;
-            const hasTerm = Number.isFinite(v.createdAt) && Number.isFinite(v.maturityDays);
-            const elapsed = hasTerm ? Math.max(0, (renderNow - v.createdAt) / 86_400_000) : 0;
-            const accrued = hasTerm
-              ? principal * (apy / 100 / 365) * Math.min(elapsed, v.maturityDays)
-              : 0;
-            const value = principal + accrued;
-            const rowKey = `ppn-${v.id}`;
-            const maturityMs = hasTerm ? v.createdAt + v.maturityDays * 86_400_000 : null;
-            const matured = maturityMs != null ? maturityMs <= renderNow : false;
-            const isBusy = redeemBusy === rowKey;
-            const errMsg = redeemError[rowKey];
-            const maturityLabel =
-              maturityMs != null
-                ? new Date(maturityMs).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })
-                : null;
-            rows.push({
-              key: rowKey,
-              value,
-              el: (
-                <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em" }}>PPN VAULT</div>
-                    <Link href="/app/ppn" style={{ fontSize: 11, color: C.violet, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <div style={{ width: 4, height: 24, borderRadius: 2, background: C.violet }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{v.bundleId}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>{hasTerm ? `${apy.toFixed(2)}% APY · ${Math.round(v.maturityDays)}d maturity` : "Principal-protected note"}</div>
+              if (liveUsdc > 0) {
+                rows.push({
+                  key: "usdc",
+                  value: liveUsdc,
+                  el: (
+                    <div key="usdc" style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ fontSize: 9.5, color: C.textMuted, fontFamily: FM, letterSpacing: "0.12em", marginBottom: 12 }}>CASH</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: "#4a5a6a" }} />
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>USDC</div>
+                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2 }}>Sui testnet mUSDC</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(liveUsdc, 2)}</div>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      {/* Card big-number matches the tranche card convention
-                          (value = principal + accrued yield) and the top-line
-                          roll-up (effectivePpnValue + ppnAccruedYield). Using
-                          v.principal here made the PPN card appear frozen at
-                          the deposit amount while every other surface on the
-                          page moved with accrual. */}
-                      <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(value, 2)}</div>
-                      {accrued > 0 && (
-                        <div style={{ fontSize: 11, color: C.green, fontFamily: FS, marginTop: 2 }}>+{fmtUsd(accrued, 2)}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
-                    <div style={{ fontSize: 11, color: matured ? C.green : C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>
-                      {matured ? "MATURED" : maturityLabel ? `MATURES ${maturityLabel.toUpperCase()}` : "MATURITY UNKNOWN"}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRedeemPpn(rowKey, { vaultIds: v.allVaultIds ?? [v.id], bundleId: v.bundleId })}
-                      disabled={isBusy || !walletReady}
-                      title={matured ? "Redeem at maturity" : "Redeem this note early — principal-protected payout"}
-                      style={{
-                        padding: "7px 16px",
-                        fontSize: 12,
-                        fontFamily: FD,
-                        fontWeight: 500,
-                        letterSpacing: "0.02em",
-                        borderRadius: 8,
-                        cursor: !isBusy && walletReady ? "pointer" : "not-allowed",
-                        border: `0.5px solid ${!isBusy && walletReady ? C.violet : "rgba(255,255,255,0.08)"}`,
-                        background: !isBusy && walletReady ? "rgba(139, 92, 246, 0.14)" : "transparent",
-                        color: !isBusy && walletReady ? C.violet : C.textMuted,
-                        opacity: isBusy ? 0.6 : 1,
-                        transition: `all 0.15s ${EASE}`,
-                      }}
-                    >
-                      {isBusy ? "Redeeming…" : "Redeem"}
-                    </button>
-                  </div>
-                  {errMsg && (
-                    <div style={{ marginTop: 10, fontSize: 11, fontFamily: FS, color: C.red }}>
-                      {errMsg}
-                    </div>
-                  )}
-                </div>
-              ),
-            });
-          });
+                  ),
+                });
+              }
 
-          // Distribution Markets — open continuous μ/σ positions. Collateral
-          // is escrowed on-chain at open; the card shows it as value at risk
-          // and links to /app/distribution where the position is settled.
-          effectiveDistPositions.forEach((p) => {
-            const collateral = Number.isFinite(p.collateral_usdc) ? p.collateral_usdc : 0;
-            const maxProfit = Number.isFinite(p.max_profit_usdc) ? p.max_profit_usdc : 0;
-            const rowKey = `dist-${p.id}`;
-            rows.push({
-              key: rowKey,
-              value: collateral,
-              el: (
-                <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em" }}>DISTRIBUTION MARKET</div>
-                    <Link href="/app/distribution" style={{ fontSize: 11, color: C.coral, fontFamily: FS, textDecoration: "none" }}>View all →</Link>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <div style={{ width: 4, height: 24, borderRadius: 2, background: C.coral }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>{p.question}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>target μ {Math.round(p.target_mu)} · σ {Math.round(p.target_sigma)} · max profit {fmtUsd(maxProfit, 2)}</div>
-                      </div>
+              rows.sort((a, b) => b.value - a.value);
+              if (rows.length === 0) {
+                return (
+                  <div className="pf-card" style={{ gridColumn: "1 / -1", textAlign: "center", padding: "34px 20px" }}>
+                    <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 17, fontWeight: 600, marginBottom: 6 }}>
+                      No open positions yet
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(collateral, 2)}</div>
-                      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>collateral at risk</div>
+                    <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13 }}>
+                      New market baskets, risk slices, and protected notes will appear here after execution.
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14, paddingTop: 14, borderTop: `0.5px solid ${C.border}` }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · CONTINUOUS</div>
-                    <Link href="/app/distribution" style={{ padding: "7px 16px", fontSize: 12, fontFamily: FD, fontWeight: 500, letterSpacing: "0.02em", borderRadius: 8, border: `0.5px solid ${C.coral}`, background: `${C.coral}24`, color: C.coral, textDecoration: "none" }}>Settle →</Link>
-                  </div>
-                </div>
-              ),
-            });
-          });
-
-          // USDC cash position. Pulls straight from the Sui balance poll.
-          if (liveUsdc > 0) {
-            rows.push({
-              key: "usdc",
-              value: liveUsdc,
-              el: (
-                <div key="usdc" style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, letterSpacing: "0.08em", marginBottom: 14 }}>CASH</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0" }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <div style={{ width: 4, height: 24, borderRadius: 2, background: "#4a5a6a" }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>USDC</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: FS, marginTop: 2 }}>Sui testnet mUSDC</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 13, color: C.textPrimary, fontFamily: FD }}>{fmtUsd(liveUsdc, 2)}</div>
-                  </div>
-                </div>
-              ),
-            });
-          }
-
-          // Sort by value descending
-          rows.sort((a, b) => b.value - a.value);
-          if (rows.length === 0) {
-            return (
-              <div className="portfolio-card" style={{ textAlign: "center", padding: "34px 20px" }}>
-                <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
-                  No open positions yet
-                </div>
-                <div style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13 }}>
-                  New market baskets, risk slices, and protected notes will appear here after execution.
-                </div>
-              </div>
-            );
-          }
-          return rows.map(r => r.el);
-        })()}
-        </>
+                );
+              }
+              return rows.map((r) => r.el);
+            })()}
+            </div>
+          </>
         )}
       </PageFrame>
     </>
   );
+}
+
+// Shared redeem-button style. Accent border + tinted fill when actionable.
+function redeemBtn(border: string, text: string, isBusy: boolean, walletReady: boolean): React.CSSProperties {
+  const live = !isBusy && walletReady;
+  return {
+    padding: "7px 16px",
+    fontSize: 12,
+    fontFamily: FD,
+    fontWeight: 500,
+    letterSpacing: "0.02em",
+    borderRadius: 8,
+    cursor: live ? "pointer" : "not-allowed",
+    border: `0.5px solid ${live ? border : "rgba(255,255,255,0.08)"}`,
+    background: live ? `${border}1f` : "transparent",
+    color: live ? text : C.textMuted,
+    opacity: isBusy ? 0.6 : 1,
+    transition: `all 0.15s ${EASE}`,
+  };
 }

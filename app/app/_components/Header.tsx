@@ -9,16 +9,15 @@ import { C, FD } from "../_lib/tokens";
 import { ThemeToggle } from "../_lib/theme";
 import { ModeToggle } from "../_lib/mode";
 
-// IA note: the combined surfaces land incrementally so the app never breaks —
-// Baskets will absorb Risk Slices, and a new DeepBook product will absorb
-// Protected Notes. Until each combined page ships, all routes stay reachable.
+// Combined IA: Baskets absorbs Risk Slices (side-by-side), and DeepBook absorbs
+// Protected Notes (Strategies + Notes tabs). The old /app/tranche and /app/ppn
+// routes still resolve for deep links, just not in the primary nav.
 const NAV_LEFT = [
   { id: "portfolio",    label: "Portfolio",           href: "/app/portfolio" },
   { id: "distribution", label: "Distributed Options", href: "/app/distribution" },
   { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
-  { id: "tranche",      label: "Risk Slices",         href: "/app/tranche" },
-  { id: "ppn",          label: "Protected Notes",     href: "/app/ppn" },
   { id: "basket",       label: "Baskets",             href: "/app/basket" },
+  { id: "deepbook",     label: "DeepBook",            href: "/app/deepbook" },
   { id: "docs",         label: "About",               href: "/app/docs" },
 ];
 

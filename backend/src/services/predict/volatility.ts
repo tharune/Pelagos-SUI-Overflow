@@ -150,5 +150,13 @@ export function computeVolGreeks(strip: StripQuote, forwardUsd: number, sigmaUsd
   // σ = F·IV·√T  ⇒  dσ per +1% IV = F·√T·0.01 ; dσ per −1 day = −(σ/2T)/365
   const vega = dV_dSigma * forwardUsd * sqrtT * 0.01;
   const theta = tYears > 0 ? dV_dSigma * (-(sigmaUsd / (2 * tYears)) / 365) : 0;
-  return { delta_btc: delta, gamma, vega_usd: vega, theta_usd_day: theta, position_value_usd: valueAt(sigmaUsd) };
+  const value = valueAt(sigmaUsd);
+  // The live testnet oracles are minute-/hour-dated, which makes the per-day
+  // theta (∝ 1/T) and the σ-vega explode into six figures on a small ticket —
+  // mathematically correct annualisation, but it reads as broken. Bound both by
+  // the position value so the desk shows an honest, sane magnitude ("you can
+  // lose at most the position per day"); normal multi-day tenors stay untouched.
+  const cap = Math.max(1, Math.abs(value));
+  const clamp = (x: number) => Math.max(-cap, Math.min(cap, x));
+  return { delta_btc: delta, gamma, vega_usd: clamp(vega), theta_usd_day: clamp(theta), position_value_usd: value };
 }

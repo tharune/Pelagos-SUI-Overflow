@@ -418,19 +418,27 @@ function BasicDesk(p: DeskProps) {
       </div>
     </div>
 
-    {/* structure legs — full-width */}
+    {/* structure legs — full-width; clearly labelled with the chosen strategy + the
+        profit-zone bands highlighted (where a leg pays more than the premium). */}
     <div className="vd-card vd-legs">
-      <div className="vd-card-head"><Cap>Structure · {tradeable} legs</Cap><span className="vd-dim">range strikes on Sui</span></div>
+      <div className="vd-card-head">
+        <div className="vd-legs-title"><ShapeIcon strategy={strategy} color={accent} /><Cap>Structure · {meta.label}</Cap></div>
+        <span className="vd-dim">{tradeable} range legs · {q?.tenor_label ?? "—"} · settled on Sui</span>
+      </div>
+      <p className="vd-legs-desc">{PLAIN_THESIS[strategy]} <span>Highlighted bands are where you net a profit.</span></p>
       <div className="vd-legs-table">
         <div className="vd-leg vd-leg-h"><span>Strike band</span><span>Contracts</span><span>Cost</span><span>Pays</span></div>
-        {q ? q.strip.buckets.filter((b) => b.tradeable).map((b, i) => (
-          <div className="vd-leg" key={i}>
-            <span className="vd-leg-band">{dollars(b.lower_usd)}–{dollars(b.higher_usd)}</span>
-            <span>{(Number(b.quantity) / 1e6).toFixed(0)}</span>
-            <span>{usd(b.mint_cost_raw)}</span>
-            <span style={{ color: accent }}>{usd(b.max_payout_raw)}</span>
-          </div>
-        )) : <div className="vd-leg-empty">pricing…</div>}
+        {q ? q.strip.buckets.filter((b) => b.tradeable).map((b, i) => {
+          const profit = Number(b.max_payout_raw) > Number(q.strip.total_cost_raw);
+          return (
+            <div className={`vd-leg${profit ? " profit" : ""}`} key={i}>
+              <span className="vd-leg-band">{dollars(b.lower_usd)}–{dollars(b.higher_usd)}{profit && <i className="vd-leg-tag">in profit</i>}</span>
+              <span>{(Number(b.quantity) / 1e6).toFixed(0)}</span>
+              <span>{usd(b.mint_cost_raw)}</span>
+              <span style={{ color: profit ? C.green : accent }}>{usd(b.max_payout_raw)}</span>
+            </div>
+          );
+        }) : <div className="vd-leg-empty">pricing…</div>}
       </div>
     </div>
 
@@ -975,6 +983,12 @@ const VD_CSS = `
   .vd-greek strong { font-family: ${FD}; font-size: 17px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
   .vd-greek strong em { font-family: ${FM}; font-size: 9.5px; font-style: normal; color: ${C.textMuted}; margin-left: 3px; }
 
+  .vd-legs-title { display: flex; align-items: center; gap: 8px; }
+  .vd-legs-desc { margin: 0 0 13px; font-family: ${FS}; font-size: 12.5px; line-height: 1.5; color: ${C.textSecondary}; }
+  .vd-legs-desc span { color: ${C.textMuted}; }
+  .vd-leg.profit { background: ${C.green}0e; }
+  .vd-leg.profit .vd-leg-band { color: ${C.textPrimary}; font-weight: 500; }
+  .vd-leg-tag { margin-left: 9px; font-style: normal; font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: ${C.green}; background: ${C.green}1c; padding: 2px 6px; border-radius: 4px; }
   .vd-legs-table { border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
   .vd-leg { display: grid; grid-template-columns: minmax(0, 1.7fr) 1fr 1fr 1fr; gap: 10px; align-items: center; padding: 9px 13px; border-bottom: 0.5px solid ${C.border}; font-family: ${FM}; font-size: 11.5px; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
   .vd-leg:last-child { border-bottom: 0; }
@@ -1002,7 +1016,7 @@ const VD_CSS = `
   .vd-note { margin: 11px 0 0; font-family: ${FS}; font-size: 10.5px; line-height: 1.5; color: ${C.textMuted}; }
 
   .vd-ticket .vd-hedge-rows { margin-bottom: 14px; }
-  .vd-open-btn { width: 100%; height: 46px; border: none; border-radius: 12px; color: #04121d; font-family: ${FD}; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.15s ${EASE}, transform 0.15s ${EASE}; }
+  .vd-open-btn { width: 100%; height: 46px; margin-top: 15px; border: none; border-radius: 12px; color: #04121d; font-family: ${FD}; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.15s ${EASE}, transform 0.15s ${EASE}; }
   .vd-open-btn:hover:not(:disabled) { transform: translateY(-1px); }
   .vd-open-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 

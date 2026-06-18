@@ -5,7 +5,7 @@ import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
-import { useMode, BetaTag } from "../_lib/mode";
+import { useMode } from "../_lib/mode";
 import { useWalletSigner, useUsdcBalance } from "../_lib/wallet-bridge";
 import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } from "../_components/dist-chart";
 import { Stat, openableBuckets } from "../_components/strip-products";
@@ -71,7 +71,7 @@ function BasicOptionsChain() {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [expIdx, setExpIdx] = useState(0);
   const [sel, setSel] = useState<Sel | null>(null);
-  const [budget, setBudget] = useState("100");
+  const [contracts, setContracts] = useState("1");
 
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -86,7 +86,7 @@ function BasicOptionsChain() {
         .then((c) => { if (alive) { setChain(c); setLoadErr(null); } })
         .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : String(e)); });
     run();
-    const id = window.setInterval(run, 10_000);
+    const id = window.setInterval(run, 3_000);
     return () => { alive = false; window.clearInterval(id); };
   }, []);
 
@@ -147,42 +147,32 @@ function BasicOptionsChain() {
   // "indicative" (no premium to lock), not openable.
   const liveMid = selQuote ? selQuote.mid : 0;
   const openable = !!selQuote && selQuote.tradeable && liveMid > 0.005;
+  // Whole contracts only — 1 contract pays $1 if in-the-money.
+  const nContracts = Math.max(0, Math.floor(Number(contracts) || 0));
+  const orderCost = selQuote ? selQuote.ask * nContracts : 0; // dUSDC you pay (ask × qty)
 
-  // --- Open flow: reuse the existing on-chain range-strip pipeline. We center a
-  // tight one-band strip on the chosen strike (μ = strike, σ small) so the live
-  // MM (get_range_trade_amounts) prices it, then open + sign + confirm. ----------
+  // --- Open flow: mint EXACTLY this contract's live on-chain range band at `n`
+  // whole contracts (the quote's [lower,higher] from get_range_trade_amounts),
+  // then open + sign + confirm. No re-derived strip, no fractional fills. --------
   async function openStrike() {
-    if (!selExp || !selStrike || !openable || busy) return;
-    const b = Number(budget);
-    if (!Number.isFinite(b) || b <= 0) { setOpenErr("Enter a budget in dUSDC."); return; }
+    if (!selExp || !selQuote || !selStrike || !openable || busy) return;
+    if (nContracts < 1) { setOpenErr("Enter a whole number of contracts (minimum 1)."); return; }
     setBusy(true); setOpenErr(null); setResult(null);
     try {
-      // σ scaled to the strike grid spacing so exactly the band around the strike
-      // becomes tradeable. Grid step ≈ forward * (1/15 of moneyness range).
-      const fwd = selExp.forward;
-      const sigma = Math.max(fwd * 0.012, Math.abs(selStrike.strike - fwd) * 0.0001 + fwd * 0.012);
-      setStage("Pricing strike…");
-      const quote = await stripPreview({
-        oracle_id: selExp.oracle_id,
-        mu_usd: selStrike.strike,
-        sigma_usd: sigma,
-        n: 4,
-        budget_usd: b,
-        sender: wallet.address ?? undefined,
-      });
-      const buckets = openableBuckets(quote.buckets);
-      if (buckets.length === 0) throw new Error("No tradeable band at this strike right now — try a nearer-the-money strike or another expiry.");
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       setStage("Building position…");
-      const deposit = ((BigInt(quote.total_cost_raw) * 12n) / 10n).toString();
+      // 1e6 raw = 1 contract = $1 payout. Fund the real premium (ask × n) plus a
+      // buffer for post-trade slippage on the live book.
+      const qtyRaw = String(nContracts * 1_000_000);
+      const depositRaw = String(Math.ceil(selQuote.ask * nContracts * 1.25 * 1_000_000) + 1_000_000);
       const prep = await prepareOpenStrip({
         owner: wallet.address as string,
         manager_id: mgr,
-        oracle_id: quote.oracle_id,
-        expiry: quote.expiry,
-        buckets,
-        deposit_amount_raw: deposit,
+        oracle_id: selExp.oracle_id,
+        expiry: String(selExp.expiry),
+        buckets: [{ lower: selQuote.lower_strike, higher: selQuote.higher_strike, quantity: qtyRaw }],
+        deposit_amount_raw: depositRaw,
       });
       setStage("Sign in wallet…");
       const digest = await wallet.signAndExecute(prep.tx_bytes);
@@ -209,8 +199,8 @@ function BasicOptionsChain() {
           <div className="oc-head">
             <div>
               <div className="oc-eyebrow">BTC · DeepBook Predict</div>
-              <h1>Distributed Options <BetaTag style={{ marginLeft: 4 }} /></h1>
-              <p>The live BTC options chain — calls and puts across every on-chain expiry. Pick a strike and side, read its Greeks, and open the position. Priced on the DeepBook SVI surface, settled on Sui.</p>
+              <h1>Distributed Options</h1>
+              <p>The live BTC options chain — calls and puts across every on-chain expiry. Each contract is a DeepBook Predict range, priced live off the protocol&apos;s own liquidity (real bid/ask, whole contracts). Settled on Sui.</p>
             </div>
           </div>
 
@@ -220,7 +210,7 @@ function BasicOptionsChain() {
             <Cell k="Forward" v={exp ? spot$(exp.forward) : "—"} hint={exp ? `${exp.tenor_label} expiry` : "—"} />
             <Cell k="ATM implied vol" v={exp ? ivFmt(atmIv) : "—"} hint="at-the-money" />
             <Cell k="Days to expiry" v={exp ? (exp.days_to_expiry < 1 ? `${(exp.days_to_expiry * 24).toFixed(1)}h` : `${exp.days_to_expiry.toFixed(1)}d`) : "—"} hint="testnet · ultra-short" />
-            <Cell k="Source" v="SVI surface" hint="Black-76 · live" />
+            <Cell k="Source" v="DeepBook book" hint="get_range_trade_amounts · on-chain" />
           </div>
 
           {loadErr && !chain && (
@@ -303,7 +293,7 @@ function BasicOptionsChain() {
 
                   <div className="oc-quote">
                     <div className="oc-q-mid">
-                      <span>Mid premium</span>
+                      <span>Mid · per contract</span>
                       <strong>{liveMid > 0 ? `$${px(liveMid)}` : "$0.00"}</strong>
                     </div>
                     <div className="oc-q-ba">
@@ -331,20 +321,25 @@ function BasicOptionsChain() {
                   {openable ? (
                     <>
                       <div className="oc-budget">
-                        <span className="oc-tkt-cap">Budget · max loss</span>
+                        <span className="oc-tkt-cap">Contracts · whole only</span>
                         <div className="oc-budget-in">
-                          <input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-                          <span>dUSDC</span>
+                          <input inputMode="numeric" value={contracts} onChange={(e) => setContracts(e.target.value.replace(/[^0-9]/g, ""))} placeholder="1" />
+                          <span>× $1 payout</span>
                         </div>
+                      </div>
+                      <div className="oc-rows-info">
+                        <Info k="Cost · ask × qty" v={`$${orderCost.toFixed(2)} dUSDC`} />
+                        <Info k="Max payout" v={`$${nContracts.toLocaleString()}.00 dUSDC`} />
+                        <Info k="Max loss" v={`$${orderCost.toFixed(2)} dUSDC`} />
                       </div>
                       {!wallet.connected ? (
                         <ConnectModal trigger={<button className="oc-open">Connect a wallet to trade</button>} />
                       ) : (
-                        <button className="oc-open" disabled={busy} onClick={openStrike} style={{ opacity: busy ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
-                          {busy ? (stage ?? "Submitting…") : `Open ${sel!.side === "call" ? "call" : "put"} · ${strikeFmt(selStrike.strike)}`}
+                        <button className="oc-open" disabled={busy || nContracts < 1} onClick={openStrike} style={{ opacity: busy || nContracts < 1 ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
+                          {busy ? (stage ?? "Submitting…") : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
                       )}
-                      <p className="oc-note">Opens an on-chain range position centered at this strike via DeepBook Predict. Priced live; settled on Sui testnet.</p>
+                      <p className="oc-note">Buys {nContracts} whole {sel!.side} {nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.</p>
                     </>
                   ) : (
                     <div className="oc-indic-box">
@@ -714,7 +709,7 @@ function AdvancedDistribution() {
             BTC · DeepBook Predict
           </div>
           <h1 style={{ fontFamily: FD, fontSize: 34, fontWeight: 600, letterSpacing: "-0.03em", color: C.textPrimary, margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
-            Distributed Options <BetaTag />
+            Distributed Options
           </h1>
           <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 680, lineHeight: 1.6 }}>
             Trade your <strong style={{ color: C.textPrimary }}>whole view</strong>{" "}of where BTC settles, not one strike.

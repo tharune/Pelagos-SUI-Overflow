@@ -23,8 +23,11 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 // ───────────────────────── Options chain (Distributed Options · Basic) ────────
 export type OptionQuote = {
+  // Per-contract premium in dUSDC (0..1); 1 contract pays $1 if in-the-money.
+  // bid/ask/mid are REAL DeepBook Predict range prices (mint cost / redeem payout).
   mid: number; bid: number; ask: number; iv: number;
   delta: number; gamma: number; vega: number; theta: number; tradeable: boolean;
+  lower_strike: string; higher_strike: string; // raw on-chain band for routing
 };
 export type OptionStrike = { strike: number; moneyness: number; call: OptionQuote; put: OptionQuote };
 export type OptionExpiry = {
@@ -32,7 +35,8 @@ export type OptionExpiry = {
   forward: number; atm_iv: number; strikes: OptionStrike[];
 };
 export type OptionsChain = {
-  underlying: string; spot: number; generated_at: string; source: string; expiries: OptionExpiry[];
+  underlying: string; spot: number; generated_at: string; source: string;
+  contract_payout_usd: number; quote_basis: "per-contract"; expiries: OptionExpiry[];
 };
 export function fetchOptionsChain(underlying = "BTC"): Promise<OptionsChain> {
   return getJson<OptionsChain>(`/api/options/chain?underlying=${encodeURIComponent(underlying)}`);

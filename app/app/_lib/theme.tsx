@@ -54,12 +54,21 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
     })();
+    const fromParam = (() => {
+      try {
+        const u = new URLSearchParams(window.location.search).get("theme");
+        return u === "light" || u === "dark" ? (u as Theme) : null;
+      } catch {
+        return null;
+      }
+    })();
     const resolved: Theme =
-      fromStorage === "light" || fromStorage === "dark"
+      fromParam ??
+      (fromStorage === "light" || fromStorage === "dark"
         ? fromStorage
         : fromDom === "light" || fromDom === "dark"
           ? fromDom
-          : "dark";
+          : "dark");
     document.documentElement.dataset.theme = resolved;
     const id = window.setTimeout(() => setThemeState(resolved), 0);
     return () => window.clearTimeout(id);
@@ -119,6 +128,7 @@ export const THEME_BOOTSTRAP_SCRIPT = `
   var k = ${JSON.stringify(STORAGE_KEY)};
   var t = null;
   try { t = localStorage.getItem(k); } catch(e) {}
+  try { var u = new URLSearchParams(location.search).get('theme'); if (u === 'light' || u === 'dark') t = u; } catch(e) {}
   if (t !== 'light' && t !== 'dark') {
     var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     t = prefersDark ? 'dark' : 'dark';

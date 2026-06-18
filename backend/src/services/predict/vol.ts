@@ -22,7 +22,10 @@ import { predictServer, type PredictOracle } from './server';
 
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / forward / SVI fixed-point
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
-const MAX_SLICES = 12; // cap at the ~12 nearest expiries
+const MAX_SLICES = 16; // one slice per distinct tenor — matches the options chain ladder
+// Mirror the options chain: drop oracles within 12 min of expiry so the SVI
+// surface never carries a degenerate T→0 slice (flat ~130% IV, blown-up greeks).
+const MIN_TIME_TO_EXPIRY_MS = 12 * 60_000;
 
 export interface VolSlice {
   oracle_id: string;
@@ -119,15 +122,26 @@ export async function buildVolSurface(
   const all = await predictServer
     .predictOracles()
     .catch(() => predictServer.oracles());
-  const active = all
+  const sorted = all
     .filter(
       (o: PredictOracle) =>
         o.status === 'active' &&
-        o.expiry > now &&
+        o.expiry > now + MIN_TIME_TO_EXPIRY_MS &&
         (o.underlying_asset ?? '').toUpperCase() === want,
     )
-    .sort((a, b) => a.expiry - b.expiry)
-    .slice(0, MAX_SLICES);
+    .sort((a, b) => a.expiry - b.expiry);
+  // One oracle per distinct human tenor label so the surface is the SAME clean,
+  // full-range ladder the Basic options chain shows — Advanced and Basic price the
+  // identical set of markets off the identical liquidity (no cross-mode arb).
+  const active: PredictOracle[] = [];
+  const seenTenor = new Set<string>();
+  for (const o of sorted) {
+    const lab = tenorLabel(o.expiry - now);
+    if (seenTenor.has(lab)) continue;
+    seenTenor.add(lab);
+    active.push(o);
+    if (active.length >= MAX_SLICES) break;
+  }
 
   const slices: VolSlice[] = [];
   for (const o of active) {

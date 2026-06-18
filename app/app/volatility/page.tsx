@@ -51,6 +51,14 @@ const STRATS: StratMeta[] = [
   { id: "butterfly", label: "Butterfly", side: "short", blurb: "Short gamma · pinned" },
   { id: "condor", label: "Iron Condor", side: "short", blurb: "Short gamma · ranged" },
 ];
+
+// Plain-English "what does this win on" for Basic users — no gamma / ATM jargon.
+const PLAIN_THESIS: Record<VolStrategy, string> = {
+  straddle: "Wins if BTC makes a big move — up or down — before expiry.",
+  strangle: "A cheaper bet on a big move; BTC needs a wider swing to pay off.",
+  butterfly: "Wins if BTC settles near today's price at expiry.",
+  condor: "Wins if BTC stays inside a price range through expiry.",
+};
 const sideColor = (s: "long" | "short") => (s === "long" ? C.green : C.violet);
 
 const money = (v: number, d = 2) =>
@@ -227,7 +235,7 @@ export default function VolatilityPage() {
               <p>
                 {mode === "advanced"
                   ? "Institutional vol desk: a live SVI implied-vol surface, smile and term-structure analytics, and a multi-leg trade builder minted on Sui."
-                  : "Trade BTC implied-vs-realized vol with structured option strategies, then delta-hedge the gamma on a BTC perp."}
+                  : "Bet on how much BTC will move — not which way. Pick a strategy, set your size, and see the payoff before you open it on Sui."}
               </p>
             </div>
             <div className="vd-ticker">
@@ -239,14 +247,17 @@ export default function VolatilityPage() {
             </div>
           </div>
 
-          {/* market stat strip — shared across both modes */}
-          <div className="vd-stats">
-            <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front"} color={C.tealLight} />
-            <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h` : "trailing"} />
-            <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint="implied − realized" color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
-            <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="at quote" />
-            <Stat label="Spot vs fwd" value={`${pct2(movePct)}%`} hint="live drift" color={Math.abs(movePct) < 0.005 ? undefined : movePct > 0 ? C.green : C.red} />
-          </div>
+          {/* market stat strip — Advanced shows it standalone; Basic folds these
+              into one combined "market + position" metrics block (see BasicDesk). */}
+          {mode === "advanced" && (
+            <div className="vd-stats">
+              <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front"} color={C.tealLight} />
+              <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h` : "trailing"} />
+              <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint="implied − realized" color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
+              <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="at quote" />
+              <Stat label="Spot vs fwd" value={`${pct2(movePct)}%`} hint="live drift" color={Math.abs(movePct) < 0.005 ? undefined : movePct > 0 ? C.green : C.red} />
+            </div>
+          )}
 
           {/* Only surface a quote error when we have NOTHING to show. */}
           {err && !q && <div className="vd-err">{err}</div>}
@@ -280,11 +291,27 @@ type DeskProps = {
 // BASIC — the guided 4-strategy desk + horizon selector.
 // ===========================================================================
 function BasicDesk(p: DeskProps) {
-  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g } = p;
+  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, g, ivPct, rvPct, vrp, fwd } = p;
   const horizonSlice = sliceForHorizon(surface, horizon);
 
   return (
     <>
+    {/* combined metrics — market context (top) + your position (bottom) in one block */}
+    <div className="vd-metrics">
+      <div className="vd-metrics-row">
+        <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front month"} color={C.tealLight} />
+        <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h trailing` : "trailing"} />
+        <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint={Math.abs(vrp) < 0.05 ? "fairly priced" : vrp > 0 ? "vol looks rich" : "vol looks cheap"} color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
+        <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="BTC at quote" />
+      </div>
+      <div className="vd-metrics-row vd-metrics-pos">
+        <Stat label="Delta" value={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(3)} BTC` : "—"} hint="net direction" />
+        <Stat label="Gamma" value={g ? g.gamma.toFixed(4) : "—"} hint="convexity" color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
+        <Stat label="Vega" value={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} hint="per vol point" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
+        <Stat label="Theta" value={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} hint="daily time decay" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+      </div>
+    </div>
+
     <div className="vd-grid">
       {/* LEFT — strategy, controls, payoff */}
       <div className="vd-main">
@@ -303,17 +330,16 @@ function BasicDesk(p: DeskProps) {
           })}
         </div>
 
-        {/* controls: notional + horizon + thesis */}
+        {/* controls: amount + horizon + plain-English description */}
         <div className="vd-card vd-ctrls">
           <div className="vd-amount">
-            <Cap>Notional</Cap>
+            <Cap>Amount · dUSDC</Cap>
             <div className="vd-amount-in">
               <input className="vd-num" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-              <span>dUSDC</span>
             </div>
           </div>
           <div className="vd-horizon">
-            <Cap>Horizon</Cap>
+            <Cap>Time horizon</Cap>
             <div className="vd-pills">
               {HORIZONS.map((h) => {
                 const on = h.id === horizon;
@@ -328,8 +354,8 @@ function BasicDesk(p: DeskProps) {
             </div>
           </div>
           <div className="vd-ctrl-meta">
-            <div><Cap>Active tenor</Cap><strong>{q ? q.tenor_label : horizonSlice?.tenor_label ?? "—"} · {tradeable} strikes</strong></div>
-            <p>{q?.thesis ?? meta.blurb}</p>
+            <p>{PLAIN_THESIS[strategy]}</p>
+            <div><Cap>Expires in</Cap><strong>{q ? q.tenor_label : horizonSlice?.tenor_label ?? "—"}</strong></div>
           </div>
         </div>
 
@@ -346,14 +372,6 @@ function BasicDesk(p: DeskProps) {
         <HedgePanel {...p} />
         <TicketPanel {...p} />
       </div>
-    </div>
-
-    {/* greeks — full-width strip under the balanced two-column region */}
-    <div className="vd-card vd-greeks">
-      <Greek sym="Δ" name="Delta" val={g ? `${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
-      <Greek sym="Γ" name="Gamma" val={g ? g.gamma.toFixed(5) : "—"} color={g ? (g.gamma >= 0 ? C.green : C.red) : undefined} />
-      <Greek sym="ν" name="Vega" val={g ? `${g.vega_usd >= 0 ? "+" : ""}${money(g.vega_usd)}` : "—"} unit="/pt" color={g ? (g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-      <Greek sym="Θ" name="Theta" val={g ? `${g.theta_usd_day >= 0 ? "+" : ""}${money(g.theta_usd_day)}` : "—"} unit="/day" color={g ? (g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
     </div>
 
     {/* structure legs — full-width */}
@@ -774,6 +792,13 @@ const VD_CSS = `
   .vd-stat strong { font-family: ${FD}; font-size: 17px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
   .vd-stat-h { font-family: ${FM}; font-size: 9.5px; color: ${C.textMuted}; }
 
+  /* Combined metrics — market context (top row) + your position (bottom row). */
+  .vd-metrics { display: grid; gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 12px; overflow: hidden; }
+  .vd-metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: ${C.border}; }
+  .vd-metrics-row .vd-stat { background: ${C.card}; }
+  .vd-metrics-pos .vd-stat { background: ${C.surface}; }
+  @media (max-width: 1080px) { .vd-metrics-row { grid-template-columns: repeat(2, 1fr); } }
+
   .vd-err { border: 0.5px solid ${C.red}55; background: ${C.redBg}; border-radius: 10px; padding: 11px 14px; font-family: ${FM}; font-size: 12px; color: ${C.red}; }
 
   .vd-grid { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(330px, 0.92fr); gap: 14px; align-items: start; }
@@ -807,9 +832,10 @@ const VD_CSS = `
   .vd-pill b { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; }
   .vd-pill.on b { color: ${C.tealLight}; }
   .vd-pill em { font-family: ${FM}; font-size: 9px; font-style: normal; color: ${C.textMuted}; }
-  .vd-ctrl-meta div { display: flex; align-items: baseline; gap: 10px; }
+  .vd-ctrl-meta { display: grid; gap: 9px; align-content: center; }
+  .vd-ctrl-meta div { display: flex; align-items: baseline; gap: 8px; }
   .vd-ctrl-meta strong { font-family: ${FD}; font-size: 14px; font-weight: 600; color: ${C.textPrimary}; }
-  .vd-ctrl-meta p { margin: 7px 0 0; font-family: ${FS}; font-size: 12px; line-height: 1.5; color: ${C.textSecondary}; }
+  .vd-ctrl-meta p { margin: 0; font-family: ${FS}; font-size: 13px; line-height: 1.5; color: ${C.textPrimary}; }
 
   .vd-payoff-empty { display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
 

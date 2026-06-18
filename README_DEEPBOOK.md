@@ -393,4 +393,4 @@ provide proper simulation results for a vault strategy.**
 - `backend/src/services/predict/products.ts` — PPN / Tranches / DeepBook baskets.
 - `backend/src/routes/predict.ts` — the `/api/predict` HTTP surface.
 - `DEPLOYMENT.md` — canonical live testnet addresses + verified digests.
-- `DEEPBOOK_PREDICT_PLAN.md` — design/integration plan and locked scope.
+- `ARCHITECTURE.md` — topology, backend engines, and data sources.

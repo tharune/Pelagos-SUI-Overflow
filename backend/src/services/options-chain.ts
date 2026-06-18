@@ -42,6 +42,11 @@ const YEAR_MS = 365.25 * 24 * 3600 * 1000;
 // per distinct tenor. Testnet currently lists ~5m … 22d.
 const MAX_EXPIRIES = 16;
 const CACHE_TTL_MS = 4_000;
+// Drop oracles within this window of expiry. As T→0 the SVI back-out and the
+// digital greeks (∝ 1/√T) explode — a sub-minute oracle prints a flat ~130% IV
+// and pegs every greek to its clamp. A 12-min floor keeps the chain at a stable,
+// institutional-grade distribution (matches the "15m → 22d" ladder).
+const MIN_TIME_TO_EXPIRY_MS = 12 * 60_000;
 
 const STRIKE_STEPS = 13;
 // Protocol mintable window on the per-contract ask (mirrors structured.ts).
@@ -172,9 +177,11 @@ function digitalGreeks(
   const b = (x: number, lim: number) => Math.max(-lim, Math.min(lim, Number.isFinite(x) ? x : 0));
   // Express delta as the contract-value move per +1% in BTC — the intuitive,
   // readable form for a $1-payout digital (the raw ∂/∂$ is tiny). Peaks at ATM,
-  // → 0 in the wings. Bounded for the ultra-short tenors.
-  callDelta = b(callDelta * forward * 0.01, 2);
-  gamma = b(gamma * forward * forward * 1e-4, 2); // per (1%)²
+  // → 0 in the wings. A digital's local delta legitimately exceeds 1 near expiry
+  // (the payoff steepens to a step), so the bound only catches true T→0 blowups;
+  // with the ≥12-min tenor floor the real ATM peak is ~2–3, shown faithfully.
+  callDelta = b(callDelta * forward * 0.01, 6);
+  gamma = b(gamma * forward * forward * 1e-4, 6); // per (1%)²
   vega = b(vega, 1);
   theta = b(theta, 1);
   return { callDelta, putDelta: -callDelta, gamma, vega, theta };
@@ -195,7 +202,7 @@ export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChai
     .filter(
       (o: PredictOracle) =>
         o.status === 'active' &&
-        o.expiry > now &&
+        o.expiry > now + MIN_TIME_TO_EXPIRY_MS &&
         (o.underlying_asset ?? '').toUpperCase() === want,
     )
     .sort((a, b) => a.expiry - b.expiry);

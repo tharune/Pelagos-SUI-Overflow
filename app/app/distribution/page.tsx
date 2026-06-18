@@ -245,9 +245,9 @@ function BasicOptionsChain() {
                 <span className="oc-side-cap oc-put">Puts</span>
               </div>
               <div className="oc-cols">
-                <span>Mid</span><span>IV</span><span>Δ</span>
+                <div className="oc-colhead call"><span>Mid</span><span>IV</span><span>Δ</span></div>
                 <span className="oc-kcol">K</span>
-                <span>Δ</span><span>IV</span><span>Mid</span>
+                <div className="oc-colhead put"><span>Mid</span><span>IV</span><span>Δ</span></div>
               </div>
               <div className="oc-rows">
                 {exp ? (
@@ -474,11 +474,15 @@ const OC_CSS = `
   .oc-side-cap.oc-call { color: ${C.green}; text-align: left; }
   .oc-side-cap.oc-put { color: ${C.violet}; text-align: right; }
   .oc-strike-cap { font-family: ${FM}; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: ${C.textMuted}; text-align: center; }
-  .oc-cols { display: grid; grid-template-columns: 1fr 1fr 1fr 132px 1fr 1fr 1fr; padding: 0 14px 7px; border-bottom: 0.5px solid ${C.border}; }
-  .oc-cols span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; text-align: right; }
-  .oc-cols span:nth-child(-n+3) { text-align: right; }
-  .oc-cols span:nth-child(n+5) { text-align: left; }
-  .oc-cols .oc-kcol { text-align: center; }
+  /* Column headers MUST mirror .oc-cells exactly (same 3×1fr, 6px gap, 14px
+     horizontal padding, RTL on the put side) so every label sits dead-centre
+     over its data column. */
+  .oc-cols { display: grid; grid-template-columns: 1fr 132px 1fr; align-items: center; padding: 0 0 7px; border-bottom: 0.5px solid ${C.border}; }
+  .oc-colhead { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 0 14px; }
+  .oc-colhead span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; text-align: right; }
+  .oc-colhead.put { direction: rtl; }
+  .oc-colhead.put span { direction: ltr; text-align: right; }
+  .oc-cols .oc-kcol { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; text-align: center; }
 
   .oc-rows { display: grid; }
   .oc-row { display: grid; grid-template-columns: 1fr 132px 1fr; align-items: stretch; border-bottom: 0.5px solid ${C.border}; }

@@ -31,6 +31,12 @@ import { suiRoutes } from './routes/sui';
 import { predictRoutes } from './routes/predict';
 import { volRoutes } from './routes/vol';
 import { distributionRoutes } from './routes/distribution';
+// New dual-mode product engines
+import { optionsRoutes } from './routes/options';
+import { customBasketRoutes } from './routes/custom-basket';
+import { deepbookRoutes } from './routes/deepbook';
+import { notesRoutes } from './routes/notes';
+import { backtestRoutes } from './routes/backtest';
 import { metricsMiddleware } from './services/metrics';
 import { startMonitorServer } from './monitor/server';
 import { startCronJobs } from './services/cron';
@@ -196,6 +202,11 @@ app.get('/api/health', async (_req, res) => {
 // Routes
 app.use('/api/bundles', bundleRoutes);
 app.use('/api/baskets', basketRoutes);
+app.use('/api/options', optionsRoutes);
+app.use('/api/custom-baskets', customBasketRoutes);
+app.use('/api/deepbook', deepbookRoutes);
+app.use('/api/notes', notesRoutes);
+app.use('/api/backtest', backtestRoutes);
 app.use('/api/nav', navRoutes);
 app.use('/api/deposit', depositRoutes);
 app.use('/api/markets', marketLimiter, marketRoutes);

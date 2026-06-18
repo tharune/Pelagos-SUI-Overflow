@@ -421,27 +421,13 @@ function AdvancedDesk(p: DeskProps) {
         </div>
       </div>
 
-      {/* ROW 2: tenor selector + term structure + greeks */}
+      {/* ROW 2: term structure (also the tenor selector) + greeks */}
       <div className="vd-adv-r2">
-        <div className="vd-card vd-tenors">
-          <div className="vd-card-head"><Cap>Tenor</Cap><span className="vd-dim">{slices.length} expiries</span></div>
-          <div className="vd-tenor-list">
-            {slices.length === 0 ? (
-              <div className="vd-leg-empty">loading…</div>
-            ) : slices.map((s, i) => {
-              const on = i === sliceIdx;
-              return (
-                <button key={s.oracle_id} className={`vd-tenor${on ? " on" : ""}`} onClick={() => setSliceIdx(i)}>
-                  <b>{s.tenor_label}</b>
-                  <span>{(s.atm_iv * 100).toFixed(1)}%</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         <div className="vd-card vd-term">
-          <div className="vd-card-head"><Cap>ATM term structure</Cap><span className="vd-dim">IV vs expiry</span></div>
+          <div className="vd-card-head">
+            <Cap>ATM term structure</Cap>
+            <span className="vd-dim">{slices.length} expiries · click to select tenor{sel ? ` · ${sel.tenor_label} ${(sel.atm_iv * 100).toFixed(1)}%` : ""}</span>
+          </div>
           <TermChart surface={surface} selectedIdx={sliceIdx} onPick={setSliceIdx} />
         </div>
 
@@ -866,7 +852,7 @@ const VD_CSS = `
   /* ---- ADVANCED desk ---- */
   .vd-adv { display: grid; gap: 14px; min-width: 0; }
   .vd-adv-r1 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 14px; align-items: stretch; }
-  .vd-adv-r2 { display: grid; grid-template-columns: minmax(180px, 0.74fr) minmax(0, 1.3fr) minmax(260px, 0.96fr); gap: 14px; align-items: stretch; }
+  .vd-adv-r2 { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(280px, 1fr); gap: 14px; align-items: stretch; }
   .vd-adv-r3 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr) minmax(300px, 0.85fr); gap: 14px; align-items: start; }
   @media (max-width: 1280px) {
     .vd-adv-r1, .vd-adv-r2, .vd-adv-r3 { grid-template-columns: 1fr; }

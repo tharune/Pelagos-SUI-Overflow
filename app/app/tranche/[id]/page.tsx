@@ -678,7 +678,7 @@ function DistributionChart({
 
         {/* NAV (solid teal — current weighted probability) + tier-target guide
             (dashed amber — the archetype NAV each tier is pinned to: HIGH 95% /
-            MID 50% / LOW 5%). When the two labels would overlap (NAV and target
+            LOW 5%). When the two labels would overlap (NAV and target
             close together), they separate HORIZONTALLY — the lower value's label
             extends left, the higher's extends right — so they never stack. */}
         {(() => {

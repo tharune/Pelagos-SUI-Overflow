@@ -124,7 +124,7 @@ export function DeepBookBaskets() {
           {quote ? (
             <>
               <div className="tb-legs">
-                <div className="tb-leg tb-leg-head"><span>Expiry</span><span>Weight</span><span>Cost</span><span>Best case</span></div>
+                <div className="tb-leg tb-leg-head"><span className="tb-leg-tenor"><b>Expiry</b></span><span>Weight</span><span>Cost</span><span>Best case</span></div>
                 {quote.legs.map((l) => {
                   const cost = Number(l.strip.total_cost_raw) / 1e6;
                   const best = Number(l.strip.realized_max_payout_raw) / 1e6;
@@ -183,7 +183,7 @@ export function DeepBookBaskets() {
         .tb-leg-head { background: ${C.surface}; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: ${C.textMuted}; }
         .tb-leg-tenor { position: relative; display: flex; align-items: center; min-width: 0; }
         .tb-leg-tenor .tb-leg-bar { position: absolute; inset: -11px auto -11px 0; border-radius: 4px; }
-        .tb-leg-tenor b { position: relative; font-weight: 600; }
+        .tb-leg-tenor b { position: relative; font-weight: 600; padding-left: 9px; }
         .tb-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 0.5px solid ${C.border}; }
         .tb-totals div { display: grid; gap: 5px; }
         .tb-totals strong { font-family: ${FD}; font-size: 19px; font-weight: 600; color: ${C.textPrimary}; }

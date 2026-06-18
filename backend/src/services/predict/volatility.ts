@@ -96,7 +96,7 @@ export function strategyProfile(strategy: VolStrategy, n: number): StrategyProfi
     case 'straddle':
     default:
       side = 'long'; spanSigma = 2.2; label = 'Straddle';
-      thesis = 'Long gamma, ATM — pays on any sizeable BTC move';
+      thesis = 'Long gamma, ATM — gains as BTC moves off the forward';
       w = (d) => 0.15 + d * 1.05;
       break;
   }

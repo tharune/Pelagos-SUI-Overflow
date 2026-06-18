@@ -370,6 +370,9 @@ export default function DistributionPage() {
         @media (max-width: 900px) { .dc-grid { grid-template-columns: 1fr; } }
         .dc-cap { font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: ${C.textMuted}; }
         .dc-market-scroll { display: grid; gap: 8px; margin-top: 12px; max-height: 320px; overflow-y: auto; overflow-x: hidden; padding-right: 2px; scrollbar-width: none; -ms-overflow-style: none; }
+        /* Scrollbar is hidden for aesthetics, so a clipped last card would read
+           as broken. Fade the bottom edge to signal "scroll for more". */
+        .dc-market-scroll { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
         .dc-market-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
         .dc-market { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; padding: 12px 14px; border: 0.5px solid ${C.border}; border-radius: 10px; cursor: pointer; text-align: left; transition: border-color 0.15s ${EASE}, background 0.15s ${EASE}; }
         .dc-market:hover { border-color: ${C.borderHover}; }

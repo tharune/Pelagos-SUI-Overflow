@@ -108,9 +108,11 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     if (!isFinite(ivMin) || !isFinite(ivMax) || ivMax <= ivMin) { ivMin = 0; ivMax = Math.max(1, ivMax); }
 
     // ---- world-space layout ----------------------------------------------
-    const SX = 7;   // log-moneyness axis half-width -> [-SX, +SX]
-    const SY = 5;   // tenor axis depth
-    const SZ = 3.2; // IV height
+    // Roughly-square footprint (strike × tenor) with real vertical relief so the
+    // surface reads as a surface — not a thin wide ribbon lost in the panel.
+    const SX = 4.6;  // log-moneyness axis half-width -> [-SX, +SX]  (x-extent 9.2)
+    const SY = 8.4;  // tenor axis depth
+    const SZ = 4.4;  // IV height
     const xAt = (cI: number) => -SX + (cI / (cols.length - 1)) * 2 * SX;
     const yAt = (r: number) => (rows === 1 ? 0 : -SY / 2 + (r / (rows - 1)) * SY);
     const zAt = (v: number) => ((v - ivMin) / (ivMax - ivMin)) * SZ;
@@ -119,7 +121,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     const scene = new THREE.Scene();
     const width = mount.clientWidth || 600;
     const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
-    camera.position.set(9.5, 8.5, 12.5);
+    // Camera is auto-framed to the surface bounding box once the mesh is built.
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -145,10 +147,8 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.rotateSpeed = 0.7;
-    controls.minDistance = 8;
-    controls.maxDistance = 26;
     controls.maxPolarAngle = Math.PI * 0.49;
-    controls.target.set(0, SZ * 0.35, 0);
+    // distance bounds + target are set by the auto-frame block below.
 
     // ---- surface mesh (vertex-coloured triangles) ------------------------
     const positions: number[] = [];
@@ -171,6 +171,27 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     }
     for (const v of vert) positions.push(v.x, v.y, v.z);
     for (const c of vcol) colors.push(c.r, c.g, c.b);
+
+    // ---- auto-frame the camera so the surface FILLS the panel ------------
+    // (the old fixed camera sat far back, leaving the mesh tiny in dead space).
+    const box = new THREE.Box3().setFromPoints(vert);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const vFov = (camera.fov * Math.PI) / 180;
+    const aspect = width / height;
+    // Fit BOTH the vertical and horizontal projected extent of the footprint, then
+    // pull in (fill factor < 1) since a 3/4-tilted flat surface never uses the full
+    // bounding sphere. Tuned so the mesh fills the card with a small margin.
+    const radius = Math.max(size.x, size.z) * 0.5;
+    const fitV = radius / Math.tan(vFov / 2);
+    const fitH = radius / Math.tan(Math.atan(Math.tan(vFov / 2) * aspect));
+    const dist = Math.max(fitV, fitH) * 0.82; // tilted flat surface never uses full sphere → pull in
+    const dir = new THREE.Vector3(0.42, 0.52, 0.86).normalize();
+    camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
+    camera.lookAt(center);
+    controls.target.copy(center);
+    controls.minDistance = dist * 0.4;
+    controls.maxDistance = dist * 2.6;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));

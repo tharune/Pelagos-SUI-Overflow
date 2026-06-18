@@ -55,6 +55,14 @@ export function ModeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore */
     }
+    // A ?mode=basic|advanced URL param overrides the stored preference (deep-link
+    // a view; also lets headless render either skin).
+    try {
+      const u = new URLSearchParams(window.location.search).get("mode");
+      if (u === "basic" || u === "advanced") stored = u;
+    } catch {
+      /* ignore */
+    }
     if (stored && stored !== "basic") {
       const id = window.setTimeout(() => setModeState(stored as Mode), 0);
       return () => window.clearTimeout(id);

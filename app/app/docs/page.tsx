@@ -394,7 +394,7 @@ function WhatIsPelagos() {
       </P>
       <P>
         The product surfaces share a single canonical basket grid:
-        three risk tiers (High / Mid / Low) crossed with three
+        two risk tiers (High / Low) crossed with three
         resolution windows (Short / Med / Long). Each basket is
         addressable by a stable id and is referenced directly by
         tranche, PPN, and portfolio surfaces. The portfolio view
@@ -674,10 +674,10 @@ function ConstConcept() {
       </P>
       <SubHeading>Basket grid</SubHeading>
       <P>
-        The basket universe is a fixed 3 × 3 grid of three risk tiers
-        (High, Mid, Low) crossed with three resolution windows (Short:
+        The basket universe is a fixed 2 × 3 grid of two risk tiers
+        (High, Low) crossed with three resolution windows (Short:
         under 30 days; Med: 30–90 days; Long: over 90 days). The grid
-        contains nine canonical baskets and is regenerated on every
+        contains six canonical baskets and is regenerated on every
         refresh. Each basket is addressed by a stable id referenced by
         the tranche, PPN, and portfolio surfaces.
       </P>
@@ -708,12 +708,12 @@ function ConstConcept() {
       />
       <SubHeading>Example</SubHeading>
       <P>
-        Consider a Mid/Short basket containing 24 legs with
-        probabilities between 28% and 72%, whose weighted YES
-        probability is 0.49. A $1,000 deposit at NAV = $0.49 credits
-        approximately 2,040 basket tokens net of fees. If the weighted
-        terminal outcome is 0.55, the position redeems for 2,040 ×
-        0.55 = $1,122 before fees, a gross return of 12.2%.
+        Consider a Low/Short basket containing 24 legs with
+        probabilities between 1% and 12%, whose weighted YES
+        probability is 0.05. A $1,000 deposit at NAV = $0.05 credits
+        approximately 20,000 basket tokens net of fees. If the weighted
+        terminal outcome is 0.06, the position redeems for 20,000 ×
+        0.06 = $1,200 before fees, a gross return of 20%.
       </P>
     </>
   );
@@ -724,7 +724,7 @@ function ConstBuild() {
     <>
       <P>
         The basket construction pipeline in{" "}
-        <Code>app/_lib/live-baskets.ts</Code> rebuilds all nine baskets
+        <Code>app/_lib/live-baskets.ts</Code> rebuilds all six baskets
         on every refresh in five sequential passes over the active
         market universe. The pipeline&apos;s structure is documented
         below; the specific weighting calibrations are not published.
@@ -752,11 +752,11 @@ function ConstBuild() {
             <B>Weight.</B> A sqrt-volume prior with a per-leg cap and
             floor is combined with a tilt that anchors each
             basket&apos;s weighted NAV to its tier target (approximately
-            0.95, 0.50, and 0.05). A seeded jitter introduces minor
+            0.95 and 0.05). A seeded jitter introduces minor
             variation across refreshes.
           </>,
           <>
-            <B>Emit.</B> All nine (tier, window) cells are populated.
+            <B>Emit.</B> All six (tier, window) cells are populated.
             If the preferred probability band does not yield at least
             ten legs, an extended band is applied so no cell remains
             empty.
@@ -788,14 +788,13 @@ function ConstTiers() {
         Tiers are structural labels applied during basket construction,
         not runtime filters. Each tier selects legs from a distinct
         slice of the upstream probability distribution, producing
-        three baskets per window with materially different payoff
+        two baskets per window with materially different payoff
         profiles.
       </P>
       <Table
         cols={["Tier", "Probability band", "Target NAV", "Profile"]}
         rows={[
           ["High", "85–99%", "~95%", "Near-certain outcomes; limited upside and limited downside."],
-          ["Mid",  "25–75%", "~50%", "Balanced distribution; meaningful variance in either direction."],
           ["Low",  "1–12%",  "~5%",  "Long-tailed distribution; large proportional upside if legs resolve YES, near-total loss otherwise."],
         ]}
       />
@@ -806,11 +805,6 @@ function ConstTiers() {
             <B>High.</B> Use for near-par exposure with tight NAV
             ranges. Appropriate as the basket slice of a low-variance
             PPN. Not suitable when convex upside is the objective.
-          </>,
-          <>
-            <B>Mid.</B> Use for balanced distributions with meaningful
-            senior/mezzanine/junior separation. Typical tranche
-            positioning target.
           </>,
           <>
             <B>Low.</B> Use for convex upside. At a NAV near $0.05,
@@ -1048,7 +1042,7 @@ function TrWaterfall() {
       />
       <SubHeading>Example</SubHeading>
       <P>
-        Assume a Mid basket with μ = 0.50 and σ = 0.18, giving attach
+        Assume a basket with μ = 0.50 and σ = 0.18, giving attach
         points K1 = 0.50 and K2 = 0.68. The following table shows
         terminal payouts per $1 face:
       </P>
@@ -1434,9 +1428,6 @@ max       = deposit + basketAmt × (1/nav − 1)       (basket → $1/token)`}
             Token count per dollar is highest at NAV near $0.05.
           </>,
           <>
-            <B>Mid-tier.</B> Balanced upside and variance.
-          </>,
-          <>
             <B>High-tier.</B> Near-par note. Basket NAV is close to
             $1, so the basket slice contributes minimal upside.
           </>,
@@ -1730,7 +1721,7 @@ function RiskSummary() {
       </P>
       <P>
         <B>Scenario.</B> A macro event re-prices half of the legs in a
-        Mid basket. The basket&apos;s NAV falls from 0.50 to 0.35. A
+        basket. The basket&apos;s NAV falls from 0.50 to 0.35. A
         position opened at 0.50 incurs an immediate ~30%
         mark-to-market loss; the terminal outcome is a distribution
         centred near the new NAV.
@@ -1825,7 +1816,7 @@ function FaqAll() {
       />
       <Faq
         q="How many baskets are there?"
-        a="Nine. The basket universe is a 3×3 grid of tiers (High, Mid, Low) and resolution windows (Short, Med, Long). Baskets are regenerated from the active upstream market universe on every refresh."
+        a="Six. The basket universe is a 2×3 grid of tiers (High, Low) and resolution windows (Short, Med, Long). Baskets are regenerated from the active upstream market universe on every refresh."
       />
       <Faq
         q="Can a basket position be closed before resolution?"

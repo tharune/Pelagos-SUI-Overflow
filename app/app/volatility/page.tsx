@@ -41,6 +41,13 @@ const sideColor = (s: "long" | "short") => (s === "long" ? C.green : C.violet);
 const money = (v: number, d = 2) =>
   `$${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 
+// Signed percent that never renders a negative-zero ("-0.00%"). Values that
+// round to 0 read as a clean "0.00"; positives carry an explicit "+".
+const pct2 = (v: number): string => {
+  const r = Number(v.toFixed(2));
+  return r > 0 ? `+${r.toFixed(2)}` : r.toFixed(2);
+};
+
 /** Short, de-branded venue label for the live mark. */
 function shortVenue(m?: BtcMark | null): string {
   if (!m) return "—";
@@ -179,12 +186,15 @@ export default function VolatilityPage() {
           <div className="vd-stats">
             <Stat label="Implied vol" value={`${ivPct}%`} hint={q ? `${q.tenor_label} tenor` : "front"} color={C.tealLight} />
             <Stat label="Realized vol" value={`${rvPct}%`} hint={surface ? `${surface.rv_window_hours}h` : "trailing"} />
-            <Stat label="Vol premium" value={`${vrp >= 0 ? "+" : ""}${vrp.toFixed(1)}%`} hint="implied − realized" color={vrp >= 0 ? C.green : C.red} />
+            <Stat label="Vol premium" value={`${pct2(vrp)}%`} hint="implied − realized" color={Math.abs(vrp) < 0.05 ? undefined : vrp > 0 ? C.green : C.red} />
             <Stat label="Forward" value={fwd ? dollars(fwd) : "—"} hint="at quote" />
-            <Stat label="Spot vs fwd" value={`${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%`} hint="live drift" color={movePct >= 0 ? C.green : C.red} />
+            <Stat label="Spot vs fwd" value={`${pct2(movePct)}%`} hint="live drift" color={Math.abs(movePct) < 0.005 ? undefined : movePct > 0 ? C.green : C.red} />
           </div>
 
-          {err && <div className="vd-err">{err}</div>}
+          {/* Only surface a quote error when we have NOTHING to show. Once a
+              quote has landed, a transient re-poll failure degrades silently to
+              the last-good numbers instead of flashing a scary red banner. */}
+          {err && !q && <div className="vd-err">{err}</div>}
 
           {/* main desk: structure (left, wide) + hedge/ticket (right) */}
           <div className="vd-grid">
@@ -274,7 +284,7 @@ export default function VolatilityPage() {
                 <div className="vd-hedge-rows">
                   <Row k="Hedge order" v={hedgeSide === "flat" ? "delta-neutral" : `${hedgeSide === "short" ? "Short" : "Long"} ${hedgeBtc.toFixed(4)} BTC`} color={hedgeSide === "flat" ? undefined : accent} />
                   <Row k="BTC-PERP mark" v={dollars(markPrice)} live />
-                  <Row k="Spot drift" v={`${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%`} color={movePct >= 0 ? C.green : C.red} />
+                  <Row k="Spot drift" v={`${pct2(movePct)}%`} color={Math.abs(movePct) < 0.005 ? undefined : movePct > 0 ? C.green : C.red} />
                   <Row k="Funding (8h)" v={q ? `${(q.hedge.funding_rate * 100).toFixed(3)}%` : "—"} hint={(liveMark ?? q?.mark)?.funding_source === "bluefin" ? "Bluefin" : "est."} />
                 </div>
                 <button className="vd-hedge-btn" disabled={!q || hedgeSide === "flat" || Boolean(hedged)} onClick={routeHedge}>

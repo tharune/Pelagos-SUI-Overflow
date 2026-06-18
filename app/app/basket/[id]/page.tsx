@@ -1952,7 +1952,9 @@ function ConstituentTable({
       ),
     [markets],
   );
-  const rows = sorted.slice(0, TOP_CONSTITUENTS);
+  // Show every constituent (scrollable) so the user can audit the whole basket,
+  // not just the top legs — this also fills the column instead of leaving a void.
+  const rows = sorted;
   const weightCovered = rows.reduce((s, m) => s + (m.weight ?? 0), 0);
 
   return (
@@ -1989,8 +1991,8 @@ function ConstituentTable({
             textTransform: "uppercase",
           }}
         >
-          Top {rows.length} of {sorted.length} constituents ·{" "}
-          {(weightCovered * 100).toFixed(1)}% of basket
+          All {sorted.length} constituents ·{" "}
+          {(weightCovered * 100).toFixed(0)}% of basket
         </div>
         <div
           style={{
@@ -2028,19 +2030,20 @@ function ConstituentTable({
         <div style={{ textAlign: "right" }}>Resolves</div>
         <div />
       </div>
-      {rows.map((m, i) => (
-        <ConstituentRow
-          key={m.id}
-          index={i + 1}
-          market={m}
-          tierColor={tierColor}
-          isLast={i === rows.length - 1}
-        />
-      ))}
-      {/* Trailing spacer absorbs any surplus height the flex:1 card
-          carries beyond the five data rows. Keeps the rows at the
-          top and the card border at the bottom of the column. */}
-      <div style={{ flex: 1 }} />
+      {/* Scrollable body: fills the flex:1 card and scrolls internally so the
+          full leg list is auditable without making the whole page taller than
+          the buy panel on the right. */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {rows.map((m, i) => (
+          <ConstituentRow
+            key={m.id}
+            index={i + 1}
+            market={m}
+            tierColor={tierColor}
+            isLast={i === rows.length - 1}
+          />
+        ))}
+      </div>
     </div>
   );
 }

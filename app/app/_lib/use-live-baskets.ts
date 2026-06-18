@@ -151,6 +151,10 @@ export function matchesPickerWindow(daysLeft: number, win: PickerWindow): boolea
  */
 export function formatYieldPct(pct: number): string {
   if (!Number.isFinite(pct)) return "—";
+  // Junior tranches are clamped to a +300% display cap upstream (lottery-shaped
+  // deep-OTM ytm can run to tens of thousands of percent). Surface a row sitting
+  // at the cap as "300%+" so it reads as a capped figure, not a fabricated one.
+  if (pct >= 300) return "300%+";
   const sign = pct >= 0 ? "+" : "-";
   const abs = Math.abs(pct);
   if (abs < 1) return `${sign}${abs.toFixed(2)}%`;

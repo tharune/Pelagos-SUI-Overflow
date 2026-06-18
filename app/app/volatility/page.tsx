@@ -298,6 +298,29 @@ function BasicDesk(p: DeskProps) {
   const [showExecute, setShowExecute] = useState(false);
   const [hedgeOn, setHedgeOn] = useState(false);
 
+  // Max return multiple — varies clearly by strategy AND tenor.
+  const maxReturn = q && Number(q.strip.total_cost_raw) > 0
+    ? Number(q.strip.realized_max_payout_raw) / Number(q.strip.total_cost_raw)
+    : 0;
+  // Breakeven "profit zone" — where the payoff crosses the premium paid. This is
+  // the quantity that moves most across time horizons (it widens with √T), so it
+  // makes the timeframe genuinely visible (cost is fixed = your amount).
+  const profitZone = useMemo(() => {
+    if (!q) return null;
+    const bands = q.strip.buckets;
+    const cost = Number(q.strip.total_cost_raw) / 1e6;
+    if (!(cost > 0)) return null;
+    const fwd = q.forward_usd;
+    const sig = q.sigma_usd || fwd * 0.04;
+    const lo = Math.max(0, fwd - 3.6 * sig), hi = fwd + 3.6 * sig;
+    const payoff = (x: number) => { for (const b of bands) if (b.tradeable && x > b.lower_usd && x <= b.higher_usd) return Number(b.quantity) / 1e6; return 0; };
+    const N = 280; const xs: number[] = [], vs: number[] = [];
+    for (let i = 0; i < N; i++) { const x = lo + (i / (N - 1)) * (hi - lo); xs.push(x); vs.push(payoff(x) - cost); }
+    const cross: number[] = [];
+    for (let i = 1; i < N; i++) if ((vs[i - 1] < 0) !== (vs[i] < 0)) { const t = vs[i - 1] / (vs[i - 1] - vs[i]); cross.push(xs[i - 1] + t * (xs[i] - xs[i - 1])); }
+    return cross.length >= 2 ? { lo: cross[0], hi: cross[cross.length - 1] } : null;
+  }, [q]);
+
   return (
     <>
     {/* combined metrics — market context (top) + your position (bottom) in one block */}
@@ -369,12 +392,20 @@ function BasicDesk(p: DeskProps) {
 
         {/* ticket — Open launches the review modal (optional delta hedge → sign) */}
         <div className="vd-card vd-ticket">
-          <div className="vd-card-head"><Cap>{meta.label} · {meta.side} vol</Cap><span className="vd-dim">{tradeable}/{q?.strip.buckets.length ?? 0} legs</span></div>
+          <div className="vd-card-head"><Cap>{meta.label} · {meta.side} vol</Cap><span className="vd-dim">{tradeable}/{q?.strip.buckets.length ?? 0} legs · {q?.tenor_label ?? "—"}</span></div>
           <div className="vd-hedge-rows">
-            <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
+            <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} hint="your amount" />
             <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
+            <Row k="Max return" v={maxReturn > 0 ? `${maxReturn.toFixed(2)}×` : "—"} color={accent} />
             <Row k="Max loss" v={q ? money(q.max_loss_usd) : "—"} hint="premium" />
           </div>
+          {profitZone && (
+            <p className="vd-ticket-be">
+              {meta.side === "long"
+                ? <>Profits if BTC settles <b>below {dollars(profitZone.lo)}</b> or <b>above {dollars(profitZone.hi)}</b> by {q?.tenor_label}.</>
+                : <>Profits if BTC settles <b>between {dollars(profitZone.lo)} and {dollars(profitZone.hi)}</b> by {q?.tenor_label}.</>}
+            </p>
+          )}
           {!wallet.connected ? (
             <ConnectModal trigger={<button className="vd-open-btn" style={{ background: accent }}>Connect a wallet</button>} />
           ) : (
@@ -779,7 +810,7 @@ function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface |
 /** Classic options payoff diagram: net P&L vs BTC settlement price, with the
  *  forward and the live mark marked. Profit shaded accent, loss shaded red. */
 function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean }) {
-  const W = 760, H = compact ? 168 : 230, PL = 52, PR = 16, PT = 14, PB = 26;
+  const W = 760, H = compact ? 168 : 272, PL = 52, PR = 16, PT = 16, PB = 28;
   const model = useMemo(() => {
     if (!quote) return null;
     const bands = quote.strip.buckets;
@@ -904,6 +935,8 @@ const VD_CSS = `
   .vd-ctrls-v { grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
   .vd-ctrls-desc { margin: 0; font-family: ${FS}; font-size: 12.5px; line-height: 1.55; color: ${C.textSecondary}; }
   .vd-ctrls-desc span { color: ${C.textMuted}; }
+  .vd-ticket-be { margin: 11px 0 0; font-family: ${FS}; font-size: 12px; line-height: 1.5; color: ${C.textSecondary}; }
+  .vd-ticket-be b { color: ${C.textPrimary}; font-weight: 600; }
 
   /* Execute / review modal (optional delta-neutral hedge before signing). */
   .vd-modal-bg { position: fixed; inset: 0; z-index: 60; background: rgba(2, 10, 20, 0.62); backdrop-filter: blur(3px); display: grid; place-items: center; padding: 20px; animation: vd-fade 0.14s ${EASE}; }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   buildLiveBaskets,
+  fetchBackendBaskets,
   fetchLiveMarkets,
   isLiveBasket,
   type LiveBasket,
@@ -47,9 +48,16 @@ function publish(next: LiveBasketState): void {
 
 async function runFetch(): Promise<void> {
   try {
-    const markets = await fetchLiveMarkets();
-    const slots = buildLiveBaskets(markets);
-    const baskets = slots.filter(isLiveBasket);
+    // Authoritative path: the backend builds the 6 baskets and prices every
+    // leg off the Polymarket CLOB order book. Fall back to the client-side
+    // build from the raw /api/markets feed only if that endpoint is down.
+    let baskets: LiveBasket[];
+    try {
+      baskets = await fetchBackendBaskets();
+    } catch {
+      const markets = await fetchLiveMarkets();
+      baskets = buildLiveBaskets(markets).filter(isLiveBasket);
+    }
     lastOkAt = Date.now();
     publish({ status: "ok", baskets, at: lastOkAt });
   } catch (err) {

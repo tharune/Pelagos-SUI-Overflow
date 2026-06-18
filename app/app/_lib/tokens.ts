@@ -77,7 +77,7 @@ export const BACKEND_URL =
 export const INITIAL_USDC = 0;
 
 export function tc(tier: number): string {
-  return tier === 90 ? C.teal : tier === 70 ? C.amber : C.coral;
+  return tier === 90 ? C.teal : C.coral;
 }
 
 // Tranches share one blue family, separated by value (light → deep) rather than

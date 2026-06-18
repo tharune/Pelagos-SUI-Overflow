@@ -48,9 +48,8 @@ const WINDOW_LABEL: Record<"week" | "month" | "long", string> = {
   long: "Long term",
 };
 
-const TIER_LABEL: Record<90 | 70 | 50, string> = {
+const TIER_LABEL: Record<90 | 50, string> = {
   90: "High",
-  70: "Mid",
   50: "Low",
 };
 

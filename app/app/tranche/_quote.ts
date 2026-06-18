@@ -72,7 +72,7 @@ export interface BasketStats {
   meanLegVolumeUsd: number;
   totalLegs: number;
   daysLeft: number;
-  tier: 90 | 70 | 50;
+  tier: 90 | 50;
   /** Fraction of notional in the single most-concentrated category. 0..1. */
   maxCategoryShare: number;
 }
@@ -426,7 +426,7 @@ export function computeBasketStats(
   markets: LiveMarket[],
   totalLegs: number,
   daysLeft: number,
-  tier: 90 | 70 | 50,
+  tier: 90 | 50,
 ): BasketStats {
   // Defensive: if no legs given, fall back to a tier-typical dispersion.
   // This matches the worst-case σ the live pipeline produces for a

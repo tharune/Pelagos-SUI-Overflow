@@ -3,8 +3,12 @@
  *
  * The /app/basket page shows "synthetic" baskets — groupings of real, live
  * Polymarket markets bucketed by:
- *   - probability tier         (90 = 85-99%, 70 = 25-75%, 50 = 1-12%)
+ *   - probability tier         (90 = 85-99%, 50 = 1-12%)
  *   - resolution window        (week = <7d, month = 30-90d, long = 180d+)
+ *
+ * NOTE: the authoritative build now lives on the backend (`/api/baskets`,
+ * priced off the Polymarket CLOB order book). This client-side builder is a
+ * resilience fallback used only when that endpoint is unreachable.
  *
  * Each underlying Polymarket market contributes TWO candidate legs — its YES
  * side and its NO side — and the bucket each side lands in depends on its
@@ -124,15 +128,13 @@ export type LiveMarket = {
  * aren't 10 such markets for a given (tier, window) combo, we top up from
  * the extended band so every surfaced basket has exactly 10 real legs.
  */
-export const TIER_RANGE: Record<90 | 70 | 50, [number, number]> = {
+export const TIER_RANGE: Record<90 | 50, [number, number]> = {
   90: [0.85, 0.99], // preferred: "extremely high"
-  70: [0.25, 0.75], // preferred: "mid"
   50: [0.01, 0.12], // preferred: "long-shot" — floor at 1% to skip dead/joke markets
 };
 
-export const TIER_RANGE_EXT: Record<90 | 70 | 50, [number, number]> = {
+export const TIER_RANGE_EXT: Record<90 | 50, [number, number]> = {
   90: [0.78, 0.995],
-  70: [0.15, 0.85],
   50: [0.01, 0.22],
 };
 
@@ -143,17 +145,15 @@ export const TIER_RANGE_EXT: Record<90 | 70 | 50, [number, number]> = {
  * gets a seeded ±TIER_TARGET_JITTER offset so the three tranches of a
  * tier don't all land on the same NAV.
  *
- * All three tiers are pinned: HIGH targets 0.95, MID 0.50, LOW 0.05.
+ * Both tiers are pinned: HIGH targets 0.95, LOW 0.05.
  * Pinning keeps each tier's NAV visibly centered on an intuitive
- * archetype ("near-cert" / "coinflip" / "long-shot") regardless of how
+ * archetype ("near-cert" / "long-shot") regardless of how
  * Polymarket's long tail happens to skew on any given day. Without
- * pinning the natural NAVs would drift — e.g. MID in the low 40s and
- * HIGH in the low 90s — which makes the three cards read as "random"
- * instead of as a clean risk ladder.
+ * pinning the natural NAVs would drift — e.g. HIGH in the low 90s —
+ * which makes the cards read as "random" instead of as a clean risk ladder.
  */
-export const TIER_TARGET_NAV: Record<90 | 70 | 50, number | null> = {
+export const TIER_TARGET_NAV: Record<90 | 50, number | null> = {
   90: 0.95,
-  70: 0.5,
   50: 0.05,
 };
 
@@ -163,8 +163,8 @@ export const TIER_TARGET_NAV: Record<90 | 70 | 50, number | null> = {
  * would look synthetic. Seeded by basket id so the offset is stable
  * across renders. Amplitude is ±2 percentage points, which keeps the
  * basket visibly centered on the tier target while giving each card its
- * own individual read (e.g. 48.6% / 50.8% / 49.2% for MID; 93.4% / 95.6%
- * / 96.1% for HIGH; 4.2% / 5.8% / 4.9% for LOW).
+ * own individual read (e.g. 93.4% / 95.6% / 96.1% for HIGH; 4.2% / 5.8%
+ * / 4.9% for LOW).
  */
 const TIER_TARGET_JITTER = 0.02;
 
@@ -189,10 +189,9 @@ const WINDOW_RANGE_EXT: Record<WindowKey, [number, number]> = {
 // Human-readable basket id segments. We used to build ids like `PBU-90-W`,
 // which required the reader to memorise that 90 = high-probability tier and
 // W = short window. The id now reads its risk + duration directly, e.g.
-// `PBU-HIGH-SHORT`, `PBU-MID-MED`, `PBU-LOW-LONG`.
-const TIER_CODE: Record<90 | 70 | 50, string> = {
+// `PBU-HIGH-SHORT`, `PBU-HIGH-MED`, `PBU-LOW-LONG`.
+const TIER_CODE: Record<90 | 50, string> = {
   90: "HIGH",
-  70: "MID",
   50: "LOW",
 };
 const WINDOW_CODE: Record<WindowKey, string> = {
@@ -201,10 +200,9 @@ const WINDOW_CODE: Record<WindowKey, string> = {
   long: "LONG",
 };
 
-// All 3×3 tier×window combos we attempt to build a basket for.
-const TARGET_COMBOS: Array<[90 | 70 | 50, WindowKey]> = [
+// All 2×3 tier×window combos we attempt to build a basket for.
+const TARGET_COMBOS: Array<[90 | 50, WindowKey]> = [
   [90, "week"], [90, "month"], [90, "long"],
-  [70, "week"], [70, "month"], [70, "long"],
   [50, "week"], [50, "month"], [50, "long"],
 ];
 
@@ -631,6 +629,114 @@ export async function fetchLiveMarkets(limit = 100): Promise<LiveMarket[]> {
   return raw.flatMap(normalizeMarketCandidates);
 }
 
+// ---------------- Backend-built baskets (authoritative) ----------------
+
+/**
+ * Shape of GET /api/baskets — the backend builds the 6 baskets (HIGH/LOW ×
+ * SHORT/MED/LONG) and prices every constituent leg off the Polymarket CLOB
+ * order book. This is the source of truth; the client `buildLiveBaskets`
+ * above only runs as a fallback when this endpoint is unreachable.
+ */
+type ApiBasketLeg = {
+  id: string;
+  underlyingId: string;
+  question: string;
+  conditionId: string;
+  side: "YES" | "NO";
+  probability: number;
+  yesProbability: number;
+  weight: number;
+  volumeUsd: number;
+  liquidityUsd: number;
+  spread: number | null;
+  endDateIso?: string;
+  daysToResolution: number;
+  dailyChange: number;
+  tokenId: string;
+  eventId?: string;
+  eventTitle?: string;
+  marketSlug?: string;
+  eventSlug?: string;
+  category: string;
+  priceSource: "clob" | "bbo" | "gamma";
+};
+type ApiBasket = {
+  id: string;
+  tier: 90 | 50;
+  window: WindowKey;
+  nav: number;
+  change: number;
+  daysLeft: number;
+  issue: number;
+  totalLegs: number;
+  marketVolumeUsd: number;
+  clobPricedLegs: number;
+  legs: ApiBasketLeg[];
+};
+
+function apiLegToLiveMarket(l: ApiBasketLeg): LiveMarket {
+  return {
+    id: l.id,
+    underlyingId: l.underlyingId,
+    question: l.question,
+    conditionId: l.conditionId,
+    side: l.side,
+    probability: l.probability,
+    yesProbability: l.yesProbability,
+    volumeUsd: l.volumeUsd,
+    endDateIso: l.endDateIso,
+    daysToResolution: l.daysToResolution,
+    dailyChange: l.dailyChange,
+    marketSlug: l.marketSlug,
+    eventSlug: l.eventSlug,
+    eventId: l.eventId,
+    // Topic dedupe already ran server-side; the client doesn't re-bucket
+    // backend baskets, so an empty topicKey is fine here.
+    topicKey: "",
+    category: (l.category as Category) ?? "other",
+    weight: l.weight,
+    tokenId: l.tokenId,
+  };
+}
+
+function apiBasketToLive(b: ApiBasket): LiveBasket {
+  const nav = b.nav;
+  // Sparkline histories are deterministic, cosmetic, and don't belong in the
+  // API payload — synthesize them client-side, anchored to the live NAV.
+  return {
+    id: b.id,
+    tier: b.tier,
+    date: formatResolutionDate(b.daysLeft),
+    daysLeft: b.daysLeft,
+    nav: Number(nav.toFixed(4)),
+    issue: Number((b.issue ?? nav).toFixed(4)),
+    change: b.change,
+    hot: false,
+    resolved: 0,
+    totalLegs: b.totalLegs,
+    history: synthHistory(nav, 364, b.id),
+    hourHistory: synthIntradayHistory(nav, 59, `${b.id}:hour`, 0.0008),
+    dayHistory: synthIntradayHistory(nav, 287, `${b.id}:day`, 0.0018),
+    live: true,
+    window: b.window,
+    markets: b.legs.map(apiLegToLiveMarket),
+  };
+}
+
+/**
+ * Fetch the authoritative, CLOB-priced baskets from the backend. Throws if
+ * the endpoint is unreachable or empty so the caller can fall back to the
+ * client-side build.
+ */
+export async function fetchBackendBaskets(): Promise<LiveBasket[]> {
+  const res = await fetch(`${BACKEND_URL}/api/baskets`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Baskets fetch failed: HTTP ${res.status}`);
+  const body = (await res.json()) as { baskets?: ApiBasket[] };
+  const baskets = body.baskets ?? [];
+  if (baskets.length === 0) throw new Error("Backend returned no baskets");
+  return baskets.map(apiBasketToLive);
+}
+
 // ---------------- Scoring ----------------
 
 function inRange(v: number, [lo, hi]: [number, number]): boolean {
@@ -656,7 +762,7 @@ function inRange(v: number, [lo, hi]: [number, number]): boolean {
  */
 function fitScore(
   m: LiveMarket,
-  tier: 90 | 70 | 50,
+  tier: 90 | 50,
   win: WindowKey,
 ): number | null {
   if (!inRange(m.probability, TIER_RANGE_EXT[tier])) return null;
@@ -690,7 +796,7 @@ export type BasketSlot =
   | LiveBasket
   | {
       kind: "placeholder";
-      tier: 90 | 70 | 50;
+      tier: 90 | 50;
       window: WindowKey;
       id: string;
       legsAvailable: number;
@@ -794,7 +900,7 @@ function formatResolutionDate(daysLeft: number): string {
  *     another — those two sides exactly offset. Event / topic collisions
  *     are allowed across baskets because different tranches represent
  *     different risk profiles; one GTA-VI market can sit in the 90-week
- *     basket while another from the same event sits in the 70-long.
+ *     basket while another from the same event sits in the LOW-long.
  *   Per-basket: `underlyingId`, `eventId`, and `topicKey` are all strict.
  *     Within a single basket no two legs may share an underlying market,
  *     event, or near-duplicate question — so the basket itself never
@@ -817,12 +923,12 @@ function formatResolutionDate(daysLeft: number): string {
  *   • Tiers listed in `TIER_TARGET_NAV` get a second pass: weights are
  *     tilted exponentially (still under the per-leg caps) so the weighted
  *     probability lands near the tier's target NAV, plus a seeded
- *     ±TIER_TARGET_JITTER offset per basket. All three tiers are pinned:
- *     HIGH→~95%, MID→~50%, LOW→~5%.
+ *     ±TIER_TARGET_JITTER offset per basket. Both tiers are pinned:
+ *     HIGH→~95%, LOW→~5%.
  *
- * Combo processing order matters: higher-tier baskets go first because
- * they're typically the sparsest pool of candidates. If we let the 70 tier
- * claim first pick, the extreme tiers would starve.
+ * Combo processing order matters: HIGH baskets go first because they're
+ * typically the sparsest pool of candidates. If we let the LOW tier claim
+ * first pick, the high tier would starve.
  */
 export function buildLiveBaskets(candidates: LiveMarket[]): BasketSlot[] {
   const out: BasketSlot[] = [];
@@ -934,7 +1040,7 @@ export function buildLiveBaskets(candidates: LiveMarket[]): BasketSlot[] {
     }
 
     // Index-fund-style weights from leg volume, with cap/floor clamping.
-    // For tiers with a target NAV (currently MID only), re-tilt the
+    // For tiers with a target NAV (HIGH + LOW), re-tilt the
     // weights so the weighted probability lands near that target, with a
     // seeded ±TIER_TARGET_JITTER offset per basket so all three tranches
     // of the tier don't land on the identical NAV.
@@ -943,7 +1049,7 @@ export function buildLiveBaskets(candidates: LiveMarket[]): BasketSlot[] {
     let jitteredTarget: number | null = null;
     if (tierTarget !== null) {
       const jitterRng = seededRng(`${id}:nav-jitter`);
-      // Basket ids share long common prefixes (`PBU-MID-`), which the
+      // Basket ids share long common prefixes (`PBU-HIGH-`), which the
       // FNV/xorshift in `seededRng` turns into near-identical first
       // draws. Burn three draws before reading so sibling tranches
       // actually see different jitter offsets.

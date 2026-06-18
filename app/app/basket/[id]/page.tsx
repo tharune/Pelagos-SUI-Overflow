@@ -130,8 +130,7 @@ export default function BasketDetail() {
 
   const bundle = resolved.basket;
   const color = tc(bundle.tier);
-  const tierLabel =
-    bundle.tier === 90 ? "High" : bundle.tier === 70 ? "Mid" : "Low";
+  const tierLabel = bundle.tier === 90 ? "High" : "Low";
   const liveMarkets: LiveMarket[] =
     resolved.kind === "live" ? resolved.basket.markets : [];
   const windowLabel: string | null =

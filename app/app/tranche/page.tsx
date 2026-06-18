@@ -9,15 +9,13 @@ import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "./_quote";
 import type { LiveBasket } from "../_lib/live-baskets";
 
-const TIER_LABEL: Record<90 | 70 | 50, string> = {
+const TIER_LABEL: Record<90 | 50, string> = {
   90: "High probability",
-  70: "Mid probability",
   50: "Low probability",
 };
 
-const TIER_BODY: Record<90 | 70 | 50, string> = {
+const TIER_BODY: Record<90 | 50, string> = {
   90: "High-probability baskets where the senior slice does most of the work.",
-  70: "Balanced baskets with visible mezzanine and junior pricing.",
   50: "Long-shot baskets where the junior tail carries the upside.",
 };
 
@@ -26,10 +24,10 @@ export default function TranchesPage() {
   const state = useLiveBaskets();
 
   const groups = useMemo(() => {
-    const empty: Record<90 | 70 | 50, LiveBasket[]> = { 90: [], 70: [], 50: [] };
-    // Always render the full product suite (High / Mid / Low × windows). Overlay
-    // live feed data where available; seed the rest, so no tier goes missing when
-    // the live market feed is sparse (e.g. few mid-probability markets right now).
+    const empty: Record<90 | 50, LiveBasket[]> = { 90: [], 50: [] };
+    // Always render the full product suite (High / Low × windows). Overlay live
+    // feed data where available; seed the rest only if the backend basket feed
+    // is unreachable (it serves all six CLOB-priced baskets directly).
     const liveById = new Map(
       (state.status === "ok" ? state.baskets : []).map((b) => [b.id, b] as const),
     );
@@ -45,7 +43,7 @@ export default function TranchesPage() {
     );
     for (const b of baskets) empty[b.tier].push(b);
     const winOrder: Record<"week" | "month" | "long", number> = { week: 0, month: 1, long: 2 };
-    for (const t of [90, 70, 50] as const) empty[t].sort((a, b) => winOrder[a.window] - winOrder[b.window]);
+    for (const t of [90, 50] as const) empty[t].sort((a, b) => winOrder[a.window] - winOrder[b.window]);
     return empty;
   }, [state]);
 
@@ -69,7 +67,7 @@ export default function TranchesPage() {
             {/* ── Polymarket event tiers ── */}
             {state.status === "loading" && <CardSkeleton count={3} />}
             {state.status === "error" && <EmptyState title="Could not load event baskets" subtitle={state.error} />}
-            {([90, 70, 50] as const).map((tier) => {
+            {([90, 50] as const).map((tier) => {
               const baskets = groups[tier];
               if (baskets.length === 0) return null;
               return (

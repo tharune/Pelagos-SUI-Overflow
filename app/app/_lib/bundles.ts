@@ -2,23 +2,22 @@
  * Seeded basket universe for the sandbox.
  *
  * This is the fallback surface shown when the live Polymarket feed cannot
- * be reached. It mirrors the live 3×3 grid produced by `buildLiveBaskets`:
- * three risk tiers (high / mid / low) × three resolution windows (short /
- * medium / long). The nine ids here are identical to what the live pipeline
- * would emit, so url deep links, portfolio positions and tranche pages
- * continue to resolve when the app is running in offline / fallback mode.
+ * be reached. It mirrors the live 2×3 grid produced by the backend
+ * `/api/baskets` builder: two risk tiers (high / low) × three resolution
+ * windows (short / medium / long). The six ids here are identical to what the
+ * live pipeline emits, so url deep links, portfolio positions and tranche
+ * pages continue to resolve when the app is running in offline / fallback mode.
  *
  * NAVs land inside each tier's live band (see `TIER_RANGE` in
  * `./live-baskets.ts`):
  *   • HIGH tier: 0.85–0.99
- *   • MID  tier: 0.25–0.75
  *   • LOW  tier: 0.01–0.12 (long-shot, not 50% — the "50" label is a
  *                          historical tier tag, not an issue price)
  */
 
 export type Bundle = {
   id: string;
-  tier: 90 | 70 | 50;
+  tier: 90 | 50;
   date: string; // human-readable resolution date
   daysLeft: number;
   nav: number;
@@ -137,7 +136,7 @@ function dateLabel(daysAhead: number): string {
 
 export const USDC_HISTORY = genFlatHistory(29, "usdc-flat");
 
-// Nine fallbacks — one per (tier, window) combo, matching the live grid
+// Six fallbacks — one per (tier, window) combo, matching the live grid
 // ids emitted by `buildLiveBaskets` in ./live-baskets.ts. Histories cover
 // the last hour (1-min), last 24 hours (5-min) and last year (daily) so
 // every chart range in the detail page works identically in offline
@@ -156,11 +155,6 @@ export const BUNDLES: Bundle[] = [
   { id: "PBU-HIGH-SHORT", tier: 90, date: dateLabel(10),  daysLeft: 10,  nav: 0.960, issue: 0.95, change: +4.5, hot: false, resolved: 0, totalLegs: 192, ...genBundleHistories(0.960, "PBU-HIGH-SHORT") },
   { id: "PBU-HIGH-MED",   tier: 90, date: dateLabel(63),  daysLeft: 63,  nav: 0.951, issue: 0.95, change: +0.3, hot: false, resolved: 0, totalLegs: 351, ...genBundleHistories(0.951, "PBU-HIGH-MED") },
   { id: "PBU-HIGH-LONG",  tier: 90, date: dateLabel(310), daysLeft: 310, nav: 0.940, issue: 0.95, change: +0.6, hot: false, resolved: 0, totalLegs: 418, ...genBundleHistories(0.940, "PBU-HIGH-LONG") },
-
-  // MID tier (≈ 50% probability target)
-  { id: "PBU-MID-SHORT",  tier: 70, date: dateLabel(14),  daysLeft: 14,  nav: 0.487, issue: 0.50, change: +8.1, hot: false, resolved: 0, totalLegs: 83,  ...genBundleHistories(0.487, "PBU-MID-SHORT") },
-  { id: "PBU-MID-MED",    tier: 70, date: dateLabel(62),  daysLeft: 62,  nav: 0.519, issue: 0.50, change:  0.0, hot: false, resolved: 0, totalLegs: 181, ...genBundleHistories(0.519, "PBU-MID-MED") },
-  { id: "PBU-MID-LONG",   tier: 70, date: dateLabel(312), daysLeft: 312, nav: 0.512, issue: 0.50, change: +0.4, hot: false, resolved: 0, totalLegs: 274, ...genBundleHistories(0.512, "PBU-MID-LONG") },
 
   // LOW tier (≈ 5% probability target — long-shot)
   { id: "PBU-LOW-SHORT",  tier: 50, date: dateLabel(11),  daysLeft: 11,  nav: 0.054, issue: 0.05, change: -0.1, hot: false, resolved: 0, totalLegs: 42,  ...genBundleHistories(0.054, "PBU-LOW-SHORT") },

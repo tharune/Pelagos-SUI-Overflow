@@ -396,9 +396,10 @@ export interface BasketNAVResult {
 // Extended tier bands — mirrors TIER_RANGE_EXT from live-baskets.ts.
 // Using the extended bands (not the tight preferred bands) so the backend
 // captures the same legs the frontend does.
-const TIER_BANDS: Record<'HIGH' | 'MID' | 'LOW', [number, number]> = {
+// MID (tier 70) retired — only HIGH + LOW ship. Mid-probability candidates
+// fall outside both bands and are simply skipped by `tierFor`.
+const TIER_BANDS: Record<'HIGH' | 'LOW', [number, number]> = {
   HIGH: [0.78, 0.995],
-  MID:  [0.15, 0.85],
   LOW:  [0.01, 0.22],
 };
 // Extended window ranges — mirrors WINDOW_RANGE_EXT from live-baskets.ts.
@@ -410,7 +411,7 @@ const WINDOW_DAYS: Record<'SHORT' | 'MED' | 'LONG', [number, number]> = {
 const MIN_VOLUME_USD = 10_000;
 const MAX_LEGS_PER_BASKET = 2000; // generous cap — frontend has no upper limit
 
-type TierKey = 'HIGH' | 'MID' | 'LOW';
+type TierKey = 'HIGH' | 'LOW';
 type WinKey  = 'SHORT' | 'MED' | 'LONG';
 
 interface Candidate {
@@ -458,7 +459,6 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
   const buckets = new Map<string, Candidate[]>();
   for (const basket of [
     'PBU-HIGH-SHORT','PBU-HIGH-MED','PBU-HIGH-LONG',
-    'PBU-MID-SHORT', 'PBU-MID-MED', 'PBU-MID-LONG',
     'PBU-LOW-SHORT', 'PBU-LOW-MED', 'PBU-LOW-LONG',
   ]) buckets.set(basket, []);
 

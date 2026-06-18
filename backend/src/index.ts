@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { proxiedFetch } from './services/proxy';
 import { bundleRoutes } from './routes/bundles';
+import { basketRoutes } from './routes/baskets';
 import { navRoutes } from './routes/nav';
 import { depositRoutes } from './routes/deposit';
 import { marketRoutes } from './routes/markets';
@@ -194,6 +195,7 @@ app.get('/api/health', async (_req, res) => {
 
 // Routes
 app.use('/api/bundles', bundleRoutes);
+app.use('/api/baskets', basketRoutes);
 app.use('/api/nav', navRoutes);
 app.use('/api/deposit', depositRoutes);
 app.use('/api/markets', marketLimiter, marketRoutes);

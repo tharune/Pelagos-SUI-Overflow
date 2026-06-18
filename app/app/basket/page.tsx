@@ -12,7 +12,7 @@ import { fetchAllVaultPrices, type VaultPriceResponse } from "../../lib/api";
 import { DeepBookBaskets } from "../_components/deepbook-baskets";
 
 type AssetClass = "deepbook" | "event";
-type TierFilter = "all" | 90 | 70 | 50;
+type TierFilter = "all" | 90 | 50;
 type WindowFilter = "all" | WindowKey;
 type FeedStatus = "loading" | "ready" | "seed";
 
@@ -25,7 +25,6 @@ type BasketView = Bundle & {
 const TIER_OPTIONS: Array<{ value: TierFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: 90, label: "High" },
-  { value: 70, label: "Mid" },
   { value: 50, label: "Low" },
 ];
 
@@ -36,9 +35,8 @@ const WINDOW_OPTIONS: Array<{ value: WindowFilter; label: string }> = [
   { value: "long", label: "Long" },
 ];
 
-const TIER_LABEL: Record<90 | 70 | 50, string> = {
+const TIER_LABEL: Record<90 | 50, string> = {
   90: "High probability",
-  70: "Mid probability",
   50: "Low probability",
 };
 
@@ -54,10 +52,9 @@ const WINDOW_ORDER: Record<WindowKey, number> = {
   long: 2,
 };
 
-const TIER_ORDER: Record<90 | 70 | 50, number> = {
+const TIER_ORDER: Record<90 | 50, number> = {
   90: 0,
-  70: 1,
-  50: 2,
+  50: 1,
 };
 
 function windowFromDays(daysLeft: number): WindowKey {
@@ -134,9 +131,9 @@ export default function BasketsPage() {
     if (basketState.status !== "ok" && basketState.status !== "error") {
       return { baskets: [] as BasketView[], feedStatus: "loading" as FeedStatus, feedError: null };
     }
-    // Always render the full product suite (High / Mid / Low × windows). Overlay
-    // live feed data where available; seed the rest so no basket goes missing when
-    // the live market feed is sparse (few mid-probability markets right now).
+    // Always render the full product suite (High / Low × windows). Overlay
+    // live feed data where available; seed the rest only if the backend basket
+    // feed is unreachable (it serves all six CLOB-priced baskets directly).
     const live = basketState.status === "ok" ? basketState.baskets : [];
     const liveById = new Map(live.map((b) => [b.id, b] as const));
     const merged: BasketView[] = BUNDLES.map((b) => {
@@ -552,7 +549,7 @@ function SelectedBasketPanel({
         <MetricCell label="Issue price" value={formatPrice(vaultPrice)} />
         <MetricCell label="24h move" value={`${positive ? "+" : ""}${basket.change.toFixed(1)}%`} tone={positive ? "positive" : "negative"} />
         <MetricCell label="Maturity" value={formatDaysLeft(basket.daysLeft)} />
-        <MetricCell label="Legs" value={basket.totalLegs.toLocaleString("en-US")} />
+        <MetricCell label="Legs" value={basket.live ? basket.totalLegs.toLocaleString("en-US") : "-"} />
         <MetricCell label="Market volume" value={basket.live ? formatCompactUsd(marketVolume) : "-"} />
         <MetricCell label="Route" value="Sui testnet" />
       </div>

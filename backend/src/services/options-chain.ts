@@ -1,26 +1,30 @@
 /**
- * Live OPTIONS CHAIN derived from the DeepBook Predict SVI vol surface.
+ * Live BTC options chain — priced on the REAL DeepBook Predict liquidity, not a model.
  *
- * DeepBook Predict only natively trades binaries / ranges, but it publishes a
- * full per-oracle SVI implied-vol smile + a live on-chain forward. That is
- * exactly the input a vanilla option needs, so we synthesize a real European
- * options chain on top of it:
+ * DeepBook Predict natively trades on-chain RANGE positions (1 contract = $1 payout
+ * if settlement lands in the band). A vanilla strike maps cleanly onto two ranges:
  *
- *   forward F   = the oracle's live price tick `forward` / 1e9        (on-chain)
- *   iv(K)       = SVI smile vol at log-moneyness ln(K/F)              (real IV)
- *   T           = (expiry - now) / year
- *   call/put    = Black-76 on (F, K, iv, T) with r = 0               (forward-priced)
- *   greeks      = analytic Black-76 delta / gamma / vega / theta
+ *   CALL @ K  ≡  range [K, K_far]      → pays $1 if BTC settles ABOVE K
+ *   PUT  @ K  ≡  range [K_floor, K]    → pays $1 if BTC settles BELOW K
  *
- * Nothing here is fabricated as "market" — the IVs and the forward are the
- * protocol's own live surface; the option premia are Black-76 *derived* from
- * them, and the `source` field documents exactly that. Each strike is marked
- * `tradeable` when it snaps onto the oracle's on-chain strike grid (so the UI
- * can route a real binary/range order to Predict at that strike).
+ * Every premium here is the protocol's OWN price for that range, read live via
+ * `get_range_trade_amounts` (devInspect) — the same call the market-maker prices
+ * against, so it already bakes in the AMM/vault spread + the slippage of the
+ * liability the order adds. We surface BOTH sides directly:
  *
- * We reuse the surface decode (decodeSvi) and smile evaluator (sviImpliedVol)
- * from vol.ts rather than re-deriving the SVI math, and snapStrikeToGrid /
- * predictServer from the Predict client. Cached ~5s like the other live reads.
+ *   ask = mint_cost   (what you pay to BUY/underwrite the contract)
+ *   bid = redeem_payout (what the desk pays to BUY IT BACK / you sell)
+ *   mid = (bid + ask) / 2
+ *
+ * There is NO synthetic spread and NO Black-76 premium. The IV column is the
+ * oracle's live SVI smile (real surface, shown for context); the greeks are the
+ * digital risk sensitivities off that surface, bounded for display. Contracts are
+ * WHOLE — 1 contract = $1 max payout, priced 0..1 dUSDC. A strike is `tradeable`
+ * when its live ask sits inside the protocol's mintable [2%,98%] window.
+ *
+ * Sourcing: forward + SVI from the public Predict indexer; prices from a single
+ * batched on-chain devInspect per expiry. `source` documents this. Cached ~4s so
+ * the chain tracks the oracle in near-real-time without hammering the RPC.
  */
 import {
   predictServer,
@@ -28,27 +32,39 @@ import {
   type PredictOracle,
 } from './predict/server';
 import { decodeSvi, sviImpliedVol } from './predict/vol';
+import { previewRangeBatch } from './predict/index';
 
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / forward / SVI fixed-point
+const DUSDC_UNIT = 1_000_000; // 1e6 raw dUSDC; 1 contract (1e6 qty) pays $1
+const CONTRACT_QTY = 1_000_000n; // 1 contract
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
-const MAX_EXPIRIES = 12; // cap at the ~12 nearest expiries
-const CACHE_TTL_MS = 5_000;
+const MAX_EXPIRIES = 12;
+const CACHE_TTL_MS = 4_000;
 
-const MONEYNESS_LO = 0.8;
-const MONEYNESS_HI = 1.2;
-const STRIKE_STEPS = 13; // 13 strikes across 0.8..1.2 moneyness
-const SPREAD_PCT = 0.02; // synthetic bid/ask = mid ± 1% (2% wide)
+const STRIKE_STEPS = 13;
+// Protocol mintable window on the per-contract ask (mirrors structured.ts).
+const MIN_MINTABLE = 0.02;
+const MAX_MINTABLE = 0.98;
+// The strike grid scales with the IMPLIED MOVE (σ), not a fixed ±20% moneyness:
+// these testnet oracles are minute/hour-dated, so the priceable + tradeable
+// strikes sit within a few σ of the forward. A fixed 0.8–1.2× grid would be
+// tens of σ out, where the on-chain range pricer aborts (off the SVI domain).
+const GRID_SIGMA = 3; // strikes span forward ± 3σ
+const WING_SIGMA = 4; // digital legs: call [K, F+4σ], put [F−4σ, K] (tail ≈ 0 mass)
 
 export interface OptionQuote {
-  mid: number;
-  bid: number;
-  ask: number;
-  iv: number;
+  mid: number; // per-contract premium (dUSDC, 0..1), REAL DeepBook mid
+  bid: number; // REAL redeem-now payout per contract
+  ask: number; // REAL mint cost per contract
+  iv: number; // SVI smile vol (decimal) — real surface, context
   delta: number;
   gamma: number;
   vega: number;
   theta: number;
-  tradeable: boolean;
+  tradeable: boolean; // ask inside the protocol's [2%,98%] mintable window
+  /** raw on-chain band so the UI can route a real order at this strike/side. */
+  lower_strike: string;
+  higher_strike: string;
 }
 
 export interface OptionStrikeRow {
@@ -73,10 +89,13 @@ export interface OptionsChain {
   spot: number;
   generated_at: string;
   source: string;
+  /** $ payout of one whole contract (fixed; sizing is in WHOLE contracts). */
+  contract_payout_usd: number;
+  quote_basis: 'per-contract';
   expiries: OptionExpiry[];
 }
 
-// --- standard normal pdf/cdf (Abramowitz & Stegun 7.1.26), matching density.ts ---
+// --- standard normal pdf/cdf (Abramowitz & Stegun) for the digital greeks ---
 function erf(x: number): number {
   const t = 1 / (1 + 0.3275911 * Math.abs(x));
   const y =
@@ -93,7 +112,6 @@ function normalPdf(x: number): number {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
-/** Human tenor from a duration in ms: "45s","16m","1h","4h","1d","3d". */
 function tenorLabel(ms: number): string {
   const s = ms / 1000;
   if (s < 90) return `${Math.round(s)}s`;
@@ -101,11 +119,9 @@ function tenorLabel(ms: number): string {
   if (min < 90) return `${Math.round(min)}m`;
   const h = min / 60;
   if (h < 36) return `${Math.round(h)}h`;
-  const d = h / 24;
-  return `${Math.round(d)}d`;
+  return `${Math.round(h / 24)}d`;
 }
 
-/** Read a numeric forward (1e9 USD) from a latest-price tick, resiliently. */
 function forwardFromTick(tick: Record<string, unknown>): number | null {
   for (const k of ['forward', 'spot', 'mark', 'price', 'underlying_price']) {
     const n = Number(tick[k]);
@@ -115,86 +131,64 @@ function forwardFromTick(tick: Record<string, unknown>): number | null {
 }
 
 /**
- * Black-76 (forward-priced, r = 0) call & put premia + analytic greeks for one
- * strike. `iv` is the strike's own smile vol (so the chain carries the surface's
- * skew, not a single ATM σ). Delta/gamma are spot-equivalent (∂/∂F), vega is per
- * 1.00 vol (i.e. per 100 vol-points), theta is per CALENDAR DAY (negative for
- * long options). Degenerate T→0 / σ→0 collapses to intrinsic with hard greeks.
+ * Digital (cash-or-nothing) risk sensitivities for a unit-payout binary, derived
+ * from the live SVI IV. These are the model GREEKS shown for context — the
+ * premium itself is the REAL DeepBook range price, not this. The digital call
+ * value ≈ N(d2); we take analytic delta/gamma and finite-difference vega/theta
+ * on that, then bound every greek for display (ultra-short testnet tenors make
+ * the raw 1/√T sensitivities explode).
  */
-function black76(
+function digitalGreeks(
   forward: number,
   strike: number,
   iv: number,
   tYears: number,
-): { call: Omit<OptionQuote, 'tradeable'>; put: Omit<OptionQuote, 'tradeable'> } {
-  const sqrtT = Math.sqrt(Math.max(tYears, 0));
+): { callDelta: number; putDelta: number; gamma: number; vega: number; theta: number } {
+  const sqrtT = Math.sqrt(Math.max(tYears, 1e-9));
   const sigmaT = iv * sqrtT;
-
-  // Degenerate slice (essentially at expiry or zero vol) → intrinsic value.
   if (!(sigmaT > 1e-9) || !(forward > 0) || !(strike > 0)) {
-    const callIntrinsic = Math.max(forward - strike, 0);
-    const putIntrinsic = Math.max(strike - forward, 0);
-    const callDelta = forward > strike ? 1 : 0;
-    return {
-      call: { mid: callIntrinsic, bid: 0, ask: 0, iv, delta: callDelta, gamma: 0, vega: 0, theta: 0 },
-      put: { mid: putIntrinsic, bid: 0, ask: 0, iv, delta: callDelta - 1, gamma: 0, vega: 0, theta: 0 },
-    };
+    return { callDelta: 0, putDelta: 0, gamma: 0, vega: 0, theta: 0 };
   }
-
-  const d1 = (Math.log(forward / strike) + 0.5 * sigmaT * sigmaT) / sigmaT;
-  const d2 = d1 - sigmaT;
-  const Nd1 = normalCdf(d1);
-  const Nd2 = normalCdf(d2);
-  const nd1 = normalPdf(d1);
-
-  // Premia (r = 0 ⇒ no discount factor).
-  const callMid = forward * Nd1 - strike * Nd2;
-  const putMid = strike * normalCdf(-d2) - forward * normalCdf(-d1);
-
-  // Greeks (r = 0). delta = ∂V/∂F, gamma = ∂²V/∂F², vega = ∂V/∂σ, theta = ∂V/∂t.
-  const callDelta = Nd1;
-  const putDelta = Nd1 - 1;
-  const gamma = nd1 / (forward * sigmaT);
-  const vega = forward * nd1 * sqrtT; // per 1.00 of vol
-  // theta = -F·n(d1)·σ / (2√T)  [annualized] → per calendar day.
-  const thetaAnnual = (-forward * nd1 * iv) / (2 * sqrtT);
-  const thetaDay = thetaAnnual / 365.25;
-
-  const halfSpread = SPREAD_PCT / 2;
-  const quote = (mid: number, delta: number): Omit<OptionQuote, 'tradeable'> => ({
-    mid,
-    bid: Math.max(0, mid * (1 - halfSpread)),
-    ask: mid * (1 + halfSpread),
-    iv,
-    delta,
-    gamma,
-    vega,
-    theta: thetaDay,
-  });
-
-  return {
-    call: quote(callMid, callDelta),
-    put: quote(putMid, putDelta),
+  const d2 = (Math.log(forward / strike) - 0.5 * sigmaT * sigmaT) / sigmaT;
+  const nd2 = normalPdf(d2);
+  // ∂N(d2)/∂F = n(d2)·∂d2/∂F = n(d2)/(F·σ√T)
+  let callDelta = nd2 / (forward * sigmaT);
+  // ∂²/∂F² = -n(d2)·(d2 + σ√T)/(F²·σ²T)  (analytic second derivative)
+  let gamma = (-nd2 * (d2 + sigmaT)) / (forward * forward * sigmaT * sigmaT);
+  // vega/theta by central finite-difference on the digital value N(d2).
+  const digit = (sig: number, t: number): number => {
+    const st = sig * Math.sqrt(Math.max(t, 1e-9));
+    if (!(st > 1e-12)) return forward > strike ? 1 : 0;
+    return normalCdf((Math.log(forward / strike) - 0.5 * st * st) / st);
   };
+  const dSig = Math.max(iv * 0.01, 1e-4);
+  let vega = (digit(iv + dSig, tYears) - digit(iv - dSig, tYears)) / (2 * dSig) * 0.01; // per 1 vol-pt
+  const dT = Math.max(tYears * 0.02, 1e-7);
+  let theta = (digit(iv, tYears - dT) - digit(iv, tYears + dT)) / (2 * dT) / 365.25; // per day
+  // Display bounds: a unit-payout digital can't sanely move more than ~1 per $
+  // of forward / per vol-point / per day. Bound so testnet minute-tenors stay sane.
+  const b = (x: number, lim: number) => Math.max(-lim, Math.min(lim, Number.isFinite(x) ? x : 0));
+  // Express delta as the contract-value move per +1% in BTC — the intuitive,
+  // readable form for a $1-payout digital (the raw ∂/∂$ is tiny). Peaks at ATM,
+  // → 0 in the wings. Bounded for the ultra-short tenors.
+  callDelta = b(callDelta * forward * 0.01, 2);
+  gamma = b(gamma * forward * forward * 1e-4, 2); // per (1%)²
+  vega = b(vega, 1);
+  theta = b(theta, 1);
+  return { callDelta, putDelta: -callDelta, gamma, vega, theta };
 }
 
 /**
- * Build the live options chain for `underlying` off the SVI surface.
- *
- * Picks the nearest active expiries (matching underlying, future expiry), pulls
- * each oracle's live forward + SVI smile, and prices a CALL + PUT at every
- * strike on a moneyness grid (0.8..1.2 × forward) via Black-76 using the smile
- * IV at each strike. A strike is `tradeable` when it snaps onto the oracle's
- * on-chain strike grid within half a tick (so the UI can route a Predict order
- * there). Slices missing a forward / SVI are skipped resiliently.
+ * Build the live options chain off REAL DeepBook range pricing. For each active
+ * expiry we pull the forward + SVI, lay strikes on the moneyness grid (snapped to
+ * the oracle's on-chain grid), then price every CALL [K,far] and PUT [floor,K]
+ * leg at 1 contract in ONE batched on-chain devInspect.
  */
 export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
   const now = Date.now();
   const want = underlying.toUpperCase();
 
-  const all = await predictServer
-    .predictOracles()
-    .catch(() => predictServer.oracles());
+  const all = await predictServer.predictOracles().catch(() => predictServer.oracles());
   const active = all
     .filter(
       (o: PredictOracle) =>
@@ -208,83 +202,142 @@ export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChai
   const expiries: OptionExpiry[] = [];
   let spot = 0;
 
-  for (const o of active) {
-    const [priceRes, sviRes] = await Promise.all([
-      predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
-      predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
-    ]);
-    if (!priceRes || !sviRes) continue;
-    const fwdRaw = forwardFromTick(priceRes);
-    const params = decodeSvi(sviRes);
-    if (fwdRaw === null || !params) continue;
+  // Price every expiry concurrently (each is one batched devInspect).
+  const built = await Promise.all(
+    active.map(async (o): Promise<OptionExpiry | null> => {
+      const [priceRes, sviRes] = await Promise.all([
+        predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
+        predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
+      ]);
+      if (!priceRes || !sviRes) return null;
+      const fwdRaw = forwardFromTick(priceRes);
+      const params = decodeSvi(sviRes);
+      if (fwdRaw === null || !params) return null;
 
-    const forward = fwdRaw / PRICE_SCALE;
-    const tYears = (o.expiry - now) / YEAR_MS;
-    if (!(tYears > 0)) continue;
-    if (spot === 0) {
-      // Use the nearest-expiry spot tick as the chain spot (forward of the front).
-      const spotRaw = Number((priceRes as Record<string, unknown>).spot);
-      spot = Number.isFinite(spotRaw) && spotRaw > 0 ? spotRaw / PRICE_SCALE : forward;
-    }
+      const forward = fwdRaw / PRICE_SCALE;
+      const tYears = (o.expiry - now) / YEAR_MS;
+      if (!(tYears > 0)) return null;
+      if (spot === 0) {
+        const spotRaw = Number((priceRes as Record<string, unknown>).spot);
+        spot = Number.isFinite(spotRaw) && spotRaw > 0 ? spotRaw / PRICE_SCALE : forward;
+      }
+      const atmIv = sviImpliedVol(params, 0, tYears);
 
-    const atmIv = sviImpliedVol(params, 0, tYears); // k = 0 (strike == forward)
-    const halfTick = (o.tick_size || 0) / 2;
+      // σ of the implied move over this tenor (USD). Floors at a tick so a near-
+      // expiry oracle still yields a usable spread of on-grid strikes.
+      const sigmaUsd = Math.max(
+        forward * atmIv * Math.sqrt(Math.max(tYears, 1e-9)),
+        forward * 2e-4,
+      );
+      const farRaw = snapStrikeToGrid(o, Math.round((forward + WING_SIGMA * sigmaUsd) * PRICE_SCALE));
+      const floorRaw = Math.max(
+        o.min_strike,
+        snapStrikeToGrid(o, Math.round((forward - WING_SIGMA * sigmaUsd) * PRICE_SCALE)),
+      );
 
-    const strikes: OptionStrikeRow[] = [];
-    const step = (MONEYNESS_HI - MONEYNESS_LO) / (STRIKE_STEPS - 1);
-    for (let i = 0; i < STRIKE_STEPS; i++) {
-      const moneyness = MONEYNESS_LO + i * step;
-      const strike = forward * moneyness;
-      const k = Math.log(strike / forward); // = ln(moneyness)
-      const iv = sviImpliedVol(params, k, tYears);
+      type StrikeDef = { strike: number; moneyness: number; kRaw: number; iv: number };
+      const defs: StrikeDef[] = [];
+      const seenK = new Set<number>();
+      const loUsd = forward - GRID_SIGMA * sigmaUsd;
+      const stepUsd = (2 * GRID_SIGMA * sigmaUsd) / (STRIKE_STEPS - 1);
+      for (let i = 0; i < STRIKE_STEPS; i++) {
+        const kRaw = snapStrikeToGrid(o, Math.round((loUsd + i * stepUsd) * PRICE_SCALE));
+        if (seenK.has(kRaw)) continue; // σ tiny → grid points collapsed; keep distinct
+        seenK.add(kRaw);
+        const strike = kRaw / PRICE_SCALE;
+        const iv = sviImpliedVol(params, Math.log(Math.max(strike, 1) / forward), tYears);
+        defs.push({ strike, moneyness: strike / forward, kRaw, iv });
+      }
 
-      // Tradeable iff this strike snaps onto the oracle's on-chain grid within
-      // half a tick (otherwise Predict's pricing_config aborts off-grid).
-      const strikeRaw = Math.round(strike * PRICE_SCALE);
-      const snapped = snapStrikeToGrid(o, strikeRaw);
-      const tradeable =
-        halfTick > 0 ? Math.abs(snapped - strikeRaw) <= halfTick * PRICE_SCALE : false;
+      // One batched devInspect: call [K, far] + put [floor, K] for every strike.
+      const bands: Array<{ lower: string; higher: string; quantity: bigint }> = [];
+      for (const d of defs) {
+        bands.push({ lower: String(d.kRaw), higher: String(farRaw), quantity: CONTRACT_QTY }); // call
+        bands.push({ lower: String(floorRaw), higher: String(d.kRaw), quantity: CONTRACT_QTY }); // put
+      }
+      let priced: Array<{ mint_cost: bigint; redeem_payout: bigint; ok: boolean }> = [];
+      try {
+        priced = await previewRangeBatch({
+          oracleId: o.oracle_id,
+          expiry: String(o.expiry),
+          bands,
+        });
+      } catch {
+        return null; // no live pricing for this expiry → skip (don't fabricate)
+      }
 
-      const { call, put } = black76(forward, strike, iv, tYears);
-      strikes.push({
-        strike,
-        moneyness,
-        call: { ...call, tradeable },
-        put: { ...put, tradeable },
+      const toQuote = (
+        p: { mint_cost: bigint; redeem_payout: bigint; ok: boolean } | undefined,
+        lower: string,
+        higher: string,
+        iv: number,
+        delta: number,
+        g: { gamma: number; vega: number; theta: number },
+      ): OptionQuote => {
+        const ask = p && p.ok ? Number(p.mint_cost) / DUSDC_UNIT : 0;
+        const bid = p && p.ok ? Number(p.redeem_payout) / DUSDC_UNIT : 0;
+        const mid = ask > 0 || bid > 0 ? (ask + bid) / 2 : 0;
+        const tradeable = !!(p && p.ok) && ask >= MIN_MINTABLE && ask <= MAX_MINTABLE;
+        return {
+          mid: Number(mid.toFixed(4)),
+          bid: Number(bid.toFixed(4)),
+          ask: Number(ask.toFixed(4)),
+          iv: Number(iv.toFixed(4)),
+          delta: Number(delta.toFixed(4)),
+          gamma: Number(g.gamma.toFixed(6)),
+          vega: Number(g.vega.toFixed(4)),
+          theta: Number(g.theta.toFixed(4)),
+          tradeable,
+          lower_strike: lower,
+          higher_strike: higher,
+        };
+      };
+
+      const strikes: OptionStrikeRow[] = defs.map((d, i) => {
+        const callP = priced[i * 2];
+        const putP = priced[i * 2 + 1];
+        const gk = digitalGreeks(forward, d.strike, d.iv, tYears);
+        return {
+          strike: d.strike,
+          moneyness: d.moneyness,
+          call: toQuote(callP, String(d.kRaw), String(farRaw), d.iv, gk.callDelta, gk),
+          put: toQuote(putP, String(floorRaw), String(d.kRaw), d.iv, gk.putDelta, gk),
+        };
       });
-    }
 
-    expiries.push({
-      oracle_id: o.oracle_id,
-      expiry: o.expiry,
-      tenor_label: tenorLabel(o.expiry - now),
-      days_to_expiry: tYears * 365.25,
-      forward,
-      atm_iv: atmIv,
-      strikes,
-    });
-  }
+      return {
+        oracle_id: o.oracle_id,
+        expiry: o.expiry,
+        tenor_label: tenorLabel(o.expiry - now),
+        days_to_expiry: tYears * 365.25,
+        forward,
+        atm_iv: atmIv,
+        strikes,
+      };
+    }),
+  );
 
-  if (expiries.length === 0) {
-    throw new Error('no active oracles');
-  }
+  for (const e of built) if (e) expiries.push(e);
+  if (expiries.length === 0) throw new Error('no active oracles');
   if (spot === 0) spot = expiries[0].forward;
 
   return {
     underlying: want,
     spot,
     generated_at: new Date().toISOString(),
-    source: 'black76-on-live-svi-surface',
+    source: 'deepbook-predict-range-onchain',
+    contract_payout_usd: 1,
+    quote_basis: 'per-contract',
     expiries,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Cached entry point (~5s, like the other live indexer reads)
+// Cached entry point (~4s) + inflight de-dupe
 // ---------------------------------------------------------------------------
 
 const _cache = new Map<string, { at: number; chain: OptionsChain }>();
-let _inflight = new Map<string, Promise<OptionsChain>>();
+const _inflight = new Map<string, Promise<OptionsChain>>();
 
 export async function getOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
   const key = underlying.toUpperCase();

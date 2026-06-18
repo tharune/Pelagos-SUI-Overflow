@@ -688,7 +688,7 @@ const PIPE: Array<{ name: string; sub: string; Icon: (p: IconProps) => React.Rea
 
 /** A live continuous (Normal mu/sigma) forward, used to give the hero chart a
  *  real bell-shaped distribution when the discrete-market pool has none. */
-type ContForward = { question?: string; underlying?: string; mu: number; sigma: number; volume_usd?: number };
+type ContForward = { question?: string; underlying?: string; mu: number; sigma: number; volume_usd?: number; backing_usdc?: number; pool_liquidity_usdc?: number };
 
 /** Synthesize a DistributionCandidate whose reference_curve is a Normal PDF
  *  sampled across 7 bands — a clean bell — from a continuous forward market. */
@@ -716,7 +716,10 @@ function bellFromForward(m: ContForward): DistributionCandidate {
     end_date_iso: null,
     days_to_resolution: 7,
     aggregate_volume_usd: m.volume_usd ?? 0,
-    aggregate_depth_usd: m.volume_usd && m.volume_usd > 0 ? m.volume_usd : 250_000,
+    // Depth = the market's REAL pool backing (live CLOB depth / 24h volume),
+    // distinct from quoting volume — never the same number as volume.
+    aggregate_depth_usd:
+      m.backing_usdc ?? m.pool_liquidity_usdc ?? (m.volume_usd && m.volume_usd > 0 ? Math.round(m.volume_usd * 0.01) : 250_000),
     avg_spread: null,
     band_count: BANDS,
     launch_score: 90,

@@ -36,24 +36,27 @@ export interface DusdcGrant {
  *  float to `recipient`, signed by the operator. */
 export async function dispenseDusdc(recipient: string, displayAmount: number): Promise<DusdcGrant> {
   if (!/^0x[0-9a-fA-F]{1,64}$/.test(recipient)) throw new Error('recipient (0x...) is required');
-  const amt = Math.min(Math.max(0, displayAmount), MAX_GRANT_UI);
-  if (amt <= 0) throw new Error('amount must be positive');
-  const amountRaw = BigInt(Math.round(amt * 10 ** DECIMALS));
+  const want = Math.min(Math.max(0, displayAmount), MAX_GRANT_UI);
+  if (want <= 0) throw new Error('amount must be positive');
 
   const client = getSuiClient();
   const signer = getSigner();
   const operator = signerAddress();
   if (!operator) throw new Error('Operator signer not configured (SUI_PRIVATE_KEY) — cannot dispense dUSDC.');
 
-  // Operator's dUSDC float (faucet-gated; we transfer, never mint).
+  // Operator's dUSDC float (faucet-gated; we transfer, never mint). Dispense the
+  // requested grant, or whatever the float still holds if it's running low — so
+  // the faucet degrades gracefully instead of hard-failing on the last drops.
   const { data } = await client.getCoins({ owner: operator, coinType: PREDICT.dusdcType });
   const total = data.reduce((s, c) => s + BigInt(c.balance), 0n);
-  if (total < amountRaw) {
+  if (total <= 0n) {
     throw new Error(
-      `Operator dUSDC float is low (${Number(total) / 10 ** DECIMALS} dUSDC left). ` +
-        `Top up ${operator} via https://tally.so/r/Xx102L and retry.`,
+      `Operator dUSDC float is empty. Top up ${operator} via https://tally.so/r/Xx102L and retry.`,
     );
   }
+  const wantRaw = BigInt(Math.round(want * 10 ** DECIMALS));
+  const amountRaw = wantRaw < total ? wantRaw : total;
+  const amt = Number(amountRaw) / 10 ** DECIMALS;
 
   const tx = new Transaction();
   const [primary, ...rest] = data.map((c) => c.coinObjectId);

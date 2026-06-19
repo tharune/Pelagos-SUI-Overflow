@@ -190,6 +190,22 @@ export async function airdropDusdc(address: string, amount = 25): Promise<{ dige
   return data;
 }
 
+/**
+ * Mint mUSDC to `address` — the freely-mintable collateral for the vault / basket
+ * products (distinct from faucet-gated dUSDC). Permissionless on-chain; the dev
+ * route signs for convenience.
+ */
+export async function airdropMockUsdc(address: string, amount = 10_000): Promise<{ digest: string; amount: number; explorer_url: string }> {
+  const res = await fetch(`${BACKEND_URL}/api/dev/airdrop-mock-usdc`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ walletAddress: address, amount }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export function explorerTxUrl(digest: string): string {
   return suiExplorerTxUrl(digest);
 }

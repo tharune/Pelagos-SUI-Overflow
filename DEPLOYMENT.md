@@ -29,8 +29,14 @@ Fresh from-scratch deployment under a dedicated wallet. Sui **testnet** (chain `
 | dUSDC faucet (manual) | https://tally.so/r/Xx102L |
 
 ## Collateral model
-- **dUSDC** — the ONLY asset DeepBook Predict accepts. Used for every Predict leg (distribution range strips, PLP supply for the PPN floor, Predict-backed tranches). Faucet-gated.
+- **dUSDC** (`0xe95040…::dusdc::DUSDC`, 6 dp) — the ONLY asset DeepBook Predict accepts. Used for every Predict leg (distribution range strips, PLP supply for the PPN floor, Predict-backed tranches). **Faucet-gated and not mintable by us** — its TreasuryCap is Mysten's; the operator only holds a float (currently ~888, in raw 6-dp units that shows as `888,065,700` on explorers — i.e. **~888 dUSDC, not 888 M**). Top up via https://tally.so/r/Xx102L.
 - **MOCK_USDC** — freely mintable via the shared `Faucet` (`faucet`/`mint`, ≤1,000,000/call). Used for Pelagos's own contracts (Polymarket baskets, vault flows) so testing/demos are never bottlenecked. **Cannot** be a Predict quote (protocol AdminCap required to register a quote).
+- **DEEP** (`0x36dbef86…::deep::DEEP`) — **NOT used by our integration.** DEEP is DeepBook v3's CLOB fee token; DeepBook **Predict** is an AMM/PLP-backed range protocol that settles purely in dUSDC. Verified on-chain: a live range mint consumed **0 DEEP** (only dUSDC + SUI gas). We never place v3 CLOB orders (the only order books we touch are Polymarket's, for baskets; the BTC mark is a read), so no DEEP is required or seeded. The package exposes no public mint anyway. The ~1.5 DEEP in the operator wallet is incidental and unused.
+
+## Test funds — in-app faucets
+- **Header "Test funds"** (top bar, when a wallet is connected): one click sends the connected wallet **25 dUSDC** (Predict products, from the operator float) + **10,000 mUSDC** (vault/basket products, freshly minted). `POST /api/dev/airdrop-dusdc` + `POST /api/dev/airdrop-mock-usdc`.
+- Each Predict surface also shows a contextual **"Get test dUSDC"** when the wallet is short.
+- Both currencies are wired end-to-end: Predict surfaces read/gate **dUSDC** (`useDusdcBalance`); vault/basket surfaces read/gate **mUSDC** (`useUsdcBalance`).
 
 ## Verified on-chain this deploy
 - `pelagos_sui` + `pelagos_vault` published; both `sui move test` green (2/2 each).

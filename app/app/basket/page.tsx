@@ -21,19 +21,6 @@ type BasketView = Bundle & {
   window: WindowKey;
 };
 
-const TIER_OPTIONS: Array<{ value: TierFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: 90, label: "High" },
-  { value: 50, label: "Low" },
-];
-
-const WINDOW_OPTIONS: Array<{ value: WindowFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "week", label: "Short" },
-  { value: "month", label: "Medium" },
-  { value: "long", label: "Long" },
-];
-
 const TIER_LABEL: Record<90 | 50, string> = {
   90: "High probability",
   50: "Low probability",
@@ -148,10 +135,6 @@ export default function BasketsPage() {
                   : "Curated baskets of uncorrelated event markets, settled on the Pelagos vault. Open one to trade it, or view its senior / mezzanine / junior risk slices."}
               </p>
             </div>
-            <div className="bk-hero-controls">
-              <SegmentedControl value={tier} onChange={setTier} options={TIER_OPTIONS} />
-              <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
-            </div>
           </section>
 
           {mode === "advanced" ? (
@@ -196,33 +179,6 @@ export default function BasketsPage() {
         </div>
       </PageFrame>
     </>
-  );
-}
-
-/* ───────────────────────── Shared controls ───────────────────────── */
-
-function SegmentedControl<V extends string | number>({
-  value,
-  onChange,
-  options,
-}: {
-  value: V;
-  onChange: (next: V) => void;
-  options: Array<{ value: V; label: string }>;
-}) {
-  return (
-    <div className="bk-segmented">
-      {options.map((option) => (
-        <button
-          key={String(option.value)}
-          className={option.value === value ? "is-active" : ""}
-          type="button"
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
   );
 }
 

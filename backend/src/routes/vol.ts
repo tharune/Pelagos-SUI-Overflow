@@ -74,15 +74,17 @@ async function resolveForwardRaw(
 /** Resolve a BTC vol oracle (+live forward) by id, else the soonest buffered active oracle. */
 async function resolveVolOracle(oracleId?: string): Promise<ResolvedOracle> {
   if (oracleId) {
-    const st = (await predictServer.oracleState(oracleId)) as {
+    const st = (await predictServer.oracleState(oracleId).catch(() => null)) as {
       oracle?: { oracle_id: string; expiry: number; min_strike: number; tick_size: number };
       latest_price?: { forward?: number; spot?: number };
-    };
-    if (!st.oracle) throw new Error(`oracle ${oracleId} not found`);
-    // A stale/expired oracle gives tYears ≤ 0 → exploded IV / negative t_years.
-    // Reject it (the surface only surfaces oracles ≥ 12 min out, so this is a safety net).
-    if (st.oracle.expiry <= Date.now() + 60_000) throw new Error(`oracle ${oracleId} expired or too near expiry`);
-    return { ...st.oracle, forward_raw: await resolveForwardRaw(st.latest_price, st.oracle.min_strike) };
+    } | null;
+    // Use the explicit oracle ONLY if it's found AND still live. BTC oracles roll
+    // often, so a cached oracle_id from the client goes stale within minutes — when
+    // that happens, don't error the whole quote, just fall through to the soonest
+    // active oracle below so the desk keeps working seamlessly.
+    if (st?.oracle && st.oracle.expiry > Date.now() + 6 * 60_000) {
+      return { ...st.oracle, forward_raw: await resolveForwardRaw(st.latest_price, st.oracle.min_strike) };
+    }
   }
   // Vol trading wants a meaningful horizon — minute-tenors make "per-day" Greeks
   // explode. Default to the active BTC oracle nearest a multi-day target.

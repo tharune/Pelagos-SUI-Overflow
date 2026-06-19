@@ -1,9 +1,25 @@
 import { Router, Request, Response } from 'express';
 import { mintMockUsdc, usdcBalance } from '../services/mock-usdc';
-import { dispenseDusdc, dusdcBalance } from '../services/dusdc-faucet';
+import { dispenseDusdc, dusdcBalance, dispenseTestFunds } from '../services/dusdc-faucet';
 import { listShares, confirmDigest, vaultConfigured } from '../services/vault';
 
 const router = Router();
+
+/**
+ * Combined "Test funds" faucet — one operator tx tops a wallet with every asset
+ * the app uses: mUSDC (vault/baskets, minted), dUSDC (Predict quote, from the
+ * operator float), and 0.05 SUI for gas so the user can sign their first tx.
+ * Powers the header faucet's Mint button.
+ */
+router.post('/faucet', async (req: Request, res: Response) => {
+  const { walletAddress } = req.body as { walletAddress?: string };
+  if (!walletAddress) return res.status(400).json({ error: 'walletAddress is required' });
+  try {
+    res.json({ chain: 'sui', walletAddress, ...(await dispenseTestFunds(walletAddress)) });
+  } catch (err) {
+    res.status(500).json({ error: `Test-funds dispense failed: ${(err as Error).message}` });
+  }
+});
 
 /** Real mUSDC faucet: mints testnet mUSDC to the wallet via the TreasuryCap. */
 router.post('/airdrop-mock-usdc', async (req: Request, res: Response) => {

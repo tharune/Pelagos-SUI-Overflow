@@ -67,3 +67,14 @@ export async function usdcBalance(owner: string): Promise<number> {
   const bal = await client.getBalance({ owner, coinType: USDC_TYPE });
   return Number(BigInt(bal.totalBalance)) / 10 ** DECIMALS;
 }
+
+/** Add a permissionless mUSDC mint to an existing PTB (lets the combined test-funds
+ *  faucet mint mUSDC + dispense dUSDC + SUI in a single wallet-free operator tx). */
+export function addMintMockUsdc(tx: Transaction, recipient: string, displayAmount: number): void {
+  const raw = BigInt(Math.round(displayAmount * 10 ** DECIMALS));
+  if (raw <= 0n) return;
+  tx.moveCall({
+    target: `${USDC_PKG}::mock_usdc::mint`,
+    arguments: [tx.object(FAUCET_ID), tx.pure.u64(raw), tx.pure.address(recipient)],
+  });
+}

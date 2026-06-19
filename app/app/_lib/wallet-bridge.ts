@@ -206,6 +206,27 @@ export async function airdropMockUsdc(address: string, amount = 10_000): Promise
   return data;
 }
 
+/**
+ * Combined "Test funds" grant — one operator tx that tops the wallet with mUSDC,
+ * dUSDC, and 0.05 SUI for gas. Returns the dispensed amounts + tx digest.
+ */
+export async function faucetTestFunds(address: string): Promise<{
+  digest: string;
+  dusdc: number;
+  musdc: number;
+  sui: number;
+  explorer_url: string;
+}> {
+  const res = await fetch(`${BACKEND_URL}/api/dev/faucet`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ walletAddress: address }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export function explorerTxUrl(digest: string): string {
   return suiExplorerTxUrl(digest);
 }

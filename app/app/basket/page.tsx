@@ -7,8 +7,7 @@ import { C, FS, FD, FM, EASE, tc, tl, trancheColor } from "../_lib/tokens";
 import { monotonePath } from "../_lib/curve";
 import { BUNDLES, type Bundle } from "../_lib/bundles";
 import type { LiveBasket, LiveMarket, WindowKey } from "../_lib/live-baskets";
-import { useLiveBaskets, formatYieldPct, type LiveBasketState } from "../_lib/use-live-baskets";
-import { fetchAllVaultPrices, type VaultPriceResponse } from "../../lib/api";
+import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "../tranche/_quote";
 import { useMode, BetaTag } from "../_lib/mode";
 import {
@@ -94,22 +93,6 @@ export default function BasketsPage() {
   const [tier, setTier] = useState<TierFilter>("all");
   const [windowFilter, setWindowFilter] = useState<WindowFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [vaultPrices, setVaultPrices] = useState<Record<string, VaultPriceResponse>>({});
-
-  useEffect(() => {
-    let alive = true;
-    fetchAllVaultPrices().then((response) => {
-      if (!alive || !response) return;
-      const next: Record<string, VaultPriceResponse> = {};
-      for (const price of response.prices) {
-        if (price.bundle_name) next[price.bundle_name] = price;
-      }
-      setVaultPrices(next);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const { baskets, feedStatus } = useMemo(() => {
     if (basketState.status !== "ok" && basketState.status !== "error") {
@@ -197,13 +180,13 @@ export default function BasketsPage() {
                   <BasketSelector
                     baskets={filtered}
                     selectedId={selected?.id ?? null}
-                    vaultPrices={vaultPrices}
+                    feedStatus={feedStatus}
                     onSelect={setSelectedId}
                   />
                   {selected && (
                     <SelectedBasketPanel
                       basket={selected}
-                      vaultPrice={vaultPrices[selected.id]?.issue_price ?? selected.issue}
+                      vaultPrice={selected.issue}
                       onOpen={() => router.push(`/app/basket/${selected.id}`)}
                     />
                   )}
@@ -213,7 +196,8 @@ export default function BasketsPage() {
 
             <div className="bk-col-right">
               <RiskSlicesPanel
-                state={basketState}
+                baskets={baskets}
+                loading={feedStatus === "loading"}
                 onOpen={(id) => router.push(`/app/tranche/${id}`)}
               />
             </div>
@@ -260,12 +244,12 @@ function Caption({ children }: { children: React.ReactNode }) {
 function BasketSelector({
   baskets,
   selectedId,
-  vaultPrices,
+  feedStatus,
   onSelect,
 }: {
   baskets: BasketView[];
   selectedId: string | null;
-  vaultPrices: Record<string, VaultPriceResponse>;
+  feedStatus: FeedStatus;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -275,7 +259,7 @@ function BasketSelector({
           <Caption>Selector</Caption>
           <strong>Event baskets</strong>
         </div>
-        <em>{baskets.length} live</em>
+        <em>{baskets.length} {feedStatus === "ready" ? "live" : "seed"}</em>
       </div>
       <div className="bk-selector-table">
         <div className="bk-selector-row bk-selector-labels">
@@ -289,7 +273,7 @@ function BasketSelector({
             key={basket.id}
             basket={basket}
             active={basket.id === selectedId}
-            issuePrice={vaultPrices[basket.id]?.issue_price ?? basket.issue}
+            issuePrice={basket.issue}
             onSelect={() => onSelect(basket.id)}
           />
         ))}
@@ -543,31 +527,21 @@ function BasketEmpty({ onReset }: { onReset: () => void }) {
 /* ───────────────────────── RIGHT · Risk Slices ───────────────────────── */
 
 function RiskSlicesPanel({
-  state,
+  baskets,
+  loading,
   onOpen,
 }: {
-  state: LiveBasketState;
+  baskets: BasketView[];
+  loading: boolean;
   onOpen: (id: string) => void;
 }) {
-  const baskets = useMemo(() => {
-    const liveById = new Map((state.status === "ok" ? state.baskets : []).map((b) => [b.id, b] as const));
-    const list: LiveBasket[] = BUNDLES.map(
-      (b) =>
-        liveById.get(b.id) ??
-        ({
-          ...b,
-          live: false as const,
-          window: (tl(b.daysLeft) === "This week" ? "week" : tl(b.daysLeft) === "This month" ? "month" : "long") as WindowKey,
-          markets: [],
-        } as unknown as LiveBasket),
-    );
-    const winOrder: Record<WindowKey, number> = { week: 0, month: 1, long: 2 };
-    return list.sort((a, b) => {
+  const sorted = useMemo(() => {
+    return [...baskets].sort((a, b) => {
       const t = TIER_ORDER[a.tier] - TIER_ORDER[b.tier];
       if (t !== 0) return t;
-      return winOrder[a.window] - winOrder[b.window];
+      return WINDOW_ORDER[a.window] - WINDOW_ORDER[b.window];
     });
-  }, [state]);
+  }, [baskets]);
 
   return (
     <div className="bk-card bk-risk">
@@ -581,7 +555,7 @@ function RiskSlicesPanel({
       <p className="bk-risk-sub">
         Every basket is sliced by loss priority — senior is paid first, junior eats first loss. Open a slice to deploy.
       </p>
-      {state.status === "loading" ? (
+      {loading ? (
         <div className="bk-risk-grid">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="bk-risk-card bk-skeleton" style={{ minHeight: 196 }} />
@@ -589,7 +563,7 @@ function RiskSlicesPanel({
         </div>
       ) : (
         <div className="bk-risk-grid">
-          {baskets.map((b) => (
+          {sorted.map((b) => (
             <RiskSliceCard key={b.id} basket={b} onClick={() => onOpen(b.id)} />
           ))}
         </div>
@@ -598,7 +572,7 @@ function RiskSlicesPanel({
   );
 }
 
-function RiskSliceCard({ basket, onClick }: { basket: LiveBasket; onClick: () => void }) {
+function RiskSliceCard({ basket, onClick }: { basket: BasketView; onClick: () => void }) {
   const color = tc(basket.tier);
   const { stats, quotes } = useMemo(() => {
     const s = computeBasketStats(basket.nav, basket.markets, basket.totalLegs, basket.daysLeft, basket.tier);
@@ -794,7 +768,9 @@ function CustomBasketBuilder({ router }: { router: ReturnType<typeof useRouter> 
           <button type="button" onClick={runBuild}>Retry</button>
         </div>
       )}
-      {build.status === "ok" && <BuildResult basket={build.basket} onDeploy={() => router.push("/app/portfolio")} />}
+      {build.status === "ok" && (
+        <BuildResult basket={build.basket} onDeploy={() => router.push("/app/portfolio")} onRetry={runBuild} />
+      )}
     </div>
   );
 }
@@ -811,12 +787,25 @@ function BuildProgress() {
   );
 }
 
-function BuildResult({ basket, onDeploy }: { basket: CustomBasket; onDeploy: () => void }) {
+function BuildResult({ basket, onDeploy, onRetry }: { basket: CustomBasket; onDeploy: () => void; onRetry: () => void }) {
   const d = basket.diversification;
   const fewLegs = basket.legs.length < 5;
+
+  if (basket.legs.length === 0) {
+    return (
+      <div className="bk-card bk-empty">
+        <strong>No basket could be built</strong>
+        <p className="bk-risk-sub" style={{ textAlign: "center", margin: 0 }}>
+          The live market universe is currently empty (market feed temporarily unavailable). Try again shortly.
+        </p>
+        <button type="button" onClick={onRetry}>Try again</button>
+      </div>
+    );
+  }
+
   return (
     <>
-      {fewLegs && (
+      {basket.legs.length > 0 && fewLegs && (
         <div className="bk-warning">
           Only {basket.legs.length} CLOB-priced leg{basket.legs.length === 1 ? "" : "s"} cleared the correlation filter for this theme.
           Try a broader theme or a different free-text query for a more diversified roster.
@@ -849,13 +838,14 @@ function BuildResult({ basket, onDeploy }: { basket: CustomBasket; onDeploy: () 
           <strong style={{ color: d.accepted ? C.green : C.amber }}>{d.accepted ? "Yes" : "No"}</strong>
         </div>
       </div>
-      {d.reason && <div className="bk-diversification-note">{d.reason}</div>}
+      {basket.legs.length > 0 && d.reason && <div className="bk-diversification-note">{d.reason}</div>}
 
       <div className="bk-card bk-legs">
         <div className="bk-section-head">
           <Caption>Leg roster</Caption>
           <strong>{basket.legs.length} legs · {basket.sources.clob_priced_legs} CLOB-priced</strong>
         </div>
+        {basket.legs.length > 0 ? (
         <div className="bk-leg-list">
           {basket.legs.map((leg) => (
             <div key={leg.market_id} className="bk-leg-row">
@@ -871,6 +861,9 @@ function BuildResult({ basket, onDeploy }: { basket: CustomBasket; onDeploy: () 
             </div>
           ))}
         </div>
+        ) : (
+          <div className="bk-empty-inline">No legs cleared the correlation filter.</div>
+        )}
       </div>
 
       <div className="bk-card bk-quotes">
@@ -878,6 +871,7 @@ function BuildResult({ basket, onDeploy }: { basket: CustomBasket; onDeploy: () 
           <Caption>Tranche quotes</Caption>
           <strong>Senior · Mezz · Junior</strong>
         </div>
+        {basket.tranches.length > 0 ? (
         <div className="bk-slice-list">
           {basket.tranches.map((t) => {
             const kind = t.kind as "senior" | "mezzanine" | "junior";
@@ -896,6 +890,9 @@ function BuildResult({ basket, onDeploy }: { basket: CustomBasket; onDeploy: () 
             );
           })}
         </div>
+        ) : (
+          <div className="bk-empty-inline">No tranche quotes available.</div>
+        )}
       </div>
 
       <div className="bk-card bk-mm">
@@ -990,6 +987,7 @@ const BASKET_CSS = `
   .bk-section-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
   .bk-section-head strong { color: ${C.textSecondary}; font-family: ${FM}; font-size: 10px; font-weight: 520; white-space: nowrap; }
   .bk-market-list, .bk-leg-list { border: 0.5px solid ${C.border}; border-radius: 9px; overflow: hidden; }
+  .bk-leg-list:empty, .bk-slice-list:empty { display: none; }
   .bk-market-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 0.5px solid ${C.border}; background: ${C.surface}; }
   .bk-market-row:last-child { border-bottom: 0; }
   .bk-market-row span { min-width: 0; display: grid; gap: 3px; }

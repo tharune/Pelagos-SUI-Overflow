@@ -81,7 +81,7 @@ function BasicOptionsChain() {
   const [openErr, setOpenErr] = useState<string | null>(null);
   const [depth, setDepth] = useState<BandDepth | null>(null);
 
-  // Poll the live chain every 10s so marks/IV stay fresh.
+  // Poll the live chain every 3s so marks/IV stay fresh.
   useEffect(() => {
     let alive = true;
     const run = () =>
@@ -358,7 +358,7 @@ function BasicOptionsChain() {
                     <Grk k="Δ Delta" v={dltFmt(selQuote.delta)} />
                     <Grk k="Γ Gamma" v={fmtSmall(selQuote.gamma)} />
                     <Grk k="ν Vega" v={fmtSmall(selQuote.vega)} />
-                    <Grk k="Θ Theta" v={fmtSmall(selQuote.theta)} />
+                    <Grk k="Θ Theta" v={Math.abs(selQuote.theta) >= 0.98 ? "—" : fmtSmall(selQuote.theta)} />
                     <Grk k="Moneyness" v={`${(selStrike.moneyness * 100).toFixed(0)}%`} />
                   </div>
 
@@ -568,7 +568,6 @@ const OC_CSS = `
   .oc-mny.itm { color: ${C.amber}; background: ${C.amber}1f; }
   .oc-mny.otm { color: ${C.teal}; background: ${C.teal}1f; }
   .oc-mny.atm { color: ${C.textSecondary}; background: ${C.textMuted}1f; }
-  .oc-note.oc-warn { color: ${C.amber}; border-left: 2px solid ${C.amber}66; padding-left: 9px; }
   .oc-indicative { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.amber}; border: 0.5px solid ${C.amber}66; background: ${C.amber}14; border-radius: 5px; padding: 3px 7px; white-space: nowrap; }
 
   .oc-quote { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 12px 14px; display: grid; gap: 10px; }
@@ -882,7 +881,7 @@ function AdvancedDistribution() {
                     {wallet.connected && (
                       <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FM, fontSize: 11, color: C.textMuted }}>
                         <span>Balance</span>
-                        <span style={{ color: C.textPrimary }}>{usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC</span>
+                        <span style={{ color: C.textPrimary }}>{usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC</span>
                       </div>
                     )}
                   </div>
@@ -931,7 +930,7 @@ function AdvancedDistribution() {
 
               {wallet.connected && (
                 <div style={{ marginTop: 12, fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                  Opening needs dUSDC (Predict&apos;s faucet-gated quote asset). Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC.
+                  Opening needs dUSDC (Predict&apos;s faucet-gated quote asset). Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC.
                 </div>
               )}
 

@@ -183,7 +183,12 @@ function digitalGreeks(
   callDelta = b(callDelta * forward * 0.01, 6);
   gamma = b(gamma * forward * forward * 1e-4, 6); // per (1%)²
   vega = b(vega, 1);
-  theta = b(theta, 1);
+  // Smoothly squash theta toward ±1 (tanh) instead of a hard clamp so the
+  // near-expiry strikes don't all saturate to an identical ±1.00 plateau, which
+  // reads as a placeholder greek. tanh is ~identity for sane tenors and only
+  // asymptotes in the T→0 wings; the UI additionally suppresses values that sit
+  // at the cap so a flat column never shows as an invented number.
+  theta = Number.isFinite(theta) ? Math.tanh(theta) : 0;
   return { callDelta, putDelta: -callDelta, gamma, vega, theta };
 }
 

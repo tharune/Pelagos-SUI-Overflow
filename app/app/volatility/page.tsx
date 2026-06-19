@@ -518,13 +518,46 @@ function AdvancedDesk(p: DeskProps) {
   const { surface, surfErr, q } = p;
   // Tenor index selected in the smile panel (drives the 3D ribbon + smile).
   const [sliceIdx, setSliceIdx] = useState(0);
-  const slices = surface?.slices ?? [];
+
+  // Drop seconds-to-expiry slices: as T→0 the SVI wing IVs blow up (e.g. 38% ATM
+  // → 99–130% wings), which makes the front-tenor smile near-vertical, the skew
+  // stat alarming, and (via global ivMin/ivMax) washes the 3D surface into one
+  // band. Keep tenors with ≥3 points and ≥5-min to expiry — all visualisations
+  // (smile, term, skew, 3D) consume this filtered list. Pricing is untouched.
+  const usable = useMemo(
+    () =>
+      (surface?.slices ?? [])
+        .filter((s) => s.points.length >= 3 && s.t_years > 300 / 31_557_600)
+        .map((s) => {
+          // Winsorize the DISPLAY wing IV per slice (cap at max(100%, 2×ATM)) at
+          // the data level so a surviving front tenor's extreme SVI wing can't
+          // spike the smile, the Skew stat, OR the 3D mesh's ivMin/ivMax. The
+          // ≥5-min filter alone doesn't catch a ~15–30 min tenor whose wings
+          // still blow up. ATM IV + pricing are untouched.
+          const ivCap = Math.max(1.0, s.atm_iv * 2);
+          return { ...s, points: s.points.map((p) => (p.iv > ivCap ? { ...p, iv: ivCap } : p)) };
+        }),
+    [surface],
+  );
+  const slices = usable;
   const sel = slices[Math.min(sliceIdx, Math.max(0, slices.length - 1))] ?? null;
 
-  // Keep slice index in range as the surface (re)loads.
+  // A surface clone whose slices + term_structure are the filtered set, so the
+  // 3D mesh's ivMin/ivMax normalisation excludes the front-tenor wing.
+  const filteredSurface = useMemo(() => {
+    if (!surface) return null;
+    const keepExpiry = new Set(usable.map((s) => s.expiry));
+    return {
+      ...surface,
+      slices: usable,
+      term_structure: surface.term_structure.filter((t) => keepExpiry.has(t.expiry)),
+    } as VolDeskSurface;
+  }, [surface, usable]);
+
+  // Keep slice index in range as the surface (re)loads / the filtered set shifts.
   useEffect(() => {
-    if (surface && sliceIdx > surface.slices.length - 1) setSliceIdx(0);
-  }, [surface, sliceIdx]);
+    if (sliceIdx > slices.length - 1) setSliceIdx(0);
+  }, [slices.length, sliceIdx]);
 
   return (
     <div className="vd-adv">
@@ -535,8 +568,8 @@ function AdvancedDesk(p: DeskProps) {
             <Cap>Implied-vol surface · SVI</Cap>
             <span className="vd-dim">drag to rotate · {slices.length} tenors × {sel?.points.length ?? 0} strikes · live</span>
           </div>
-          {surface ? (
-            <VolSurface3D surface={surface} selectedSlice={sliceIdx} height={356} />
+          {filteredSurface && filteredSurface.slices.length > 0 ? (
+            <VolSurface3D surface={filteredSurface} selectedSlice={sliceIdx} height={356} />
           ) : surfErr ? (
             <div className="vd-3d-load">surface unavailable — {surfErr}</div>
           ) : (
@@ -567,7 +600,7 @@ function AdvancedDesk(p: DeskProps) {
             <Cap>ATM term structure</Cap>
             <span className="vd-dim">{slices.length} expiries · click to select tenor{sel ? ` · ${sel.tenor_label} ${(sel.atm_iv * 100).toFixed(1)}%` : ""}</span>
           </div>
-          <TermChart surface={surface} selectedIdx={sliceIdx} onPick={setSliceIdx} />
+          <TermChart surface={filteredSurface} selectedIdx={sliceIdx} onPick={setSliceIdx} />
         </div>
 
         <div className="vd-card vd-adv-greeks">
@@ -576,7 +609,22 @@ function AdvancedDesk(p: DeskProps) {
             <Greek sym="Δ" name="Delta" val={p.g ? `${p.g.delta_btc >= 0 ? "+" : ""}${p.g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
             <Greek sym="Γ" name="Gamma" val={p.g ? p.g.gamma.toFixed(5) : "—"} color={p.g ? (p.g.gamma >= 0 ? C.green : C.red) : undefined} />
             <Greek sym="ν" name="Vega" val={p.g ? `${p.g.vega_usd >= 0 ? "+" : ""}${money(p.g.vega_usd)}` : "—"} unit="/pt" color={p.g ? (p.g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-            <Greek sym="Θ" name="Theta" val={p.g ? `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}` : "—"} unit="/day" color={p.g ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+            {(() => {
+              // Per-day theta is degenerate for the minute-/hour-dated testnet
+              // oracles (∝ 1/T), where it saturates to the position-value cap.
+              // Suppress it (show "—") rather than print an implausible decay —
+              // same guard the DeepBook + Distribution greeks use.
+              const sat = !!p.g && Math.abs(p.g.theta_usd_day) >= 0.9 * Math.abs(p.g.position_value_usd);
+              return (
+                <Greek
+                  sym="Θ"
+                  name="Theta"
+                  val={!p.g ? "—" : sat ? "—" : `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}`}
+                  unit={sat ? "short tenor" : "/day"}
+                  color={p.g && !sat ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined}
+                />
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -745,11 +793,42 @@ function skewOf(slice: VolDeskSurface["slices"][number]): string {
   return `${sk >= 0 ? "+" : ""}${sk.toFixed(1)}`;
 }
 
+// These charts render at width:100% with preserveAspectRatio="none", so the
+// viewBox x-axis stretches by ratio r = containerWidth / viewBoxWidth while y is
+// fixed. That turns <text> labels into stretched glyphs and <circle> markers into
+// ellipses (strokes are already protected via vectorEffect). We measure the live
+// ratio and counter-scale each text/marker horizontally by 1/r about its own
+// anchor x — positions/numbers stay identical, only the distortion is removed.
+function useSvgXRatio(viewBoxW: number) {
+  const ref = useRef<SVGSVGElement | null>(null);
+  const [ratio, setRatio] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth || el.getBoundingClientRect().width;
+      if (w > 0) setRatio(w / viewBoxW);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewBoxW]);
+  return { ref, ratio };
+}
+// Horizontal counter-scale about anchor x: matrix(1/r,0,0,1, x*(1-1/r), 0).
+const noStretchX = (x: number, ratio: number): string =>
+  `matrix(${(1 / ratio).toFixed(5)},0,0,1,${(x * (1 - 1 / ratio)).toFixed(3)},0)`;
+
 // ---- 2D smile chart (IV vs strike for one tenor) --------------------------
 function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null }) {
   const W = 360, H = 184, PL = 38, PR = 14, PT = 12, PB = 26;
+  const { ref, ratio } = useSvgXRatio(W);
   if (!slice || slice.points.length < 2) return <div className="vd-chart-empty">no slice</div>;
-  const pts = slice.points;
+  // Winsorize the displayed wing IV: even on a filtered tenor an extreme SVI wing
+  // can spike the y-axis and flatten the visible smile. Cap at max(100%, 2×ATM).
+  const ivCap = Math.max(1.0, slice.atm_iv * 2);
+  const pts = slice.points.map((p) => ({ ...p, iv: Math.min(p.iv, ivCap) }));
   const xs = pts.map((p) => p.log_moneyness);
   const ys = pts.map((p) => p.iv);
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
@@ -762,20 +841,21 @@ function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null 
   const area = `${line} L ${sx(xMax).toFixed(1)} ${H - PB} L ${sx(xMin).toFixed(1)} ${H - PB} Z`;
   const atmX = sx(0);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
       {[hi, (hi + lo) / 2, lo].map((v, i) => (
         <g key={i}>
           <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} vectorEffect="non-scaling-stroke" />
-          <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9">{(v * 100).toFixed(0)}%</text>
+          <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(PL - 6, ratio)}>{(v * 100).toFixed(0)}%</text>
         </g>
       ))}
-      <line x1={atmX} x2={atmX} y1={PT} y2={H - PB} stroke={C.textMuted} strokeDasharray="3 3" strokeWidth="1" opacity={0.55} />
-      <text x={atmX} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="8.5">ATM</text>
+      <line x1={atmX} x2={atmX} y1={PT} y2={H - PB} stroke={C.textMuted} strokeDasharray="3 3" strokeWidth="1" opacity={0.55} vectorEffect="non-scaling-stroke" />
+      <text x={atmX} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="8.5" transform={noStretchX(atmX, ratio)}>ATM</text>
       <path d={area} fill={C.tealLight} opacity={0.1} />
       <path d={line} fill="none" stroke={C.tealLight} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      {pts.map((p, i) => (
-        <circle key={i} cx={sx(p.log_moneyness)} cy={sy(p.iv)} r={Math.abs(p.log_moneyness) < 1e-9 ? 3 : 1.8} fill={Math.abs(p.log_moneyness) < 1e-9 ? C.tealLight : C.teal} />
-      ))}
+      {pts.map((p, i) => {
+        const cx = sx(p.log_moneyness);
+        return <circle key={i} cx={cx} cy={sy(p.iv)} r={Math.abs(p.log_moneyness) < 1e-9 ? 3 : 1.8} fill={Math.abs(p.log_moneyness) < 1e-9 ? C.tealLight : C.teal} transform={noStretchX(cx, ratio)} />;
+      })}
     </svg>
   );
 }
@@ -783,6 +863,7 @@ function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null 
 // ---- ATM term-structure curve (IV vs expiry) ------------------------------
 function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface | null; selectedIdx: number; onPick: (i: number) => void }) {
   const W = 360, H = 150, PL = 38, PR = 14, PT = 12, PB = 24;
+  const { ref, ratio } = useSvgXRatio(W);
   const ts = surface?.term_structure ?? [];
   if (ts.length < 2) return <div className="vd-chart-empty">{surface ? "single tenor" : "loading…"}</div>;
   const ys = ts.map((t) => t.atm_iv);
@@ -793,21 +874,22 @@ function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface |
   const sy = (y: number) => PT + (1 - (y - lo) / (hi - lo || 1)) * (H - PT - PB);
   const line = ts.map((t, i) => `${i === 0 ? "M" : "L"} ${sx(i).toFixed(1)} ${sy(t.atm_iv).toFixed(1)}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
       {[hi, lo].map((v, i) => (
         <g key={i}>
           <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} vectorEffect="non-scaling-stroke" />
-          <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9">{(v * 100).toFixed(0)}%</text>
+          <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(PL - 6, ratio)}>{(v * 100).toFixed(0)}%</text>
         </g>
       ))}
       <path d={line} fill="none" stroke={C.violet} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       {ts.map((t, i) => {
         const on = i === selectedIdx;
+        const cx = sx(i);
         return (
           <g key={i} style={{ cursor: "pointer" }} onClick={() => onPick(i)}>
-            <circle cx={sx(i)} cy={sy(t.atm_iv)} r={on ? 4 : 2.4} fill={on ? C.tealLight : C.violet} stroke={on ? C.tealLight : "none"} />
+            <circle cx={cx} cy={sy(t.atm_iv)} r={on ? 4 : 2.4} fill={on ? C.tealLight : C.violet} stroke={on ? C.tealLight : "none"} vectorEffect="non-scaling-stroke" transform={noStretchX(cx, ratio)} />
             {(i === 0 || i === ts.length - 1 || on) && (
-              <text x={sx(i)} y={H - 8} textAnchor="middle" fill={on ? C.tealLight : C.textMuted} fontFamily={FM} fontSize="8.5">{t.tenor_label}</text>
+              <text x={cx} y={H - 8} textAnchor="middle" fill={on ? C.tealLight : C.textMuted} fontFamily={FM} fontSize="8.5" transform={noStretchX(cx, ratio)}>{t.tenor_label}</text>
             )}
           </g>
         );
@@ -820,6 +902,7 @@ function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface |
  *  forward and the live mark marked. Profit shaded accent, loss shaded red. */
 function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean }) {
   const W = 760, H = compact ? 168 : 272, PL = 52, PR = 16, PT = 16, PB = 28;
+  const { ref, ratio } = useSvgXRatio(W);
   const model = useMemo(() => {
     if (!quote) return null;
     const bands = quote.strip.buckets;
@@ -852,7 +935,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
   const markX = Math.max(lo, Math.min(hi, markPrice));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={compact ? H : "100%"} preserveAspectRatio="none" style={{ display: "block", ...(compact ? {} : { flex: 1, minHeight: 240 }) }}>
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={compact ? H : "100%"} preserveAspectRatio="none" style={{ display: "block", ...(compact ? {} : { flex: 1, minHeight: 240 }) }}>
       <defs>
         <clipPath id="vd-pos"><rect x={PL} y={PT} width={W - PL - PR} height={Math.max(0, zeroY - PT)} /></clipPath>
         <clipPath id="vd-neg"><rect x={PL} y={zeroY} width={W - PL - PR} height={Math.max(0, H - PB - zeroY)} /></clipPath>
@@ -860,15 +943,15 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
       {[yMax, 0, yMin].map((v, i) => (
         <g key={i}>
           <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={v === 0 ? 0.9 : 0.4} vectorEffect="non-scaling-stroke" />
-          <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">{v >= 0 ? "+$" : "-$"}{Math.abs(Math.round(v)).toLocaleString()}</text>
+          <text x={PL - 8} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5" transform={noStretchX(PL - 8, ratio)}>{v >= 0 ? "+$" : "-$"}{Math.abs(Math.round(v)).toLocaleString()}</text>
         </g>
       ))}
       <g clipPath="url(#vd-pos)"><path d={areaPos} fill={accent} opacity={0.16} /></g>
       <g clipPath="url(#vd-neg)"><path d={areaPos} fill={C.red} opacity={0.12} /></g>
-      <line x1={sx(fwd)} x2={sx(fwd)} y1={PT} y2={H - PB} stroke={C.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity={0.6} />
-      <text x={sx(fwd)} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9">fwd {dollars(fwd)}</text>
-      <line x1={sx(markX)} x2={sx(markX)} y1={PT} y2={H - PB} stroke={C.tealLight} strokeWidth="1.2" opacity={0.85} />
-      <circle cx={sx(markX)} cy={PT + 4} r={3} fill={C.tealLight} />
+      <line x1={sx(fwd)} x2={sx(fwd)} y1={PT} y2={H - PB} stroke={C.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity={0.6} vectorEffect="non-scaling-stroke" />
+      <text x={sx(fwd)} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(sx(fwd), ratio)}>fwd {dollars(fwd)}</text>
+      <line x1={sx(markX)} x2={sx(markX)} y1={PT} y2={H - PB} stroke={C.tealLight} strokeWidth="1.2" opacity={0.85} vectorEffect="non-scaling-stroke" />
+      <circle cx={sx(markX)} cy={PT + 4} r={3} fill={C.tealLight} transform={noStretchX(sx(markX), ratio)} />
       <path d={line} fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
@@ -924,8 +1007,6 @@ const VD_CSS = `
   .vd-strat b { font-family: ${FD}; font-size: 13.5px; font-weight: 600; color: ${C.textPrimary}; }
   .vd-strat em { font-family: ${FM}; font-size: 9.5px; font-style: normal; color: ${C.textMuted}; }
 
-  .vd-ctrls { display: grid; grid-template-columns: 200px 290px 1fr; gap: 16px; align-items: center; }
-  @media (max-width: 1280px) { .vd-ctrls { grid-template-columns: 1fr 1fr; } .vd-ctrls .vd-ctrl-meta { grid-column: 1 / -1; } }
   .vd-amount { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 10px 13px; display: grid; gap: 6px; }
   .vd-amount-in { display: flex; align-items: baseline; gap: 8px; }
   .vd-num { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 22px; font-weight: 600; padding: 0; }
@@ -941,13 +1022,8 @@ const VD_CSS = `
   .vd-pill b { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; }
   .vd-pill.on b { color: ${C.tealLight}; }
   .vd-pill em { font-family: ${FM}; font-size: 9px; font-style: normal; color: ${C.textMuted}; }
-  .vd-ctrl-meta { display: grid; gap: 9px; align-content: center; }
-  .vd-ctrl-meta div { display: flex; align-items: baseline; gap: 8px; }
-  .vd-ctrl-meta strong { font-family: ${FD}; font-size: 14px; font-weight: 600; color: ${C.textPrimary}; }
-  .vd-ctrl-meta p { margin: 0; font-family: ${FS}; font-size: 13px; line-height: 1.5; color: ${C.textPrimary}; }
-
   /* Basic: controls stacked vertically in the right-rail order-entry column. */
-  .vd-ctrls-v { grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
+  .vd-ctrls-v { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
   .vd-ctrls-desc { margin: 0; font-family: ${FS}; font-size: 12.5px; line-height: 1.55; color: ${C.textSecondary}; }
   .vd-ctrls-desc span { color: ${C.textMuted}; }
   .vd-ticket-be { margin: 11px 0 0; font-family: ${FS}; font-size: 12px; line-height: 1.5; color: ${C.textSecondary}; }
@@ -1039,14 +1115,6 @@ const VD_CSS = `
   .vd-smile-stat > div { background: ${C.card}; padding: 9px 11px; display: grid; gap: 3px; }
   .vd-smile-stat span { font-family: ${FM}; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; }
   .vd-smile-stat strong { font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
-
-  .vd-tenor-list { display: grid; gap: 6px; max-height: 168px; overflow-y: auto; padding-right: 2px; }
-  .vd-tenor { display: flex; justify-content: space-between; align-items: center; padding: 8px 11px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.12s ${EASE}; }
-  .vd-tenor:hover { border-color: ${C.borderHover}; }
-  .vd-tenor.on { border-color: ${C.tealLight}; background: ${C.tealLight}14; }
-  .vd-tenor b { font-family: ${FM}; font-size: 11.5px; font-weight: 600; color: ${C.textPrimary}; }
-  .vd-tenor span { font-family: ${FM}; font-size: 11.5px; color: ${C.textSecondary}; font-variant-numeric: tabular-nums; }
-  .vd-tenor.on b, .vd-tenor.on span { color: ${C.tealLight}; }
 
   .vd-builder { display: grid; gap: 12px; align-content: start; }
   .vd-build-strats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }

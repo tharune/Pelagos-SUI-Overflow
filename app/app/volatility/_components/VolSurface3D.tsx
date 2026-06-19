@@ -70,9 +70,29 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     if (slices.length === 0) return;
 
     // ---- shared log-moneyness grid (columns) ------------------------------
-    const allK = new Set<number>();
-    for (const s of slices) for (const p of s.points) allK.add(p.log_moneyness);
-    const cols = Array.from(allK).sort((a, b) => a - b);
+    // Resample every tenor onto ONE uniform column grid spanning the moneyness
+    // window where ALL tenors have real data (the intersection of their strike
+    // ranges). The old code took the UNION of every slice's distinct strikes —
+    // with 15 tenors whose ~17 strikes don't align that is ~250 columns, and
+    // each tenor only has data at its own ~17, so the other columns were
+    // edge-extrapolated into flat walls: that is what tore the mesh apart. A
+    // uniform intersection grid removes the extrapolation and keeps the
+    // triangulation even, so the surface reads clean.
+    let kLo = -Infinity, kHi = Infinity;
+    for (const s of slices) {
+      if (s.points.length < 2) continue;
+      kLo = Math.max(kLo, s.points[0].log_moneyness);
+      kHi = Math.min(kHi, s.points[s.points.length - 1].log_moneyness);
+    }
+    // Fall back to the union range if the intersection is empty/degenerate.
+    if (!(kHi > kLo)) {
+      kLo = Infinity; kHi = -Infinity;
+      for (const s of slices) for (const p of s.points) { kLo = Math.min(kLo, p.log_moneyness); kHi = Math.max(kHi, p.log_moneyness); }
+    }
+    if (!(kHi > kLo)) return;
+    const NCOL = 28;
+    const cols: number[] = [];
+    for (let i = 0; i < NCOL; i++) cols.push(kLo + ((kHi - kLo) * i) / (NCOL - 1));
     const rows = slices.length;
     if (cols.length < 2 || rows < 1) return;
 
@@ -172,25 +192,28 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     for (const v of vert) positions.push(v.x, v.y, v.z);
     for (const c of vcol) colors.push(c.r, c.g, c.b);
 
-    // ---- auto-frame the camera so the surface FILLS the panel ------------
-    // (the old fixed camera sat far back, leaving the mesh tiny in dead space).
+    // ---- auto-frame the camera by the bounding SPHERE --------------------
+    // The sphere is rotation-invariant, so once it fits the FOV the whole
+    // surface — including its full vertical (IV-height) relief — stays inside
+    // the panel at EVERY orbit angle. The old fit used only Math.max(size.x,
+    // size.z) and ignored size.y, then pulled the camera in by 0.82, so a tall
+    // front-tenor vol wall poked out the top of the card.
     const box = new THREE.Box3().setFromPoints(vert);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const center = sphere.center;
     const vFov = (camera.fov * Math.PI) / 180;
     const aspect = width / height;
-    // Fit BOTH the vertical and horizontal projected extent of the footprint, then
-    // pull in (fill factor < 1) since a 3/4-tilted flat surface never uses the full
-    // bounding sphere. Tuned so the mesh fills the card with a small margin.
-    const radius = Math.max(size.x, size.z) * 0.5;
-    const fitV = radius / Math.tan(vFov / 2);
-    const fitH = radius / Math.tan(Math.atan(Math.tan(vFov / 2) * aspect));
-    const dist = Math.max(fitV, fitH) * 0.82; // tilted flat surface never uses full sphere → pull in
-    const dir = new THREE.Vector3(0.42, 0.52, 0.86).normalize();
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+    // Distance at which the sphere exactly fills the SMALLER of the two FOVs
+    // (the limiting dimension — vertical for a wide panel), plus a margin so the
+    // surface never kisses the edges as the user rotates.
+    const fit = sphere.radius / Math.sin(Math.min(vFov, hFov) / 2);
+    const dist = fit * 1.12;
+    const dir = new THREE.Vector3(0.45, 0.5, 0.86).normalize();
     camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
     camera.lookAt(center);
     controls.target.copy(center);
-    controls.minDistance = dist * 0.4;
+    controls.minDistance = dist * 0.45;
     controls.maxDistance = dist * 2.6;
 
     const geo = new THREE.BufferGeometry();

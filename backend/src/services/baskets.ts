@@ -695,11 +695,25 @@ const CACHE_TTL_MS = 120_000;
 let _inflight: Promise<LiveBasketsResult> | null = null;
 
 export async function getLiveBaskets(force = false): Promise<LiveBasketsResult> {
-  if (!force && _cache && Date.now() - _cache.at < CACHE_TTL_MS) return _cache.result;
+  const fresh = _cache && Date.now() - _cache.at < CACHE_TTL_MS;
+  if (!force && fresh) return _cache!.result;
+  // Stale-while-revalidate: the full rebuild (wide universe → de-correlate →
+  // CLOB-price ~200 legs) takes several seconds, so once we have ANY result we
+  // serve it instantly and refresh in the background. Users never block on it.
+  if (!force && _cache) {
+    if (!_inflight) _inflight = computeLiveBaskets().finally(() => { _inflight = null; });
+    void _inflight.catch(() => { /* keep serving the stale cache */ });
+    return _cache.result;
+  }
+  // Cold (no cache yet) or forced — must build and wait.
   if (_inflight) return _inflight;
   _inflight = computeLiveBaskets().finally(() => { _inflight = null; });
   return _inflight;
 }
+
+// Pre-warm on boot so the very first user request hits a ready cache instead of
+// paying the multi-second cold build.
+void getLiveBaskets().catch(() => { /* network may be cold; the route retries */ });
 
 async function computeLiveBaskets(): Promise<LiveBasketsResult> {
   const markets = await fetchMarkets({ limit: UNIVERSE_LIMIT, active: true, closed: false });

@@ -11,12 +11,71 @@
  */
 import { Transaction } from '@mysten/sui/transactions';
 import { getSuiClient, getSigner, signerAddress } from './predict/sui';
+import { addMintMockUsdc } from './mock-usdc';
 import { PREDICT } from './predict/config';
 
 const DECIMALS = PREDICT.dusdcDecimals;
 /** Per-request ceiling — enough to mint a real structure and see it settle,
  *  small enough that the operator float serves many testers between top-ups. */
 const MAX_GRANT_UI = Number(process.env.DUSDC_GRANT_MAX_UI ?? 25);
+
+// The combined "Test funds" grant — one operator tx tops a wallet with all three
+// assets the app uses. mUSDC mints freely; dUSDC comes from the operator float
+// (faucet-gated); SUI is gas so the user can actually sign their first tx.
+const DUSDC_GRANT_UI = Math.min(25, MAX_GRANT_UI);
+const MUSDC_GRANT_UI = Number(process.env.MUSDC_GRANT_UI ?? 10_000);
+const SUI_GRANT_MIST = BigInt(process.env.SUI_GRANT_MIST ?? 50_000_000); // 0.05 SUI
+
+export interface TestFundsGrant {
+  digest: string;
+  dusdc: number;
+  musdc: number;
+  sui: number;
+  explorer_url: string;
+}
+
+/** Mint mUSDC + transfer dUSDC + transfer 0.05 SUI to `recipient` in ONE
+ *  operator-signed PTB. Atomic, one digest, one fee. */
+export async function dispenseTestFunds(recipient: string): Promise<TestFundsGrant> {
+  if (!/^0x[0-9a-fA-F]{1,64}$/.test(recipient)) throw new Error('recipient (0x...) is required');
+  const client = getSuiClient();
+  const signer = getSigner();
+  const operator = signerAddress();
+  if (!operator) throw new Error('Operator signer not configured (SUI_PRIVATE_KEY) — cannot dispense test funds.');
+
+  const tx = new Transaction();
+
+  // 1. mUSDC — permissionless mint straight to the recipient.
+  addMintMockUsdc(tx, recipient, MUSDC_GRANT_UI);
+
+  // 2. dUSDC — from the operator float (degrade to the remainder if low).
+  const wantDusdc = BigInt(Math.round(DUSDC_GRANT_UI * 10 ** DECIMALS));
+  const { data: dusdcCoins } = await client.getCoins({ owner: operator, coinType: PREDICT.dusdcType });
+  const dusdcTotal = dusdcCoins.reduce((s, c) => s + BigInt(c.balance), 0n);
+  const giveDusdc = wantDusdc < dusdcTotal ? wantDusdc : dusdcTotal;
+  if (giveDusdc > 0n && dusdcCoins.length > 0) {
+    const [primary, ...rest] = dusdcCoins.map((c) => c.coinObjectId);
+    if (rest.length > 0) tx.mergeCoins(tx.object(primary), rest.map((id) => tx.object(id)));
+    const [d] = tx.splitCoins(tx.object(primary), [tx.pure.u64(giveDusdc)]);
+    tx.transferObjects([d], tx.pure.address(recipient));
+  }
+
+  // 3. SUI for gas — split from the operator's gas coin.
+  const [s] = tx.splitCoins(tx.gas, [tx.pure.u64(SUI_GRANT_MIST)]);
+  tx.transferObjects([s], tx.pure.address(recipient));
+
+  const res = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true } });
+  const status = res.effects?.status.status ?? 'unknown';
+  if (status !== 'success') throw new Error(`test-funds dispense failed (${res.digest}): ${res.effects?.status.error}`);
+
+  return {
+    digest: res.digest,
+    dusdc: Number(giveDusdc) / 10 ** DECIMALS,
+    musdc: MUSDC_GRANT_UI,
+    sui: Number(SUI_GRANT_MIST) / 1e9,
+    explorer_url: `https://suiscan.xyz/${process.env.SUI_NETWORK ?? 'testnet'}/tx/${res.digest}`,
+  };
+}
 
 export async function dusdcBalance(owner: string): Promise<number> {
   const client = getSuiClient();

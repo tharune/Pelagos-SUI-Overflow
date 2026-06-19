@@ -519,13 +519,18 @@ async function resolveGridOracle(
   const oracleId = typeof body.oracle_id === 'string' ? body.oracle_id : undefined;
   if (oracleId) {
     if (!isObjectId(oracleId)) throw new Error('oracle_id must be 0x...');
-    const st = (await predict.predictServer.oracleState(oracleId)) as {
+    const st = (await predict.predictServer.oracleState(oracleId).catch(() => null)) as {
       oracle?: { oracle_id: string; expiry: number; min_strike: number; tick_size: number };
       latest_price?: { forward?: number; spot?: number };
-    };
-    if (!st.oracle) throw new Error(`oracle ${oracleId} not found`);
-    const fwd = Number(st.latest_price?.forward ?? st.latest_price?.spot ?? st.oracle.min_strike);
-    return { ...st.oracle, forward_raw: fwd };
+    } | null;
+    // Use the explicit oracle only if found AND still live; otherwise fall through
+    // to the soonest active oracle below. Oracles roll often, so a cached id from
+    // the client goes stale — better to re-quote on a fresh one than to error or
+    // (worse) price/mint against an expired oracle.
+    if (st?.oracle && st.oracle.expiry > Date.now() + 6 * 60_000) {
+      const fwd = Number(st.latest_price?.forward ?? st.latest_price?.spot ?? st.oracle.min_strike);
+      return { ...st.oracle, forward_raw: fwd };
+    }
   }
   const asset = String(body.asset ?? 'BTC').toUpperCase();
   const o = await predict.findActiveOracle(asset);

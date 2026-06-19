@@ -181,19 +181,14 @@ export function computeVolGreeks(strip: StripQuote, forwardUsd: number, sigmaUsd
   const vega = dV_dSigma * forwardUsd * sqrtT * 0.01;
   const theta = tYears > 0 ? dV_dSigma * (-(sigmaUsd / (2 * tYears)) / 365) : 0;
   const value = valueAt(sigmaUsd);
-  // The live testnet oracles are minute-/hour-dated, which makes the per-day
-  // theta (∝ 1/T) and the σ-vega explode into six figures on a small ticket —
-  // mathematically correct annualisation, but it reads as broken. Bound both by
-  // the position value so the desk shows an honest, sane magnitude ("you can
-  // lose at most the position per day"); normal multi-day tenors stay untouched.
-  //
-  // Use a SMOOTH squash (tanh), not a hard clamp: a hard clamp saturated theta to
-  // EXACTLY ±position_value to the cent (so theta_usd_day === position_value_usd,
-  // which reads as a placeholder/aliasing bug and made adjacent strips identical).
-  // tanh(x/cap)·cap is ~identity for sane tenors (|x| ≪ cap) and only asymptotes
-  // toward ±cap in the T→0 wings, so values stay strictly inside the bound and
-  // keep their ordering between strips.
-  const cap = Math.max(1, Math.abs(value));
-  const squash = (x: number) => (Number.isFinite(x) ? cap * Math.tanh(x / cap) : 0);
-  return { delta_btc: delta, gamma, vega_usd: squash(vega), theta_usd_day: squash(theta), position_value_usd: value };
+  // Report the RAW model greeks — no value-based squash. A near-expiry option
+  // legitimately has a huge per-day theta (∝ 1/T) and small σ-vega (∝ √T); that
+  // IS its true risk, and clamping it fabricates numbers. (A prior tanh squash
+  // shared cap=|value| across vega AND theta, which saturated theta to exactly
+  // ±position_value on the live sub-hour oracles and biased/clipped vega even on
+  // sane tenors — it mutated the only greeks any consumer sees.) The UI suppresses
+  // the degenerate per-day/per-pt greeks for sub-day tenors instead; delta/gamma
+  // (the hedge inputs) must stay exact.
+  const finite = (x: number) => (Number.isFinite(x) ? x : 0);
+  return { delta_btc: finite(delta), gamma: finite(gamma), vega_usd: finite(vega), theta_usd_day: finite(theta), position_value_usd: value };
 }

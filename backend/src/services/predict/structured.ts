@@ -154,8 +154,13 @@ export interface StripQuote {
   realized_max_payout_raw: string;
   total_slippage_raw: string; // Σ slippage over marginal
   round_trip_spread_raw: string; // total_cost − total_redeem_value
-  /** EV under the user's own Normal view: Σ weightᵢ·payoutᵢ − cost. */
+  /** EV under the user's own Normal view: Σ P(band)ᵢ·payoutᵢ − cost (probability
+   *  mass, not the sizing weight). */
   expected_value_raw: string;
+  /** Fraction of requested sizing weight that priced outside the [2%,98%] mintable
+   *  band and was dropped (0 = none). A high value means the requested shape (e.g. a
+   *  symmetric barbell) collapsed to a one-sided strip. */
+  untradeable_weight_fraction: number;
 }
 
 interface UnitInfo {
@@ -212,6 +217,13 @@ export async function previewStrip(args: {
    *  (center-heavy, short gamma) — while reusing this exact MM pricing path.
    *  Weights drive quantity sizing only; the bands themselves are unchanged. */
   weights?: number[];
+  /** Real-time sculpt path. Skips the on-chain SIZED re-price (step 3/4) and uses
+   *  the marginal estimate, which step (2) already sizes so Σ(marginal cost) ≈
+   *  budget. Greeks/payout come from quantities (unaffected); only per-bucket
+   *  slippage detail is omitted. Lets the desk re-quote on every sculpt tick
+   *  without a 1–4s devInspect, while the on-chain mint covers real slippage via
+   *  the deposit headroom. */
+  fast?: boolean;
   sender?: string;
 }): Promise<StripQuote> {
   const { oracle, muRaw, sigmaRaw, n, budgetRaw } = args;
@@ -252,11 +264,21 @@ export async function previewStrip(args: {
   let qtys = units.map((x) => (x.tradeable && K > 0 ? BigInt(Math.max(0, Math.floor(K * x.b.weight))) : 0n));
 
   // (3) REAL cost (ask) + redeem (bid) at the actual quantities.
-  let real = await priceAtQuantities(oracle, units, qtys, args.sender);
-  let totalMint = real.reduce((s, r) => s + r.mint, 0n);
+  //     fast (sculpt) path skips this on-chain round-trip and leaves `real`
+  //     unpriced — the bucket loop then falls back to the marginal estimate,
+  //     which step (2) already sized so Σ ≈ budget. Greeks/payout use quantities
+  //     and are identical either way; only per-bucket slippage detail is dropped.
+  let real = args.fast
+    ? units.map(() => ({ mint: 0n, redeem: 0n, ok: false }))
+    : await priceAtQuantities(oracle, units, qtys, args.sender);
+  let totalMint = args.fast
+    ? units.reduce((s, x, i) => s + (x.tradeable ? (x.unitCost * qtys[i]) / CONTRACT_UNIT : 0n), 0n)
+    : real.reduce((s, r) => s + r.mint, 0n);
 
-  // (4) one correction so real total cost ≈ budget (slippage shifts it off the marginal estimate).
-  if (totalMint > 0n) {
+  // (4) one budget correction so real total cost ≈ budget (slippage shifts it off
+  //     the marginal estimate). Skipped on the fast path — the marginal sizing in
+  //     step (2) is already on-budget, so there's nothing to correct.
+  if (!args.fast && totalMint > 0n) {
     const ratio = Number(budgetRaw) / Number(totalMint);
     if (Math.abs(ratio - 1) > 0.05) {
       qtys = qtys.map((q) => BigInt(Math.max(0, Math.floor(Number(q) * ratio))));
@@ -271,6 +293,8 @@ export async function previewStrip(args: {
   let maxPayout = 0n;
   let totalSlip = 0n;
   let evNum = 0;
+  let totalWeight = 0;
+  let droppedWeight = 0;
   for (let i = 0; i < units.length; i++) {
     const { b, unitCost, tradeable } = units[i];
     const q = qtys[i];
@@ -290,7 +314,13 @@ export async function previewStrip(args: {
     totalPayout += live ? q : 0n;
     if (live && q > maxPayout) maxPayout = q;
     totalSlip += slippage;
-    evNum += b.weight * Number(live ? q : 0n);
+    totalWeight += b.weight;
+    if (!live) droppedWeight += b.weight;
+    // EV under the user's Normal view weights payout by the band PROBABILITY MASS,
+    // NOT the sizing weight (which is overridden with strategy/sculpt weights that
+    // aren't probabilities — using it falsely reports a guaranteed positive edge).
+    const pNorm = normalCdf((Number(b.higher) - muRaw) / sigmaRaw) - normalCdf((Number(b.lower) - muRaw) / sigmaRaw);
+    evNum += pNorm * Number(live ? q : 0n);
     buckets.push({
       ...b,
       lower_usd: Number(b.lower) / PRICE_SCALE,
@@ -322,6 +352,7 @@ export async function previewStrip(args: {
     total_slippage_raw: totalSlip.toString(),
     round_trip_spread_raw: (totalMint > totalRedeem ? totalMint - totalRedeem : 0n).toString(),
     expected_value_raw: ev.toString(),
+    untradeable_weight_fraction: totalWeight > 0 ? droppedWeight / totalWeight : 0,
   };
 }
 

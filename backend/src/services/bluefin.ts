@@ -59,15 +59,42 @@ async function getJson(url: string, viaProxy: boolean, ms = 6000): Promise<unkno
 
 export interface BtcMark {
   mark: number;
-  funding_rate: number; // per-interval (≈8h) decimal, e.g. 0.0001 = 1bp
+  funding_rate: number; // per-HOUR decimal (Bluefin + Hyperliquid both fund hourly), e.g. 0.0000125 = 0.00125%/hr
   source: 'bluefin' | 'deepbook' | 'pyth' | 'coinbase' | 'predict-forward';
-  funding_source: 'bluefin' | 'estimated';
+  funding_source: 'bluefin' | 'hyperliquid' | 'estimated';
   symbol: string;
   venue: string;
   /** sui = a Sui-native DeFi venue/oracle; cex = off-chain reference; forward = Predict. */
   chain: 'sui' | 'cex' | 'forward';
   /** ± confidence band in USD (Pyth only). */
   conf?: number;
+}
+
+/** Real BTC-PERP funding (hourly) from Hyperliquid — the deepest perp venue with
+ *  a public funding feed. Used as the funding fallback when Bluefin's Sui gateway
+ *  is unavailable, so the rate shown is always a LIVE perp funding, never a
+ *  hardcoded estimate. Hyperliquid quotes the predicted next hourly funding. */
+let hlFundingCache: { at: number; rate: number } | null = null;
+async function fetchHyperliquidFunding(): Promise<number | null> {
+  if (hlFundingCache && Date.now() - hlFundingCache.at < 20_000) return hlFundingCache.rate; // hourly rate — cache 20s
+  try {
+    const r = await fetch('https://api.hyperliquid.xyz/info', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null;
+    const d = (await r.json()) as [{ universe?: Array<{ name?: string }> }, Array<{ funding?: string }>];
+    const i = d?.[0]?.universe?.findIndex((u) => u.name === 'BTC') ?? -1;
+    if (i < 0) return null;
+    const f = asNum(d?.[1]?.[i]?.funding); // per-hour decimal
+    if (!Number.isFinite(f)) return null;
+    hlFundingCache = { at: Date.now(), rate: f };
+    return f;
+  } catch {
+    return null;
+  }
 }
 
 /** Bluefin BTC-PERP mark + funding (the Sui perpetual). null if the gateway is down. */
@@ -121,32 +148,46 @@ async function fetchPyth(): Promise<BtcMark | null> {
 // Short cache so a fast UI poll (the live hedge ticker) doesn't hammer the venue.
 let markCache: { at: number; mark: BtcMark } | null = null;
 
-/** Cached live BTC mark for high-frequency polling (default 1.5s TTL). */
-export async function fetchBtcMarkCached(fallbackUsd = 0, ttlMs = 1500): Promise<BtcMark> {
+/** Cached live BTC mark for high-frequency polling + per-quote use (3s TTL). */
+export async function fetchBtcMarkCached(fallbackUsd = 0, ttlMs = 3000): Promise<BtcMark> {
   if (markCache && Date.now() - markCache.at < ttlMs) return markCache.mark;
   const mark = await fetchBtcMark(fallbackUsd);
   markCache = { at: Date.now(), mark };
   return mark;
 }
 
-/** Live BTC mark + funding, Sui-DeFi-first: Bluefin → DeepBook → Pyth → Coinbase → forward. */
+/** Live BTC mark + funding. MARK is Sui-DeFi-first (Bluefin → DeepBook → Pyth →
+ *  Coinbase → forward); FUNDING is real Bluefin if its perp is up, else a live
+ *  Hyperliquid hourly funding (never a hardcoded estimate unless both are down). */
 export async function fetchBtcMark(fallbackUsd = 0): Promise<BtcMark> {
-  const bluefin = await fetchBluefin();
-  if (bluefin) return bluefin;
-  const deepbook = await fetchDeepBook();
-  if (deepbook) return deepbook;
-  const pyth = await fetchPyth();
-  if (pyth) return pyth;
-  // Coinbase BTC-USD spot — real, but a CEX reference (clearly labeled).
-  const cb = (await getJson(`${COINBASE_BASE}/products/BTC-USD/ticker`, false)) as Record<string, unknown> | null;
-  if (cb) {
-    const mark = asNum(cb.price ?? cb.ask ?? cb.bid);
-    if (Number.isFinite(mark) && mark > 0) {
-      return { mark, funding_rate: 0.0001, source: 'coinbase', funding_source: 'estimated', symbol: 'BTC-USD', venue: 'Coinbase (spot ref)', chain: 'cex' };
+  // Fire the top mark sources AND the Hyperliquid funding CONCURRENTLY so the mark
+  // is one round-trip, not a sequential venue chain. Bluefin → DeepBook are the
+  // Sui-native priority; Pyth/Coinbase only if both miss.
+  const [bluefin, deepbook, hlFunding] = await Promise.all([
+    fetchBluefin().catch(() => null),
+    fetchDeepBook().catch(() => null),
+    fetchHyperliquidFunding().catch(() => null),
+  ]);
+  let m: BtcMark;
+  if (bluefin) m = bluefin;
+  else if (deepbook) m = deepbook;
+  else {
+    const pyth = await fetchPyth().catch(() => null);
+    if (pyth) m = pyth;
+    else {
+      const cb = (await getJson(`${COINBASE_BASE}/products/BTC-USD/ticker`, false).catch(() => null)) as Record<string, unknown> | null;
+      const cbMark = cb ? asNum(cb.price ?? cb.ask ?? cb.bid) : NaN;
+      m = Number.isFinite(cbMark) && cbMark > 0
+        ? { mark: cbMark, funding_rate: 0.0000125, source: 'coinbase', funding_source: 'estimated', symbol: 'BTC-USD', venue: 'Coinbase (spot ref)', chain: 'cex' }
+        : { mark: fallbackUsd, funding_rate: 0.0000125, source: 'predict-forward', funding_source: 'estimated', symbol: 'BTC', venue: 'DeepBook forward', chain: 'forward' };
     }
   }
-  // Last resort: the Predict forward (still a real BTC price).
-  return { mark: fallbackUsd, funding_rate: 0.0001, source: 'predict-forward', funding_source: 'estimated', symbol: 'BTC', venue: 'DeepBook forward', chain: 'forward' };
+  // If funding isn't already real Bluefin data, use the LIVE Hyperliquid hourly
+  // funding so the desk never displays a fabricated rate when Bluefin is down.
+  if (m.funding_source !== 'bluefin' && hlFunding !== null) {
+    return { ...m, funding_rate: hlFunding, funding_source: 'hyperliquid' };
+  }
+  return m;
 }
 
 export interface RealizedVol {
@@ -170,7 +211,7 @@ export async function fetchRealizedVol(windowHours = 168, product = 'BTC-USD'): 
       for (let i = 1; i < closes.length; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
       const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
       const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, rets.length - 1);
-      const annualized = Math.sqrt(variance) * Math.sqrt(24 * 365);
+      const annualized = Math.sqrt(variance) * Math.sqrt(24 * 365.25); // match IV's 365.25-day year (YEAR_MS)
       return { realized_vol: annualized, window_hours: closes.length, source: 'coinbase' };
     }
   }
@@ -182,16 +223,32 @@ export interface HedgeQuote {
   size_btc: number;
   notional_usd: number;
   mark: number;
-  funding_rate: number;
-  funding_cost_usd: number; // per funding interval on the hedge notional
-  venue: string;
+  funding_rate: number; // per-hour
+  /** Signed hourly carry on the hedge notional: + = the hedger RECEIVES funding,
+   *  − = pays. A short perp receives when funding>0 (longs pay shorts); long pays. */
+  funding_pnl_usd: number;
+  funding_source: BtcMark['funding_source'];
+  mark_venue: string; // where mark/funding was actually sourced
+  venue: string;      // the perp the hedge is routed to
 }
 
-/** The BTC perp hedge that neutralizes a position's net delta (in BTC). To
- *  offset positive (long-BTC) delta you SHORT the perp, and vice versa. */
-export function quoteHedge(deltaBtc: number, mark: number, fundingRate: number): HedgeQuote {
+/** The BTC perp hedge that neutralizes a position's net delta (in BTC). To offset
+ *  positive (long-BTC) delta you SHORT the perp, and vice versa. Routed to Bluefin
+ *  BTC-PERP (the Sui perp); priced off the live `m` mark + funding. */
+export function quoteHedge(deltaBtc: number, m: BtcMark): HedgeQuote {
   const size = Math.abs(deltaBtc);
   const side: HedgeQuote['side'] = deltaBtc > 1e-6 ? 'short' : deltaBtc < -1e-6 ? 'long' : 'flat';
-  const notional = size * mark;
-  return { side, size_btc: size, notional_usd: notional, mark, funding_rate: fundingRate, funding_cost_usd: notional * Math.abs(fundingRate), venue: 'Bluefin BTC-PERP' };
+  const notional = size * m.mark;
+  const sideSign = side === 'short' ? 1 : side === 'long' ? -1 : 0; // short RECEIVES + funding
+  return {
+    side,
+    size_btc: size,
+    notional_usd: notional,
+    mark: m.mark,
+    funding_rate: m.funding_rate,
+    funding_pnl_usd: sideSign * notional * m.funding_rate,
+    funding_source: m.funding_source,
+    mark_venue: m.venue,
+    venue: 'Bluefin BTC-PERP',
+  };
 }

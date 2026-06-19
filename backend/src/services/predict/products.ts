@@ -30,20 +30,37 @@ const YEAR_MS = 365.25 * 24 * 3600 * 1000;
  * route's flat default) when the SVI feed is unavailable.
  */
 export async function impliedSigmaRaw(oracle: GridOracle, forwardRaw: number, flatSigmaRaw: number): Promise<number> {
+  return (await impliedSigmaAndIv(oracle, forwardRaw, flatSigmaRaw)).sigmaRaw;
+}
+
+/**
+ * Like `impliedSigmaRaw` but ALSO returns the TRUE (un-floored) ATM implied vol
+ * from the SVI smile. The σ floor (max(base, 4·tick, F·0.0015)) is needed so the
+ * strip bands stay mintable on short tenors, but back-implying IV from the floored
+ * σ over-states the displayed IV by several vol points when the floor binds — so
+ * the desk's headline "Implied vol" should use this `atmIv` (matches /surface),
+ * while the strip still uses the floored `sigmaRaw`.
+ */
+export async function impliedSigmaAndIv(
+  oracle: GridOracle,
+  forwardRaw: number,
+  flatSigmaRaw: number,
+): Promise<{ sigmaRaw: number; atmIv: number | null }> {
   let base = flatSigmaRaw;
+  let atmIv: number | null = null;
   try {
     const svi = await predictServer.oracleSviLatest(oracle.oracle_id);
     const params = decodeSvi(svi);
     const tYears = (Number(oracle.expiry) - Date.now()) / YEAR_MS;
     if (params && tYears > 0) {
-      const atmIv = sviImpliedVol(params, 0, tYears);
+      atmIv = sviImpliedVol(params, 0, tYears);
       const implied = forwardRaw * atmIv * Math.sqrt(tYears);
       if (Number.isFinite(implied) && implied > 0) base = implied;
     }
   } catch {
     /* keep flat fallback */
   }
-  return Math.max(base, 4 * (oracle.tick_size || 1), forwardRaw * 0.0015);
+  return { sigmaRaw: Math.max(base, 4 * (oracle.tick_size || 1), forwardRaw * 0.0015), atmIv };
 }
 
 export interface PpnQuote {

@@ -367,6 +367,9 @@ export async function previewRange(args: {
  * at the odd command indices. Returns one entry per input band, in order;
  * `ok:false` marks a band whose amounts were missing.
  */
+const rangeBatchCache = new Map<string, { at: number; out: Array<{ mint_cost: bigint; redeem_payout: bigint; ok: boolean }> }>();
+const RANGE_BATCH_TTL_MS = 8000;
+
 export async function previewRangeBatch(args: {
   oracleId: string;
   expiry: number | string;
@@ -375,6 +378,12 @@ export async function previewRangeBatch(args: {
 }): Promise<Array<{ mint_cost: bigint; redeem_payout: bigint; ok: boolean }>> {
   const out = args.bands.map(() => ({ mint_cost: 0n, redeem_payout: 0n, ok: false }));
   if (args.bands.length === 0) return out;
+  // Cache identical band batches for a few seconds. A strip quote's marginal-price
+  // step is the SAME bands every time only the weights change, so this makes
+  // re-quoting while the user sculpts much faster (skips the devInspect round-trip).
+  const cacheKey = `${args.oracleId}|${args.expiry}|${args.bands.map((b) => `${b.lower}_${b.higher}_${b.quantity}`).join(',')}`;
+  const hit = rangeBatchCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < RANGE_BATCH_TTL_MS) return hit.out.map((o) => ({ ...o }));
   const client = getSuiClient();
   const sender = args.sender ?? signerAddress() ?? FALLBACK_SENDER;
   let lastErr: unknown;
@@ -409,6 +418,10 @@ export async function previewRangeBatch(args: {
           ok: true,
         };
       }
+    }
+    rangeBatchCache.set(cacheKey, { at: Date.now(), out });
+    if (rangeBatchCache.size > 256) {
+      for (const [k, v] of rangeBatchCache) if (Date.now() - v.at > RANGE_BATCH_TTL_MS) rangeBatchCache.delete(k);
     }
     return out;
   }

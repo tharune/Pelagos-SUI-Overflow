@@ -61,6 +61,47 @@ const PLAIN_THESIS: Record<VolStrategy, string> = {
 };
 const sideColor = (s: "long" | "short") => (s === "long" ? C.green : C.violet);
 
+// ---- Advanced bespoke builder: templates ("tiers") + weight helpers --------
+// Each template seeds the sculptor with a per-band weight profile + strip width;
+// the user then drags the profile into any bespoke shape. The weights ARE the
+// payout across strike bands, priced through the same on-chain MM path.
+type BuilderTemplate = { id: string; label: string; blurb: string; span: number; side: "long" | "short" };
+const TEMPLATES: BuilderTemplate[] = [
+  { id: "straddle", label: "Straddle", blurb: "Long gamma · ATM", span: 2.2, side: "long" },
+  { id: "strangle", label: "Strangle", blurb: "Long gamma · wide", span: 3.0, side: "long" },
+  { id: "butterfly", label: "Butterfly", blurb: "Short gamma · pin", span: 1.7, side: "short" },
+  { id: "condor", label: "Condor", blurb: "Short gamma · range", span: 2.6, side: "short" },
+  { id: "putskew", label: "Put skew", blurb: "Long · downside-heavy", span: 2.6, side: "long" },
+  { id: "flat", label: "Flat", blurb: "Uniform · sculpt from here", span: 2.4, side: "short" },
+];
+
+/** Per-band weight profile for a template, length n. */
+function tplWeights(id: string, n: number): number[] {
+  const c = (n - 1) / 2, maxd = Math.max(c, 1);
+  const dist = (i: number) => Math.abs(i - c) / maxd;     // 0 center … 1 wings
+  const sgn = (i: number) => (i - c) / maxd;               // −1 puts … +1 calls
+  const fns: Record<string, (i: number) => number> = {
+    straddle: (i) => 0.15 + dist(i) * 1.05,
+    strangle: (i) => (dist(i) < 0.34 ? 0.05 : 0.12 + dist(i) * 1.25),
+    butterfly: (i) => 0.12 + (1 - dist(i)) * 1.4,
+    condor: (i) => (dist(i) < 0.55 ? 0.95 : 0.08),
+    putskew: (i) => 0.18 + Math.max(0, -sgn(i)) * 1.25 + dist(i) * 0.15,
+    flat: () => 0.6,
+  };
+  const f = fns[id] ?? fns.straddle;
+  return Array.from({ length: n }, (_, i) => Math.max(0.04, Number(f(i).toFixed(3))));
+}
+
+/** Linearly resample a sculpted profile to a new bucket count (keeps the shape). */
+function resampleWeights(w: number[], n: number): number[] {
+  if (w.length === n || w.length < 2) return tplWeights("straddle", n);
+  return Array.from({ length: n }, (_, i) => {
+    const t = (i / Math.max(1, n - 1)) * (w.length - 1);
+    const a = Math.floor(t), b = Math.min(w.length - 1, a + 1), f = t - a;
+    return Math.max(0.04, Number((w[a] + (w[b] - w[a]) * f).toFixed(3)));
+  });
+}
+
 const money = (v: number, d = 2) =>
   `$${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 
@@ -111,6 +152,13 @@ export default function VolatilityPage() {
   // payoff P&L axis, and the live delta-hedge all read meaningfully.
   const [notional, setNotional] = useState("25000");
   const [horizon, setHorizon] = useState<Horizon>("short");
+  // Advanced bespoke-builder state: a sculpted per-band weight profile + strip
+  // width + bucket count. Drives the Advanced quote (custom path); Basic keeps
+  // its named-strategy path untouched.
+  const [bucketN, setBucketN] = useState(8);
+  const [spanSigma, setSpanSigma] = useState(2.2);
+  const [weights, setWeights] = useState<number[]>(() => tplWeights("straddle", 8));
+  const [activeTemplate, setActiveTemplate] = useState<string>("straddle");
   const [surface, setSurface] = useState<VolDeskSurface | null>(null);
   const [surfErr, setSurfErr] = useState<string | null>(null);
   const [q, setQ] = useState<VolQuote | null>(null);
@@ -126,7 +174,13 @@ export default function VolatilityPage() {
   const notionalNum = Number(notional);
   const valid = Number.isFinite(notionalNum) && notionalNum > 0;
   const meta = STRATS.find((s) => s.id === strategy)!;
-  const accent = sideColor(meta.side);
+  // Advanced labels by the active template until the user actually sculpts (then
+  // it's "Custom structure"); side is the template's, or the backend-inferred
+  // side once custom. Basic colours by the chosen preset.
+  const advTpl = TEMPLATES.find((t) => t.id === activeTemplate);
+  const advStructLabel = advTpl ? advTpl.label : (q?.strategy_label ?? "Custom structure");
+  const advStructSide: "long" | "short" = advTpl ? advTpl.side : (q?.side ?? "long");
+  const accent = mode === "advanced" ? sideColor(advStructSide) : sideColor(meta.side);
 
   const horizonOracle = useMemo(
     () => sliceForHorizon(surface, horizon)?.oracle_id,
@@ -146,15 +200,19 @@ export default function VolatilityPage() {
   useEffect(() => {
     if (!valid) return;
     let alive = true;
+    // Advanced prices the SCULPTED structure (custom weights); Basic prices the
+    // named preset. Same endpoint, same on-chain MM path.
     const run = () =>
-      volQuote({ strategy, notional_usd: notionalNum, oracle_id: horizonOracle, sender: wallet.address ?? undefined })
+      volQuote(mode === "advanced"
+        ? { notional_usd: notionalNum, oracle_id: horizonOracle, weights, span_sigma: spanSigma, sender: wallet.address ?? undefined }
+        : { strategy, notional_usd: notionalNum, oracle_id: horizonOracle, sender: wallet.address ?? undefined })
         .then((r) => { if (alive) { setQ(r); setErr(null); } })
         .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
     if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(run, 200);
+    timer.current = window.setTimeout(run, 220);
     const poll = window.setInterval(run, 8000);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); window.clearInterval(poll); };
-  }, [strategy, notionalNum, valid, horizonOracle, wallet.address]);
+  }, [strategy, notionalNum, valid, horizonOracle, wallet.address, mode, weights, spanSigma]);
 
   // Fast live BTC mark — ticks the desk in real time (2s).
   useEffect(() => {
@@ -220,6 +278,8 @@ export default function VolatilityPage() {
     markPrice, movePct, runDelta, gammaPnl, hedgeSide, hedgeBtc, venue, onSui, fwd,
     liveMark, hedged, routeHedge, busy, stage, result, openErr, openPosition, wallet,
     ivPct, rvPct, vrp,
+    bucketN, setBucketN, spanSigma, setSpanSigma, weights, setWeights,
+    activeTemplate, setActiveTemplate, advStructLabel, advStructSide,
   };
 
   return (
@@ -287,6 +347,12 @@ type DeskProps = {
   busy: boolean; stage: string | null; result: string | null; openErr: string | null;
   openPosition: () => void; wallet: ReturnType<typeof useWalletSigner>;
   ivPct: string; rvPct: string; vrp: number;
+  // Advanced bespoke builder
+  bucketN: number; setBucketN: (n: number) => void;
+  spanSigma: number; setSpanSigma: (s: number) => void;
+  weights: number[]; setWeights: React.Dispatch<React.SetStateAction<number[]>>;
+  activeTemplate: string; setActiveTemplate: (s: string) => void;
+  advStructLabel: string; advStructSide: "long" | "short";
 };
 
 // ===========================================================================
@@ -559,6 +625,22 @@ function AdvancedDesk(p: DeskProps) {
     if (sliceIdx > slices.length - 1) setSliceIdx(0);
   }, [slices.length, sliceIdx]);
 
+  // ---- bespoke-builder actions (drive the parent's sculpted weights) -------
+  const loadTemplate = (id: string) => {
+    const t = TEMPLATES.find((x) => x.id === id);
+    p.setActiveTemplate(id);
+    if (t) p.setSpanSigma(t.span);
+    p.setWeights(tplWeights(id, p.bucketN));
+  };
+  const changeBuckets = (n: number) => {
+    p.setBucketN(n);
+    p.setWeights((w) => (p.activeTemplate === "custom" ? resampleWeights(w, n) : tplWeights(p.activeTemplate, n)));
+  };
+  const sculpt = (idx: number, v: number) => {
+    p.setActiveTemplate("custom");
+    p.setWeights((w) => { const nw = [...w]; nw[idx] = v; return nw; });
+  };
+
   return (
     <div className="vd-adv">
       {/* ROW 1: 3D surface (wide) + smile slice */}
@@ -604,7 +686,7 @@ function AdvancedDesk(p: DeskProps) {
         </div>
 
         <div className="vd-card vd-adv-greeks">
-          <div className="vd-card-head"><Cap>Greeks · {p.meta.label}</Cap><span className="vd-dim">{p.q ? p.q.tenor_label : "—"}</span></div>
+          <div className="vd-card-head"><Cap>Greeks · {p.advStructLabel}</Cap><span className="vd-dim">{p.q ? p.q.tenor_label : "—"}</span></div>
           <div className="vd-greeks vd-greeks-tall">
             <Greek sym="Δ" name="Delta" val={p.g ? `${p.g.delta_btc >= 0 ? "+" : ""}${p.g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
             <Greek sym="Γ" name="Gamma" val={p.g ? p.g.gamma.toFixed(5) : "—"} color={p.g ? (p.g.gamma >= 0 ? C.green : C.red) : undefined} />
@@ -629,23 +711,48 @@ function AdvancedDesk(p: DeskProps) {
         </div>
       </div>
 
-      {/* ROW 3: strategy + trade builder (with payoff) + ticket + hedge */}
+      {/* ROW 3: bespoke structure builder (sculptor) + ticket + hedge */}
       <div className="vd-adv-r3">
         <div className="vd-card vd-builder">
-          <div className="vd-card-head"><Cap>Trade builder</Cap><span className="vd-dim">compose a vol structure</span></div>
-          <div className="vd-build-strats">
-            {STRATS.map((s) => {
-              const on = s.id === p.strategy;
-              const c = sideColor(s.side);
+          <div className="vd-card-head">
+            <Cap>Structure builder</Cap>
+            <span className="vd-dim">drag the bars to sculpt · {p.advStructLabel.toLowerCase()}</span>
+          </div>
+
+          {/* template tiers — load a starting profile, then sculpt */}
+          <div className="vd-tpl-row">
+            {TEMPLATES.map((t) => {
+              const on = p.activeTemplate === t.id;
+              const c = sideColor(t.side);
               return (
-                <button key={s.id} className={`vd-bstrat${on ? " on" : ""}`} style={on ? { borderColor: c, background: `${c}14` } : undefined} onClick={() => p.setStrategy(s.id)}>
-                  <ShapeIcon strategy={s.id} color={on ? c : C.textMuted} />
-                  <b style={on ? { color: c } : undefined}>{s.label}</b>
-                  <em>{s.side}</em>
+                <button key={t.id} className={`vd-tpl${on ? " on" : ""}`} style={on ? { borderColor: c, background: `${c}14` } : undefined} onClick={() => loadTemplate(t.id)}>
+                  <b style={on ? { color: c } : undefined}>{t.label}</b>
+                  <em>{t.blurb}</em>
                 </button>
               );
             })}
           </div>
+
+          {/* the sculptor: per-band weight bars (drag to paint the payout) */}
+          <BuilderSculptor weights={p.weights} onSculpt={sculpt} quote={q} side={p.advStructSide} />
+
+          {/* width (σ span) + band count */}
+          <div className="vd-build-ctl">
+            <div className="vd-ctl-span">
+              <span className="vd-build-lbl">Width <i>{p.spanSigma.toFixed(1)}σ</i></span>
+              <input type="range" min={1} max={4} step={0.1} value={p.spanSigma} onChange={(e) => p.setSpanSigma(Number(e.target.value))} aria-label="Strip width in sigma" />
+            </div>
+            <div className="vd-ctl-buckets">
+              <span className="vd-build-lbl">Bands</span>
+              <div className="vd-seg">
+                {[6, 8, 10, 12].map((n) => (
+                  <button key={n} className={`vd-seg-b${p.bucketN === n ? " on" : ""}`} onClick={() => changeBuckets(n)}>{n}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* amount + horizon */}
           <div className="vd-build-amt">
             <span className="vd-build-lbl">Notional</span>
             <div className="vd-amount-in">
@@ -660,29 +767,81 @@ function AdvancedDesk(p: DeskProps) {
               ))}
             </div>
           </div>
+
           <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} compact />
-          <div className="vd-build-legs">
-            {q ? q.strip.buckets.filter((b) => b.tradeable).slice(0, 6).map((b, i) => (
-              <div className="vd-bleg" key={i}>
-                <span>{dollars(b.lower_usd)}–{dollars(b.higher_usd)}</span>
-                <span>{usd(b.mint_cost_raw)}</span>
-                <span style={{ color: p.accent }}>{usd(b.max_payout_raw)}</span>
-              </div>
-            )) : <div className="vd-leg-empty">pricing…</div>}
-          </div>
         </div>
 
         <div className="vd-card vd-ticket">
-          <div className="vd-card-head"><Cap>{p.meta.label} · {p.meta.side} vol</Cap><span className="vd-dim">{p.tradeable}/{q?.strip.buckets.length ?? 0}</span></div>
+          <div className="vd-card-head"><Cap>{p.advStructLabel} · {p.advStructSide} vol</Cap><span className="vd-dim">{p.tradeable}/{q?.strip.buckets.length ?? 0}</span></div>
           <div className="vd-hedge-rows">
             <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
             <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
+            <Row k="Max return" v={q && Number(q.strip.total_cost_raw) > 0 ? `${(Number(q.strip.realized_max_payout_raw) / Number(q.strip.total_cost_raw)).toFixed(2)}×` : "—"} color={p.accent} />
             <Row k="Max loss" v={q ? money(q.max_loss_usd) : "—"} hint="premium" />
           </div>
           <OpenControls {...p} />
         </div>
 
         <HedgePanel {...p} />
+      </div>
+    </div>
+  );
+}
+
+// ---- the bespoke weight-profile sculptor -----------------------------------
+// A row of per-band bars (one per strike band). Drag across the track to "paint"
+// the payout profile; each bar's height is its weight. The band under the live
+// quote's ATM is marked. Sculpting flips the active template to "custom".
+function BuilderSculptor({ weights, onSculpt, quote, side }: {
+  weights: number[]; onSculpt: (idx: number, v: number) => void; quote: VolQuote | null; side: "long" | "short";
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const n = weights.length;
+  const maxW = Math.max(...weights, 0.001);
+  const accent = sideColor(side);
+  const buckets = quote?.strip.buckets ?? [];
+
+  const setFrom = (e: React.PointerEvent) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const idx = Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n)));
+    const v = Math.min(1, Math.max(0.04, 1 - (e.clientY - r.top) / r.height));
+    onSculpt(idx, Number(v.toFixed(3)));
+  };
+  // The band index nearest the forward (ATM) — mark it so the sculptor reads
+  // against the strike axis.
+  let atmIdx = Math.floor((n - 1) / 2);
+  if (buckets.length === n && quote) {
+    let best = Infinity;
+    buckets.forEach((b, i) => {
+      const mid = (b.lower_usd + b.higher_usd) / 2;
+      const d = Math.abs(mid - quote.forward_usd);
+      if (d < best) { best = d; atmIdx = i; }
+    });
+  }
+
+  return (
+    <div className="vd-sculpt">
+      <div
+        ref={trackRef}
+        className="vd-sculpt-track"
+        onPointerDown={(e) => { dragging.current = true; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); setFrom(e); }}
+        onPointerMove={(e) => { if (dragging.current) setFrom(e); }}
+        onPointerUp={(e) => { dragging.current = false; try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ } }}
+        onPointerLeave={() => { dragging.current = false; }}
+      >
+        {weights.map((w, i) => (
+          <div key={i} className="vd-sculpt-col">
+            <div className="vd-sculpt-bar" style={{ height: `${Math.max(4, (w / maxW) * 100)}%`, background: i === atmIdx ? C.tealLight : accent, opacity: i === atmIdx ? 1 : 0.85 }} />
+          </div>
+        ))}
+      </div>
+      <div className="vd-sculpt-axis">
+        <span>← puts</span>
+        <span style={{ color: C.tealLight }}>{buckets.length === n && quote ? dollars((buckets[atmIdx].lower_usd + buckets[atmIdx].higher_usd) / 2) : "ATM"}</span>
+        <span>calls →</span>
       </div>
     </div>
   );
@@ -725,17 +884,17 @@ function HedgePanel(p: DeskProps) {
 }
 
 function OpenControls(p: DeskProps) {
-  const { wallet, accent, busy, q, tradeable, meta, stage, result, openErr, openPosition } = p;
+  const { wallet, accent, busy, q, tradeable, advStructLabel, stage, result, openErr, openPosition } = p;
   return (
     <>
       {!wallet.connected ? (
         <ConnectModal trigger={<button className="vd-open-btn" style={{ background: accent }}>Connect a wallet</button>} />
       ) : (
         <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} onClick={openPosition}>
-          {busy ? (stage ?? "Submitting…") : `Open ${meta.label} · ${q ? usd(q.strip.total_cost_raw) : ""}`}
+          {busy ? (stage ?? "Submitting…") : `Open ${advStructLabel} · ${q ? usd(q.strip.total_cost_raw) : ""}`}
         </button>
       )}
-      {result && <ResultLine digest={result} label={`${meta.label} opened`} />}
+      {result && <ResultLine digest={result} label={`${advStructLabel} opened`} />}
       {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}
     </>
   );
@@ -784,12 +943,31 @@ function ShapeIcon({ strategy, color }: { strategy: VolStrategy; color: string }
   );
 }
 
-/** iv@-strike − iv@+strike off the smile, in vol points (negative => put skew). */
+// Interpolate the smile IV at an arbitrary log-moneyness (clamped to the wings).
+function ivAtLogm(pts: VolDeskSurface["slices"][number]["points"], k: number): number {
+  if (pts.length === 0) return 0;
+  if (k <= pts[0].log_moneyness) return pts[0].iv;
+  if (k >= pts[pts.length - 1].log_moneyness) return pts[pts.length - 1].iv;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (k >= a.log_moneyness && k <= b.log_moneyness) {
+      const f = (k - a.log_moneyness) / (b.log_moneyness - a.log_moneyness || 1);
+      return a.iv + (b.iv - a.iv) * f;
+    }
+  }
+  return pts[pts.length - 1].iv;
+}
+
+/** Risk-reversal skew: IV(put) − IV(call) at a MODERATE symmetric offset, in vol
+ *  points (negative => put skew). Read off the smile body, not the blown-up
+ *  extreme wings, so the number stays standard and sane. */
 function skewOf(slice: VolDeskSurface["slices"][number]): string {
   const pts = slice.points;
-  if (pts.length < 2) return "—";
-  const lo = pts[0].iv, hi = pts[pts.length - 1].iv;
-  const sk = (lo - hi) * 100;
+  if (pts.length < 3) return "—";
+  // ~25-delta proxy: 40% of the way out to the widest available strike, capped.
+  const widest = Math.max(Math.abs(pts[0].log_moneyness), Math.abs(pts[pts.length - 1].log_moneyness));
+  const k = Math.min(0.12, widest * 0.4);
+  const sk = (ivAtLogm(pts, -k) - ivAtLogm(pts, k)) * 100;
   return `${sk >= 0 ? "+" : ""}${sk.toFixed(1)}`;
 }
 
@@ -820,41 +998,62 @@ function useSvgXRatio(viewBoxW: number) {
 const noStretchX = (x: number, ratio: number): string =>
   `matrix(${(1 / ratio).toFixed(5)},0,0,1,${(x * (1 - 1 / ratio)).toFixed(3)},0)`;
 
+// "Nice" axis: round [min,max] out to clean tick increments (1/2/5 × 10ⁿ) so the
+// charts label 30%/40%/50% instead of data-derived 25%/66%/108%.
+function niceTicks(min: number, max: number, count = 4): { lo: number; hi: number; ticks: number[] } {
+  const range = max - min || Math.abs(max) || 1;
+  const raw = range / Math.max(1, count - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let v = lo; v <= hi + step * 0.5; v += step) ticks.push(Number(v.toFixed(6)));
+  return { lo, hi, ticks };
+}
+
 // ---- 2D smile chart (IV vs strike for one tenor) --------------------------
 function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null }) {
-  const W = 360, H = 184, PL = 38, PR = 14, PT = 12, PB = 26;
+  const W = 360, H = 184, PL = 40, PR = 14, PT = 14, PB = 26;
   const { ref, ratio } = useSvgXRatio(W);
   if (!slice || slice.points.length < 2) return <div className="vd-chart-empty">no slice</div>;
-  // Winsorize the displayed wing IV: even on a filtered tenor an extreme SVI wing
-  // can spike the y-axis and flatten the visible smile. Cap at max(100%, 2×ATM).
-  const ivCap = Math.max(1.0, slice.atm_iv * 2);
-  const pts = slice.points.map((p) => ({ ...p, iv: Math.min(p.iv, ivCap) }));
+  // The slice arrives already winsorized upstream (cap = max(100%, 2×ATM)). Drop
+  // the points pinned AT that cap — the blown-up far wing — so the rendered smile
+  // is the smooth, informative body, not a flat plateau.
+  const cap = Math.max(1.0, slice.atm_iv * 2);
+  const kept = slice.points.filter((p) => p.iv < cap - 1e-6);
+  const pts = kept.length >= 3 ? kept : slice.points;
   const xs = pts.map((p) => p.log_moneyness);
   const ys = pts.map((p) => p.iv);
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
-  const yMin = Math.min(...ys), yMax = Math.max(...ys);
-  const yPad = (yMax - yMin) * 0.12 || 0.02;
-  const lo = yMin - yPad, hi = yMax + yPad;
+  const { lo, hi, ticks } = niceTicks(Math.min(...ys), Math.max(...ys), 4);
   const sx = (x: number) => PL + ((x - xMin) / (xMax - xMin || 1)) * (W - PL - PR);
   const sy = (y: number) => PT + (1 - (y - lo) / (hi - lo || 1)) * (H - PT - PB);
   const line = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${sx(p.log_moneyness).toFixed(1)} ${sy(p.iv).toFixed(1)}`).join(" ");
   const area = `${line} L ${sx(xMax).toFixed(1)} ${H - PB} L ${sx(xMin).toFixed(1)} ${H - PB} Z`;
   const atmX = sx(0);
+  const atmInRange = xMin <= 0 && xMax >= 0;
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
-      {[hi, (hi + lo) / 2, lo].map((v, i) => (
+      {ticks.map((v, i) => (
         <g key={i}>
-          <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} vectorEffect="non-scaling-stroke" />
+          <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.45} vectorEffect="non-scaling-stroke" />
           <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(PL - 6, ratio)}>{(v * 100).toFixed(0)}%</text>
         </g>
       ))}
-      <line x1={atmX} x2={atmX} y1={PT} y2={H - PB} stroke={C.textMuted} strokeDasharray="3 3" strokeWidth="1" opacity={0.55} vectorEffect="non-scaling-stroke" />
-      <text x={atmX} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="8.5" transform={noStretchX(atmX, ratio)}>ATM</text>
+      {atmInRange && (
+        <>
+          <line x1={atmX} x2={atmX} y1={PT} y2={H - PB} stroke={C.textMuted} strokeDasharray="3 3" strokeWidth="1" opacity={0.55} vectorEffect="non-scaling-stroke" />
+          <text x={atmX} y={H - 8} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="8.5" transform={noStretchX(atmX, ratio)}>ATM</text>
+        </>
+      )}
       <path d={area} fill={C.tealLight} opacity={0.1} />
       <path d={line} fill="none" stroke={C.tealLight} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       {pts.map((p, i) => {
         const cx = sx(p.log_moneyness);
-        return <circle key={i} cx={cx} cy={sy(p.iv)} r={Math.abs(p.log_moneyness) < 1e-9 ? 3 : 1.8} fill={Math.abs(p.log_moneyness) < 1e-9 ? C.tealLight : C.teal} transform={noStretchX(cx, ratio)} />;
+        const isAtm = Math.abs(p.log_moneyness) < 1e-9;
+        return <circle key={i} cx={cx} cy={sy(p.iv)} r={isAtm ? 3 : 1.8} fill={isAtm ? C.tealLight : C.teal} transform={noStretchX(cx, ratio)} />;
       })}
     </svg>
   );
@@ -862,22 +1061,22 @@ function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null 
 
 // ---- ATM term-structure curve (IV vs expiry) ------------------------------
 function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface | null; selectedIdx: number; onPick: (i: number) => void }) {
-  const W = 360, H = 150, PL = 38, PR = 14, PT = 12, PB = 24;
+  const W = 360, H = 150, PL = 40, PR = 14, PT = 14, PB = 26;
   const { ref, ratio } = useSvgXRatio(W);
   const ts = surface?.term_structure ?? [];
   if (ts.length < 2) return <div className="vd-chart-empty">{surface ? "single tenor" : "loading…"}</div>;
   const ys = ts.map((t) => t.atm_iv);
-  const yMin = Math.min(...ys), yMax = Math.max(...ys);
-  const yPad = (yMax - yMin) * 0.18 || 0.02;
-  const lo = yMin - yPad, hi = yMax + yPad;
+  const { lo, hi, ticks } = niceTicks(Math.min(...ys), Math.max(...ys), 4);
   const sx = (i: number) => PL + (i / (ts.length - 1)) * (W - PL - PR);
   const sy = (y: number) => PT + (1 - (y - lo) / (hi - lo || 1)) * (H - PT - PB);
   const line = ts.map((t, i) => `${i === 0 ? "M" : "L"} ${sx(i).toFixed(1)} ${sy(t.atm_iv).toFixed(1)}`).join(" ");
+  // Label ~5 evenly-spaced tenors (plus first/last/selected) so the x-axis reads.
+  const labelEvery = Math.max(1, Math.ceil((ts.length - 1) / 4));
   return (
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
-      {[hi, lo].map((v, i) => (
+      {ticks.map((v, i) => (
         <g key={i}>
-          <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.5} vectorEffect="non-scaling-stroke" />
+          <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={0.45} vectorEffect="non-scaling-stroke" />
           <text x={PL - 6} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(PL - 6, ratio)}>{(v * 100).toFixed(0)}%</text>
         </g>
       ))}
@@ -885,10 +1084,13 @@ function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface |
       {ts.map((t, i) => {
         const on = i === selectedIdx;
         const cx = sx(i);
+        const showLabel = on || i === 0 || i === ts.length - 1 || i % labelEvery === 0;
         return (
           <g key={i} style={{ cursor: "pointer" }} onClick={() => onPick(i)}>
+            {/* wide invisible hit target so the tenor is easy to click */}
+            <circle cx={cx} cy={sy(t.atm_iv)} r={9} fill="transparent" transform={noStretchX(cx, ratio)} />
             <circle cx={cx} cy={sy(t.atm_iv)} r={on ? 4 : 2.4} fill={on ? C.tealLight : C.violet} stroke={on ? C.tealLight : "none"} vectorEffect="non-scaling-stroke" transform={noStretchX(cx, ratio)} />
-            {(i === 0 || i === ts.length - 1 || on) && (
+            {showLabel && (
               <text x={cx} y={H - 8} textAnchor="middle" fill={on ? C.tealLight : C.textMuted} fontFamily={FM} fontSize="8.5" transform={noStretchX(cx, ratio)}>{t.tenor_label}</text>
             )}
           </g>
@@ -1117,16 +1319,32 @@ const VD_CSS = `
   .vd-smile-stat strong { font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
 
   .vd-builder { display: grid; gap: 12px; align-content: start; }
-  .vd-build-strats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .vd-bstrat { display: grid; gap: 4px; justify-items: start; padding: 9px 10px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.15s ${EASE}; }
-  .vd-bstrat:hover { border-color: ${C.borderHover}; }
-  .vd-bstrat b { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; }
-  .vd-bstrat em { font-family: ${FM}; font-size: 8.5px; font-style: normal; text-transform: uppercase; letter-spacing: 0.05em; color: ${C.textMuted}; }
+  /* template "tiers" — load a starting profile into the sculptor */
+  .vd-tpl-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .vd-tpl { display: grid; gap: 3px; justify-items: start; padding: 8px 10px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.15s ${EASE}; text-align: left; }
+  .vd-tpl:hover { border-color: ${C.borderHover}; transform: translateY(-1px); }
+  .vd-tpl b { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; }
+  .vd-tpl em { font-family: ${FM}; font-size: 8px; font-style: normal; text-transform: uppercase; letter-spacing: 0.04em; color: ${C.textMuted}; }
+
+  /* the weight-profile sculptor (drag the bars to shape the payout) */
+  .vd-sculpt { display: grid; gap: 7px; }
+  .vd-sculpt-track { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 116px; padding: 10px 10px 0; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: ns-resize; touch-action: none; }
+  .vd-sculpt-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .vd-sculpt-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 4px; transition: height 0.05s linear; }
+  .vd-sculpt-axis { display: flex; justify-content: space-between; font-family: ${FM}; font-size: 9px; letter-spacing: 0.04em; color: ${C.textMuted}; padding: 0 2px; font-variant-numeric: tabular-nums; }
+
+  /* width (σ) + band-count controls */
+  .vd-build-ctl { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; padding: 10px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
+  .vd-ctl-span { display: grid; gap: 7px; }
+  .vd-ctl-span input[type="range"] { width: 100%; accent-color: #4da2ff; cursor: pointer; }
+  .vd-ctl-buckets { display: grid; gap: 7px; justify-items: end; }
+  .vd-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.bg}; }
+  .vd-seg-b { appearance: none; border: none; background: transparent; color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 6px; cursor: pointer; transition: background 0.12s ${EASE}, color 0.12s ${EASE}; }
+  .vd-seg-b.on { background: ${C.tealLight}; color: #04121d; }
+
   .vd-build-amt { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 9px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
-  .vd-build-lbl { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; }
+  .vd-build-lbl { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; white-space: nowrap; }
+  .vd-build-lbl i { font-style: normal; color: ${C.tealLight}; margin-left: 4px; }
   .vd-build-amt .vd-pills-sm { width: 180px; }
   .vd-build-amt .vd-pill { padding: 6px 4px; }
-  .vd-build-legs { display: grid; gap: 5px; }
-  .vd-bleg { display: grid; grid-template-columns: minmax(0, 1.6fr) 1fr 1fr; gap: 10px; padding: 7px 11px; border-radius: 8px; background: ${C.surface}; border: 0.5px solid ${C.border}; font-family: ${FM}; font-size: 10.5px; color: ${C.textSecondary}; font-variant-numeric: tabular-nums; }
-  .vd-bleg span:not(:first-child) { text-align: right; }
 `;

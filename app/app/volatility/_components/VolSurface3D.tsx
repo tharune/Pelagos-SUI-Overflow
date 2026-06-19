@@ -192,29 +192,35 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     for (const v of vert) positions.push(v.x, v.y, v.z);
     for (const c of vcol) colors.push(c.r, c.g, c.b);
 
-    // ---- auto-frame the camera by the bounding SPHERE --------------------
-    // The sphere is rotation-invariant, so once it fits the FOV the whole
-    // surface — including its full vertical (IV-height) relief — stays inside
-    // the panel at EVERY orbit angle. The old fit used only Math.max(size.x,
-    // size.z) and ignored size.y, then pulled the camera in by 0.82, so a tall
-    // front-tenor vol wall poked out the top of the card.
-    const box = new THREE.Box3().setFromPoints(vert);
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const center = sphere.center;
+    // ---- auto-frame: snug PROJECTED-bounds fit ---------------------------
+    // Fit the surface PLUS an axis-label gutter by projecting the bounding-box
+    // corners onto the camera's screen axes. The bounding SPHERE (used before)
+    // is far larger than the on-screen footprint for a wide, tilted, flat
+    // surface, so it left the mesh tiny in dead space. Projecting the actual
+    // corners sizes the surface to FILL the card while keeping the IV / TENOR /
+    // strike labels (which live just outside the mesh) in frame.
+    const bmin = new THREE.Vector3(-SX - 1.3, -0.3, -SY / 2 - 0.5);
+    const bmax = new THREE.Vector3(SX + 1.5, SZ + 0.6, SY / 2 + 1.4);
+    const center = bmin.clone().add(bmax).multiplyScalar(0.5);
     const vFov = (camera.fov * Math.PI) / 180;
     const aspect = width / height;
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
-    // Distance at which the sphere exactly fills the SMALLER of the two FOVs
-    // (the limiting dimension — vertical for a wide panel), plus a margin so the
-    // surface never kisses the edges as the user rotates.
-    const fit = sphere.radius / Math.sin(Math.min(vFov, hFov) / 2);
-    const dist = fit * 1.12;
-    const dir = new THREE.Vector3(0.45, 0.5, 0.86).normalize();
-    camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
+    const vHalf = Math.tan(vFov / 2);
+    const hHalf = vHalf * aspect;
+    const dir = new THREE.Vector3(0.42, 0.44, 0.86).normalize(); // center → camera
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+    const camUp = new THREE.Vector3().crossVectors(dir, right).normalize();
+    let dist = 0;
+    for (let xi = 0; xi < 2; xi++) for (let yi = 0; yi < 2; yi++) for (let zi = 0; zi < 2; zi++) {
+      const rel = new THREE.Vector3(xi ? bmax.x : bmin.x, yi ? bmax.y : bmin.y, zi ? bmax.z : bmin.z).sub(center);
+      const fwd = rel.dot(dir);
+      dist = Math.max(dist, fwd + Math.abs(rel.dot(right)) / hHalf, fwd + Math.abs(rel.dot(camUp)) / vHalf);
+    }
+    dist *= 1.06; // small safety margin so nothing kisses the edge
+    camera.position.copy(center.clone().add(dir.clone().multiplyScalar(dist)));
     camera.lookAt(center);
     controls.target.copy(center);
     controls.minDistance = dist * 0.45;
-    controls.maxDistance = dist * 2.6;
+    controls.maxDistance = dist * 2.4;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -304,12 +310,14 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
       sprites.push(sp);
       return sp;
     };
-    const axX = makeLabel("STRIKE  (log-moneyness)", "#7de7ff"); axX.position.set(0, -0.5, SY / 2 + 1.4); scene.add(axX);
-    const axY = makeLabel("TENOR", "#7de7ff"); axY.position.set(SX + 1.7, -0.5, 0); axY.scale.set(1.6, 0.55, 1); scene.add(axY);
-    const axZ = makeLabel("IV", "#7de7ff"); axZ.position.set(-SX - 1.4, SZ + 0.5, -SY / 2); axZ.scale.set(1.1, 0.55, 1); scene.add(axZ);
+    // Labels sit just outside the mesh, inside the fitted gutter (bmin/bmax),
+    // so they stay on-screen. Offsets reduced from the old values that clipped.
+    const axX = makeLabel("LOG-MONEYNESS", "#7de7ff"); axX.position.set(0, -0.4, SY / 2 + 1.0); axX.scale.set(2.4, 0.6, 1); scene.add(axX);
+    const axY = makeLabel("TENOR", "#7de7ff"); axY.position.set(SX + 1.25, -0.4, 0); axY.scale.set(1.5, 0.55, 1); scene.add(axY);
+    const axZ = makeLabel("IV", "#7de7ff"); axZ.position.set(-SX - 1.05, SZ + 0.35, -SY / 2); axZ.scale.set(1.0, 0.5, 1); scene.add(axZ);
     // IV min/max tick labels
-    const zHi = makeLabel(`${(ivMax * 100).toFixed(0)}%`, "#ea580c", 40); zHi.position.set(-SX - 1.1, SZ, SY / 2); zHi.scale.set(1.3, 0.5, 1); scene.add(zHi);
-    const zLo = makeLabel(`${(ivMin * 100).toFixed(0)}%`, "#4da2ff", 40); zLo.position.set(-SX - 1.1, 0.1, SY / 2); zLo.scale.set(1.3, 0.5, 1); scene.add(zLo);
+    const zHi = makeLabel(`${(ivMax * 100).toFixed(0)}%`, "#ea580c", 40); zHi.position.set(-SX - 0.85, SZ, SY / 2); zHi.scale.set(1.2, 0.48, 1); scene.add(zHi);
+    const zLo = makeLabel(`${(ivMin * 100).toFixed(0)}%`, "#4da2ff", 40); zLo.position.set(-SX - 0.85, 0.1, SY / 2); zLo.scale.set(1.2, 0.48, 1); scene.add(zLo);
 
     // ---- render loop -----------------------------------------------------
     let raf = 0;

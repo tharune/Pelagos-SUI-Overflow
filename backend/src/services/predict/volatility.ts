@@ -45,8 +45,8 @@ export function volWeights(n: number, side: VolSide): number[] {
   });
 }
 
-/** The four canonical vol structures, each synthesized as a range strip. */
-export type VolStrategy = 'straddle' | 'strangle' | 'butterfly' | 'condor';
+/** The four canonical vol structures, plus 'custom' = a user-sculpted strip. */
+export type VolStrategy = 'straddle' | 'strangle' | 'butterfly' | 'condor' | 'custom';
 
 export interface StrategyProfile {
   strategy: VolStrategy;
@@ -102,6 +102,36 @@ export function strategyProfile(strategy: VolStrategy, n: number): StrategyProfi
   }
   const weights = Array.from({ length: n }, (_, i) => Math.max(0, w(dist(i))));
   return { strategy, side, label, thesis, spanSigma, weights };
+}
+
+/**
+ * Build a profile from a user-sculpted weight vector (the Advanced bespoke
+ * builder). The weights ARE the payout shape across the strip's strike bands;
+ * `side` (long/short gamma) is INFERRED from where the mass sits — wings-heavy is
+ * long gamma (pays on a move), center-heavy is short gamma (pays if BTC stays).
+ * Prices through the identical `previewStrip` MM path as the canonical presets.
+ */
+export function customVolProfile(weights: number[], spanSigma: number): StrategyProfile {
+  const w = weights.map((x) => (Number.isFinite(x) ? Math.max(0, x) : 0));
+  const n = w.length;
+  const center = (n - 1) / 2;
+  const maxd = Math.max(center, 1);
+  let wing = 0, core = 0;
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(i - center) / maxd > 0.5) wing += w[i];
+    else core += w[i];
+  }
+  const side: VolSide = wing >= core ? 'long' : 'short';
+  return {
+    strategy: 'custom',
+    side,
+    label: 'Custom structure',
+    thesis: side === 'long'
+      ? 'Long gamma — your sculpted payout gains as BTC moves off the forward'
+      : 'Short gamma — your sculpted payout pays if BTC stays in your band',
+    spanSigma,
+    weights: w,
+  };
 }
 
 export interface VolGreeks {

@@ -268,15 +268,18 @@ export interface BtcMark { mark: number; funding_rate: number; source: string; f
 export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_cost_usd: number; venue: string; }
 export type VolStrategy = "straddle" | "strangle" | "butterfly" | "condor";
 export interface VolQuote {
-  side: "long" | "short"; strategy: VolStrategy; strategy_label: string; thesis: string;
+  side: "long" | "short"; strategy: VolStrategy | "custom"; strategy_label: string; thesis: string;
   oracle_id: string; expiry: string; forward_usd: number; sigma_usd: number; atm_iv: number; t_years: number;
   tenor_label: string; max_loss_usd: number;
   strip: StripQuote; greeks: VolGreeks; mark: BtcMark; hedge: HedgeQuote;
 }
 export interface VolDeskSurface extends VolSurface { realized_vol: number; rv_window_hours: number; rv_source: string; vol_risk_premium: number; }
 export const fetchVolDeskSurface = () => get<VolDeskSurface>("/api/vol/surface");
-export const volQuote = (b: { strategy?: VolStrategy; side?: "long" | "short"; oracle_id?: string; notional_usd: number; sender?: string }) =>
-  post<VolQuote>("/api/vol/quote", b);
+export const volQuote = (b: {
+  strategy?: VolStrategy; side?: "long" | "short"; oracle_id?: string; notional_usd: number; sender?: string;
+  /** Bespoke builder: a sculpted per-band weight vector (length 4–16) + strip half-width in σ. */
+  weights?: number[]; span_sigma?: number;
+}) => post<VolQuote>("/api/vol/quote", b);
 /** Fast live BTC mark for the real-time ticker/hedge (backend-cached ~1.5s). */
 export const fetchVolMark = (signal?: AbortSignal) => get<{ mark: BtcMark; ts: number }>("/api/vol/mark", signal);
 export const volHedge = (deltaBtc: number, oracleId?: string) =>

@@ -159,6 +159,9 @@ export default function VolatilityPage() {
   const [spanSigma, setSpanSigma] = useState(2.2);
   const [weights, setWeights] = useState<number[]>(() => tplWeights("straddle", 8));
   const [activeTemplate, setActiveTemplate] = useState<string>("straddle");
+  // Advanced: the selected tenor index — drives BOTH the analytics charts and the
+  // quote oracle, so picking a tenor re-prices the structure at that expiry.
+  const [sliceIdx, setSliceIdx] = useState(0);
   const [surface, setSurface] = useState<VolDeskSurface | null>(null);
   const [surfErr, setSurfErr] = useState<string | null>(null);
   const [q, setQ] = useState<VolQuote | null>(null);
@@ -187,6 +190,29 @@ export default function VolatilityPage() {
     [surface, horizon],
   );
 
+  // Advanced tenor model. Drop seconds-to-expiry slices (as T→0 the SVI wings
+  // blow up) and winsorize each slice's DISPLAY wing IV (cap at max(100%, 2×ATM))
+  // so the smile / skew / 3D stay sane. The SELECTED slice drives the analytics
+  // AND the quote oracle, so choosing a tenor re-prices the structure there.
+  const advSlices = useMemo(
+    () =>
+      (surface?.slices ?? [])
+        .filter((s) => s.points.length >= 3 && s.t_years > 300 / 31_557_600)
+        .map((s) => {
+          const ivCap = Math.max(1.0, s.atm_iv * 2);
+          return { ...s, points: s.points.map((pt) => (pt.iv > ivCap ? { ...pt, iv: ivCap } : pt)) };
+        }),
+    [surface],
+  );
+  const advSel = advSlices[Math.min(sliceIdx, Math.max(0, advSlices.length - 1))] ?? null;
+  const advFilteredSurface = useMemo(() => {
+    if (!surface) return null;
+    const keep = new Set(advSlices.map((s) => s.expiry));
+    return { ...surface, slices: advSlices, term_structure: surface.term_structure.filter((t) => keep.has(t.expiry)) } as VolDeskSurface;
+  }, [surface, advSlices]);
+  // Advanced prices at the selected tenor's oracle; Basic at the horizon oracle.
+  const quoteOracle = mode === "advanced" ? (advSel?.oracle_id ?? horizonOracle) : horizonOracle;
+
   useEffect(() => {
     let alive = true;
     fetchVolDeskSurface()
@@ -204,15 +230,20 @@ export default function VolatilityPage() {
     // named preset. Same endpoint, same on-chain MM path.
     const run = () =>
       volQuote(mode === "advanced"
-        ? { notional_usd: notionalNum, oracle_id: horizonOracle, weights, span_sigma: spanSigma, sender: wallet.address ?? undefined }
-        : { strategy, notional_usd: notionalNum, oracle_id: horizonOracle, sender: wallet.address ?? undefined })
+        ? { notional_usd: notionalNum, oracle_id: quoteOracle, weights, span_sigma: spanSigma, sender: wallet.address ?? undefined }
+        : { strategy, notional_usd: notionalNum, oracle_id: quoteOracle, sender: wallet.address ?? undefined })
         .then((r) => { if (alive) { setQ(r); setErr(null); } })
         .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(run, 220);
     const poll = window.setInterval(run, 8000);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); window.clearInterval(poll); };
-  }, [strategy, notionalNum, valid, horizonOracle, wallet.address, mode, weights, spanSigma]);
+  }, [strategy, notionalNum, valid, quoteOracle, wallet.address, mode, weights, spanSigma]);
+
+  // Keep the selected tenor in range as the surface (re)loads / filters shift.
+  useEffect(() => {
+    if (sliceIdx > advSlices.length - 1) setSliceIdx(0);
+  }, [advSlices.length, sliceIdx]);
 
   // Fast live BTC mark — ticks the desk in real time (2s).
   useEffect(() => {
@@ -280,6 +311,7 @@ export default function VolatilityPage() {
     ivPct, rvPct, vrp,
     bucketN, setBucketN, spanSigma, setSpanSigma, weights, setWeights,
     activeTemplate, setActiveTemplate, advStructLabel, advStructSide,
+    sliceIdx, setSliceIdx, advSlices, advSel, advFilteredSurface,
   };
 
   return (
@@ -353,6 +385,10 @@ type DeskProps = {
   weights: number[]; setWeights: React.Dispatch<React.SetStateAction<number[]>>;
   activeTemplate: string; setActiveTemplate: (s: string) => void;
   advStructLabel: string; advStructSide: "long" | "short";
+  // Advanced tenor (lifted): selected index drives charts + quote oracle.
+  sliceIdx: number; setSliceIdx: (i: number) => void;
+  advSlices: VolDeskSurface["slices"]; advSel: VolDeskSurface["slices"][number] | null;
+  advFilteredSurface: VolDeskSurface | null;
 };
 
 // ===========================================================================
@@ -581,49 +617,8 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
 // ADVANCED — Bloomberg-style multi-panel vol desk with the 3D surface centre.
 // ===========================================================================
 function AdvancedDesk(p: DeskProps) {
-  const { surface, surfErr, q } = p;
-  // Tenor index selected in the smile panel (drives the 3D ribbon + smile).
-  const [sliceIdx, setSliceIdx] = useState(0);
-
-  // Drop seconds-to-expiry slices: as T→0 the SVI wing IVs blow up (e.g. 38% ATM
-  // → 99–130% wings), which makes the front-tenor smile near-vertical, the skew
-  // stat alarming, and (via global ivMin/ivMax) washes the 3D surface into one
-  // band. Keep tenors with ≥3 points and ≥5-min to expiry — all visualisations
-  // (smile, term, skew, 3D) consume this filtered list. Pricing is untouched.
-  const usable = useMemo(
-    () =>
-      (surface?.slices ?? [])
-        .filter((s) => s.points.length >= 3 && s.t_years > 300 / 31_557_600)
-        .map((s) => {
-          // Winsorize the DISPLAY wing IV per slice (cap at max(100%, 2×ATM)) at
-          // the data level so a surviving front tenor's extreme SVI wing can't
-          // spike the smile, the Skew stat, OR the 3D mesh's ivMin/ivMax. The
-          // ≥5-min filter alone doesn't catch a ~15–30 min tenor whose wings
-          // still blow up. ATM IV + pricing are untouched.
-          const ivCap = Math.max(1.0, s.atm_iv * 2);
-          return { ...s, points: s.points.map((p) => (p.iv > ivCap ? { ...p, iv: ivCap } : p)) };
-        }),
-    [surface],
-  );
-  const slices = usable;
-  const sel = slices[Math.min(sliceIdx, Math.max(0, slices.length - 1))] ?? null;
-
-  // A surface clone whose slices + term_structure are the filtered set, so the
-  // 3D mesh's ivMin/ivMax normalisation excludes the front-tenor wing.
-  const filteredSurface = useMemo(() => {
-    if (!surface) return null;
-    const keepExpiry = new Set(usable.map((s) => s.expiry));
-    return {
-      ...surface,
-      slices: usable,
-      term_structure: surface.term_structure.filter((t) => keepExpiry.has(t.expiry)),
-    } as VolDeskSurface;
-  }, [surface, usable]);
-
-  // Keep slice index in range as the surface (re)loads / the filtered set shifts.
-  useEffect(() => {
-    if (sliceIdx > slices.length - 1) setSliceIdx(0);
-  }, [slices.length, sliceIdx]);
+  const { surfErr, q, advSlices, advSel, advFilteredSurface, sliceIdx, setSliceIdx } = p;
+  const [tab, setTab] = useState<"surface" | "smile" | "term">("surface");
 
   // ---- bespoke-builder actions (drive the parent's sculpted weights) -------
   const loadTemplate = (id: string) => {
@@ -641,85 +636,68 @@ function AdvancedDesk(p: DeskProps) {
     p.setWeights((w) => { const nw = [...w]; nw[idx] = v; return nw; });
   };
 
+  const tenor = advSel?.tenor_label ?? "—";
+  const nT = advSlices.length;
+
   return (
-    <div className="vd-adv">
-      {/* ROW 1: 3D surface (wide) + smile slice */}
-      <div className="vd-adv-r1">
-        <div className="vd-card vd-3d">
+    <div className="vd-adv2">
+      {/* ── LEFT: analyse + build ───────────────────────────────────────── */}
+      <div className="vd-adv2-left">
+
+        {/* tabbed analytics — surface / smile / term, one at a time, driven by
+            the selected tenor + structure below */}
+        <div className="vd-card vd-analytics">
           <div className="vd-card-head">
-            <Cap>Implied-vol surface · SVI</Cap>
-            <span className="vd-dim">drag to rotate · {slices.length} tenors × {sel?.points.length ?? 0} strikes · live</span>
+            <div className="vd-tabs" role="tablist" aria-label="Analytics view">
+              {([["surface", "Surface"], ["smile", "Smile"], ["term", "Term"]] as const).map(([id, label]) => (
+                <button key={id} role="tab" aria-selected={tab === id} className={`vd-tab${tab === id ? " on" : ""}`} onClick={() => setTab(id)}>{label}</button>
+              ))}
+            </div>
+            <span className="vd-dim">
+              {tab === "surface" ? `${nT} tenors × ${advSel?.points.length ?? 0} strikes · drag to rotate`
+                : tab === "smile" ? `IV vs strike · ${tenor}`
+                  : `${nT} expiries · click to select`}
+            </span>
           </div>
-          {filteredSurface && filteredSurface.slices.length > 0 ? (
-            <VolSurface3D surface={filteredSurface} selectedSlice={sliceIdx} height={356} />
-          ) : surfErr ? (
-            <div className="vd-3d-load">surface unavailable — {surfErr}</div>
-          ) : (
-            <div className="vd-3d-load">loading SVI surface…</div>
+
+          {tab === "surface" && (
+            <div className="vd-analytics-body">
+              {advFilteredSurface && advFilteredSurface.slices.length > 0 ? (
+                <VolSurface3D surface={advFilteredSurface} selectedSlice={sliceIdx} height={452} />
+              ) : surfErr ? (
+                <div className="vd-3d-load" style={{ height: 452 }}>surface unavailable — {surfErr}</div>
+              ) : (
+                <div className="vd-3d-load" style={{ height: 452 }}>loading SVI surface…</div>
+              )}
+              <div className="vd-3d-legend"><span className="vd-leg-grad" /><span className="vd-leg-lo">low IV</span><span className="vd-leg-hi">high IV</span></div>
+            </div>
           )}
-          <div className="vd-3d-legend">
-            <span className="vd-leg-grad" />
-            <span className="vd-leg-lo">low IV</span>
-            <span className="vd-leg-hi">high IV</span>
-          </div>
+
+          {tab === "smile" && (
+            <div className="vd-analytics-body">
+              <SmileChart slice={advSel} h={372} />
+              <div className="vd-smile-stat">
+                <div><span>ATM IV</span><strong style={{ color: C.tealLight }}>{advSel ? `${(advSel.atm_iv * 100).toFixed(1)}%` : "—"}</strong></div>
+                <div><span>Forward</span><strong>{advSel ? dollars(advSel.forward_usd) : "—"}</strong></div>
+                <div><span>Skew</span><strong>{advSel ? skewOf(advSel) : "—"}</strong></div>
+              </div>
+            </div>
+          )}
+
+          {tab === "term" && (
+            <div className="vd-analytics-body">
+              <TermChart surface={advFilteredSurface} selectedIdx={sliceIdx} onPick={setSliceIdx} h={372} />
+              <p className="vd-analytics-note">Selected tenor <b style={{ color: C.tealLight }}>{tenor}</b> prices the structure and Greeks on the right.</p>
+            </div>
+          )}
         </div>
 
-        <div className="vd-card vd-smile">
-          <div className="vd-card-head"><Cap>Smile · {sel?.tenor_label ?? "—"}</Cap><span className="vd-dim">IV vs strike</span></div>
-          <SmileChart slice={sel} />
-          <div className="vd-smile-stat">
-            <div><span>ATM IV</span><strong style={{ color: C.tealLight }}>{sel ? `${(sel.atm_iv * 100).toFixed(1)}%` : "—"}</strong></div>
-            <div><span>Forward</span><strong>{sel ? dollars(sel.forward_usd) : "—"}</strong></div>
-            <div><span>Skew</span><strong>{sel ? skewOf(sel) : "—"}</strong></div>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 2: term structure (also the tenor selector) + greeks */}
-      <div className="vd-adv-r2">
-        <div className="vd-card vd-term">
-          <div className="vd-card-head">
-            <Cap>ATM term structure</Cap>
-            <span className="vd-dim">{slices.length} expiries · click to select tenor{sel ? ` · ${sel.tenor_label} ${(sel.atm_iv * 100).toFixed(1)}%` : ""}</span>
-          </div>
-          <TermChart surface={filteredSurface} selectedIdx={sliceIdx} onPick={setSliceIdx} />
-        </div>
-
-        <div className="vd-card vd-adv-greeks">
-          <div className="vd-card-head"><Cap>Greeks · {p.advStructLabel}</Cap><span className="vd-dim">{p.q ? p.q.tenor_label : "—"}</span></div>
-          <div className="vd-greeks vd-greeks-tall">
-            <Greek sym="Δ" name="Delta" val={p.g ? `${p.g.delta_btc >= 0 ? "+" : ""}${p.g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
-            <Greek sym="Γ" name="Gamma" val={p.g ? p.g.gamma.toFixed(5) : "—"} color={p.g ? (p.g.gamma >= 0 ? C.green : C.red) : undefined} />
-            <Greek sym="ν" name="Vega" val={p.g ? `${p.g.vega_usd >= 0 ? "+" : ""}${money(p.g.vega_usd)}` : "—"} unit="/pt" color={p.g ? (p.g.vega_usd >= 0 ? C.green : C.red) : undefined} />
-            {(() => {
-              // Per-day theta is degenerate for the minute-/hour-dated testnet
-              // oracles (∝ 1/T), where it saturates to the position-value cap.
-              // Suppress it (show "—") rather than print an implausible decay —
-              // same guard the DeepBook + Distribution greeks use.
-              const sat = !!p.g && Math.abs(p.g.theta_usd_day) >= 0.9 * Math.abs(p.g.position_value_usd);
-              return (
-                <Greek
-                  sym="Θ"
-                  name="Theta"
-                  val={!p.g ? "—" : sat ? "—" : `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}`}
-                  unit={sat ? "short tenor" : "/day"}
-                  color={p.g && !sat ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined}
-                />
-              );
-            })()}
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: bespoke structure builder (sculptor) + ticket + hedge */}
-      <div className="vd-adv-r3">
+        {/* structure builder */}
         <div className="vd-card vd-builder">
           <div className="vd-card-head">
             <Cap>Structure builder</Cap>
             <span className="vd-dim">drag the bars to sculpt · {p.advStructLabel.toLowerCase()}</span>
           </div>
-
-          {/* template tiers — load a starting profile, then sculpt */}
           <div className="vd-tpl-row">
             {TEMPLATES.map((t) => {
               const on = p.activeTemplate === t.id;
@@ -732,11 +710,7 @@ function AdvancedDesk(p: DeskProps) {
               );
             })}
           </div>
-
-          {/* the sculptor: per-band weight bars (drag to paint the payout) */}
           <BuilderSculptor weights={p.weights} onSculpt={sculpt} quote={q} side={p.advStructSide} />
-
-          {/* width (σ span) + band count */}
           <div className="vd-build-ctl">
             <div className="vd-ctl-span">
               <span className="vd-build-lbl">Width <i>{p.spanSigma.toFixed(1)}σ</i></span>
@@ -751,28 +725,38 @@ function AdvancedDesk(p: DeskProps) {
               </div>
             </div>
           </div>
-
-          {/* amount + horizon */}
-          <div className="vd-build-amt">
-            <span className="vd-build-lbl">Notional</span>
-            <div className="vd-amount-in">
-              <input className="vd-num vd-num-sm" inputMode="decimal" value={p.notional} onChange={(e) => p.setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-              <span>dUSDC</span>
-            </div>
-            <div className="vd-pills vd-pills-sm">
-              {HORIZONS.map((h) => (
-                <button key={h.id} className={`vd-pill${h.id === p.horizon ? " on" : ""}`} onClick={() => p.setHorizon(h.id)} disabled={!surface}>
-                  <b>{h.label}</b>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} compact />
         </div>
 
+        {/* payoff */}
+        <div className="vd-card vd-payoff-adv">
+          <div className="vd-card-head"><Cap>Payoff at expiry</Cap><span className="vd-dim">P&amp;L vs BTC settlement · {tenor}</span></div>
+          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} compact />
+        </div>
+      </div>
+
+      {/* ── RIGHT: execute ──────────────────────────────────────────────── */}
+      <div className="vd-adv2-right">
+
+        {/* trade selection: tenor + size */}
+        <div className="vd-card vd-trade">
+          <div className="vd-card-head"><Cap>{p.advStructLabel}</Cap><span className="vd-dim" style={{ color: sideColor(p.advStructSide) }}>{p.advStructSide} vol</span></div>
+          <div className="vd-trade-row">
+            <span className="vd-build-lbl">Expiry</span>
+            <div className="vd-stepper">
+              <button onClick={() => setSliceIdx(Math.max(0, sliceIdx - 1))} disabled={sliceIdx <= 0} aria-label="Earlier tenor">‹</button>
+              <strong>{tenor}</strong>
+              <button onClick={() => setSliceIdx(Math.min(nT - 1, sliceIdx + 1))} disabled={sliceIdx >= nT - 1} aria-label="Later tenor">›</button>
+            </div>
+          </div>
+          <div className="vd-trade-amt">
+            <span className="vd-build-lbl">Amount · dUSDC</span>
+            <input className="vd-num vd-num-sm" inputMode="decimal" value={p.notional} onChange={(e) => p.setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+          </div>
+        </div>
+
+        {/* order ticket */}
         <div className="vd-card vd-ticket">
-          <div className="vd-card-head"><Cap>{p.advStructLabel} · {p.advStructSide} vol</Cap><span className="vd-dim">{p.tradeable}/{q?.strip.buckets.length ?? 0}</span></div>
+          <div className="vd-card-head"><Cap>Order</Cap><span className="vd-dim">{p.tradeable}/{q?.strip.buckets.length ?? 0} legs · {tenor}</span></div>
           <div className="vd-hedge-rows">
             <Row k="Entry cost" v={q ? usd(q.strip.total_cost_raw) : "—"} />
             <Row k="Max payout" v={q ? usd(q.strip.realized_max_payout_raw) : "—"} color={C.tealLight} />
@@ -782,6 +766,26 @@ function AdvancedDesk(p: DeskProps) {
           <OpenControls {...p} />
         </div>
 
+        {/* greeks */}
+        <div className="vd-card vd-adv-greeks">
+          <div className="vd-card-head"><Cap>Greeks</Cap><span className="vd-dim">{tenor}</span></div>
+          <div className="vd-greeks vd-greeks-tall">
+            <Greek sym="Δ" name="Delta" val={p.g ? `${p.g.delta_btc >= 0 ? "+" : ""}${p.g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
+            <Greek sym="Γ" name="Gamma" val={p.g ? p.g.gamma.toFixed(5) : "—"} color={p.g ? (p.g.gamma >= 0 ? C.green : C.red) : undefined} />
+            <Greek sym="ν" name="Vega" val={p.g ? `${p.g.vega_usd >= 0 ? "+" : ""}${money(p.g.vega_usd)}` : "—"} unit="/pt" color={p.g ? (p.g.vega_usd >= 0 ? C.green : C.red) : undefined} />
+            {(() => {
+              // Per-day theta is degenerate for the minute-/hour-dated testnet
+              // oracles (∝ 1/T), where it saturates to the position-value cap.
+              // Suppress it (show "—") rather than print an implausible decay.
+              const sat = !!p.g && Math.abs(p.g.theta_usd_day) >= 0.9 * Math.abs(p.g.position_value_usd);
+              return (
+                <Greek sym="Θ" name="Theta" val={!p.g ? "—" : sat ? "—" : `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}`} unit={sat ? "short tenor" : "/day"} color={p.g && !sat ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* delta hedge */}
         <HedgePanel {...p} />
       </div>
     </div>
@@ -1014,8 +1018,8 @@ function niceTicks(min: number, max: number, count = 4): { lo: number; hi: numbe
 }
 
 // ---- 2D smile chart (IV vs strike for one tenor) --------------------------
-function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null }) {
-  const W = 360, H = 184, PL = 40, PR = 14, PT = 14, PB = 26;
+function SmileChart({ slice, h }: { slice: VolDeskSurface["slices"][number] | null; h?: number }) {
+  const W = 360, H = h ?? 184, PL = 40, PR = 14, PT = 14, PB = 26;
   const { ref, ratio } = useSvgXRatio(W);
   if (!slice || slice.points.length < 2) return <div className="vd-chart-empty">no slice</div>;
   // The slice arrives already winsorized upstream (cap = max(100%, 2×ATM)). Drop
@@ -1060,8 +1064,8 @@ function SmileChart({ slice }: { slice: VolDeskSurface["slices"][number] | null 
 }
 
 // ---- ATM term-structure curve (IV vs expiry) ------------------------------
-function TermChart({ surface, selectedIdx, onPick }: { surface: VolDeskSurface | null; selectedIdx: number; onPick: (i: number) => void }) {
-  const W = 360, H = 150, PL = 40, PR = 14, PT = 14, PB = 26;
+function TermChart({ surface, selectedIdx, onPick, h }: { surface: VolDeskSurface | null; selectedIdx: number; onPick: (i: number) => void; h?: number }) {
+  const W = 360, H = h ?? 150, PL = 40, PR = 14, PT = 14, PB = 26;
   const { ref, ratio } = useSvgXRatio(W);
   const ts = surface?.term_structure ?? [];
   if (ts.length < 2) return <div className="vd-chart-empty">{surface ? "single tenor" : "loading…"}</div>;
@@ -1216,7 +1220,6 @@ const VD_CSS = `
   .vd-amount-in span { font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
   .vd-horizon { display: grid; gap: 6px; }
   .vd-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .vd-pills-sm { grid-template-columns: repeat(3, 1fr); }
   .vd-pill { display: grid; gap: 2px; justify-items: center; padding: 8px 6px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.15s ${EASE}; }
   .vd-pill:hover:not(:disabled) { border-color: ${C.borderHover}; }
   .vd-pill:disabled { opacity: 0.5; cursor: default; }
@@ -1298,25 +1301,43 @@ const VD_CSS = `
   .vd-open-btn:hover:not(:disabled) { transform: translateY(-1px); }
   .vd-open-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* ---- ADVANCED desk ---- */
-  .vd-adv { display: grid; gap: 14px; min-width: 0; }
-  .vd-adv-r1 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 14px; align-items: stretch; }
-  .vd-adv-r2 { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(280px, 1fr); gap: 14px; align-items: stretch; }
-  .vd-adv-r3 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr) minmax(300px, 0.85fr); gap: 14px; align-items: start; }
-  @media (max-width: 1280px) {
-    .vd-adv-r1, .vd-adv-r2, .vd-adv-r3 { grid-template-columns: 1fr; }
-  }
-  .vd-3d { display: flex; flex-direction: column; }
+  /* ---- ADVANCED desk — 2-column trade terminal ---- */
+  .vd-adv2 { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(330px, 0.9fr); gap: 14px; align-items: start; min-width: 0; }
+  @media (max-width: 1180px) { .vd-adv2 { grid-template-columns: 1fr; } }
+  .vd-adv2-left, .vd-adv2-right { display: grid; gap: 14px; min-width: 0; align-content: start; }
+
+  /* tabbed analytics card (surface / smile / term) */
+  .vd-analytics { display: flex; flex-direction: column; }
+  .vd-analytics-body { display: flex; flex-direction: column; }
+  .vd-analytics-note { margin: 12px 0 0; font-family: ${FS}; font-size: 12px; line-height: 1.5; color: ${C.textSecondary}; }
+  .vd-analytics-note b { font-weight: 600; }
+  .vd-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.bg}; }
+  .vd-tab { appearance: none; border: none; background: transparent; color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}; }
+  .vd-tab:hover:not(.on) { color: ${C.textPrimary}; }
+  .vd-tab.on { background: ${C.tealLight}; color: #04121d; }
+  .vd-tab:focus-visible { outline: 2px solid ${C.tealLight}; outline-offset: 2px; }
+
   .vd-3d-load { height: 356px; display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; background: ${C.bg}; border-radius: 12px; }
   .vd-3d-legend { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
   .vd-leg-grad { flex: 1; height: 7px; border-radius: 4px; background: linear-gradient(90deg, ${C.tealBg}, ${C.teal}, ${C.tealLight}, ${C.amber}, ${C.coral}); }
   .vd-leg-lo, .vd-leg-hi { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; white-space: nowrap; }
-  .vd-smile { display: flex; flex-direction: column; }
-  .vd-chart-empty { height: 150px; display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
+  .vd-chart-empty { height: 200px; display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
   .vd-smile-stat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 12px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
-  .vd-smile-stat > div { background: ${C.card}; padding: 9px 11px; display: grid; gap: 3px; }
+  .vd-smile-stat > div { background: ${C.card}; padding: 10px 13px; display: grid; gap: 3px; }
   .vd-smile-stat span { font-family: ${FM}; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; }
-  .vd-smile-stat strong { font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
+  .vd-smile-stat strong { font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
+  .vd-payoff-adv { display: flex; flex-direction: column; }
+
+  /* right rail — trade selection */
+  .vd-trade { display: grid; gap: 12px; }
+  .vd-trade-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .vd-stepper { display: inline-flex; align-items: center; gap: 4px; }
+  .vd-stepper button { appearance: none; width: 30px; height: 30px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textPrimary}; font-size: 16px; line-height: 1; cursor: pointer; transition: border-color 0.14s ${EASE}; }
+  .vd-stepper button:hover:not(:disabled) { border-color: ${C.borderHover}; }
+  .vd-stepper button:disabled { opacity: 0.4; cursor: default; }
+  .vd-stepper strong { min-width: 56px; text-align: center; font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
+  .vd-trade-amt { display: grid; gap: 6px; padding: 10px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
+  .vd-trade-amt .vd-num-sm { font-size: 20px; width: 100%; }
 
   .vd-builder { display: grid; gap: 12px; align-content: start; }
   /* template "tiers" — load a starting profile into the sculptor */
@@ -1342,9 +1363,6 @@ const VD_CSS = `
   .vd-seg-b { appearance: none; border: none; background: transparent; color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 6px; cursor: pointer; transition: background 0.12s ${EASE}, color 0.12s ${EASE}; }
   .vd-seg-b.on { background: ${C.tealLight}; color: #04121d; }
 
-  .vd-build-amt { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 9px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
   .vd-build-lbl { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; white-space: nowrap; }
   .vd-build-lbl i { font-style: normal; color: ${C.tealLight}; margin-left: 4px; }
-  .vd-build-amt .vd-pills-sm { width: 180px; }
-  .vd-build-amt .vd-pill { padding: 6px 4px; }
 `;

@@ -10,12 +10,6 @@ import type { LiveBasket, LiveMarket, WindowKey } from "../_lib/live-baskets";
 import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "../tranche/_quote";
 import { useMode, BetaTag } from "../_lib/mode";
-import {
-  fetchCustomThemes,
-  buildCustomBasket,
-  type CustomTheme,
-  type CustomBasket,
-} from "../_lib/v2-clients";
 
 type TierFilter = "all" | 90 | 50;
 type WindowFilter = "all" | WindowKey;
@@ -88,7 +82,7 @@ function formatPrice(value: number | null | undefined): string {
 
 export default function BasketsPage() {
   const router = useRouter();
-  const { mode } = useMode();
+  const { mode, setMode } = useMode();
   const basketState = useLiveBaskets();
   const [tier, setTier] = useState<TierFilter>("all");
   const [windowFilter, setWindowFilter] = useState<WindowFilter>("all");
@@ -150,58 +144,55 @@ export default function BasketsPage() {
               </h1>
               <p>
                 {mode === "advanced"
-                  ? "Compose a diversified basket of uncorrelated event markets from a theme or free-text query, then slice it into senior / mezzanine / junior risk. Live Polymarket CLOB pricing."
-                  : "Curated baskets of uncorrelated event markets, settled on the Pelagos vault — each one already sliced into senior, mezzanine and junior risk."}
+                  ? "Every curated basket, pre-sliced by loss priority — senior is paid first, junior takes first loss. Pick a tranche to deploy on the Pelagos vault."
+                  : "Curated baskets of uncorrelated event markets, settled on the Pelagos vault. Open one to trade it, or view its senior / mezzanine / junior risk slices."}
               </p>
             </div>
-            {mode === "basic" && (
-              <div className="bk-hero-controls">
-                <SegmentedControl value={tier} onChange={setTier} options={TIER_OPTIONS} />
-                <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
-              </div>
-            )}
+            <div className="bk-hero-controls">
+              <SegmentedControl value={tier} onChange={setTier} options={TIER_OPTIONS} />
+              <SegmentedControl value={windowFilter} onChange={setWindowFilter} options={WINDOW_OPTIONS} />
+            </div>
           </section>
 
-          <div className="bk-split">
-            <div className="bk-col-left">
-              {mode === "advanced" ? (
-                <CustomBasketBuilder router={router} />
-              ) : feedStatus === "loading" ? (
-                <BasketLoading />
-              ) : filtered.length === 0 ? (
-                <BasketEmpty
-                  onReset={() => {
-                    setTier("all");
-                    setWindowFilter("all");
-                  }}
+          {mode === "advanced" ? (
+            /* Advanced — the tranching engine, full width and nothing else. */
+            <RiskSlicesPanel
+              baskets={filtered}
+              loading={feedStatus === "loading"}
+              onOpen={(id) => router.push(`/app/tranche/${id}`)}
+            />
+          ) : feedStatus === "loading" ? (
+            <BasketLoading />
+          ) : filtered.length === 0 ? (
+            <BasketEmpty
+              onReset={() => {
+                setTier("all");
+                setWindowFilter("all");
+              }}
+            />
+          ) : (
+            /* Basic — a clean two-pane terminal: pick a basket, read its detail. */
+            <div className="bk-split">
+              <div className="bk-col-left">
+                <BasketSelector
+                  baskets={filtered}
+                  selectedId={selected?.id ?? null}
+                  feedStatus={feedStatus}
+                  onSelect={setSelectedId}
                 />
-              ) : (
-                <div className="bk-event-stack">
-                  <BasketSelector
-                    baskets={filtered}
-                    selectedId={selected?.id ?? null}
-                    feedStatus={feedStatus}
-                    onSelect={setSelectedId}
+              </div>
+              <div className="bk-col-right">
+                {selected && (
+                  <SelectedBasketPanel
+                    basket={selected}
+                    vaultPrice={selected.issue}
+                    onOpen={() => router.push(`/app/basket/${selected.id}`)}
+                    onViewSlices={() => setMode("advanced")}
                   />
-                  {selected && (
-                    <SelectedBasketPanel
-                      basket={selected}
-                      vaultPrice={selected.issue}
-                      onOpen={() => router.push(`/app/basket/${selected.id}`)}
-                    />
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </div>
-
-            <div className="bk-col-right">
-              <RiskSlicesPanel
-                baskets={baskets}
-                loading={feedStatus === "loading"}
-                onOpen={(id) => router.push(`/app/tranche/${id}`)}
-              />
-            </div>
-          </div>
+          )}
         </div>
       </PageFrame>
     </>
@@ -431,10 +422,12 @@ function SelectedBasketPanel({
   basket,
   vaultPrice,
   onOpen,
+  onViewSlices,
 }: {
   basket: BasketView;
   vaultPrice: number | null | undefined;
   onOpen: () => void;
+  onViewSlices: () => void;
 }) {
   const color = tc(basket.tier);
   const positive = basket.change >= 0;
@@ -467,9 +460,14 @@ function SelectedBasketPanel({
         <MetricCell label="Route" value="Sui testnet" />
       </div>
 
-      <button type="button" className="bk-action-primary" onClick={onOpen}>
-        Open basket
-      </button>
+      <div className="bk-action-row">
+        <button type="button" className="bk-action-primary" onClick={onOpen}>
+          Open basket
+        </button>
+        <button type="button" className="bk-action-ghost" onClick={onViewSlices}>
+          View risk slices
+        </button>
+      </div>
 
       <div className="bk-constituents">
         <div className="bk-section-head">
@@ -636,294 +634,6 @@ function SliceRow({ quote }: { quote: TrancheQuote }) {
   );
 }
 
-/* ───────────────────────── ADVANCED · Custom basket builder ───────────────────────── */
-
-type BuildState =
-  | { status: "idle" }
-  | { status: "building" }
-  | { status: "ok"; basket: CustomBasket }
-  | { status: "error"; error: string };
-
-const LEG_OPTIONS = [6, 8, 10, 12] as const;
-
-function CustomBasketBuilder({ router }: { router: ReturnType<typeof useRouter> }) {
-  const [themes, setThemes] = useState<CustomTheme[] | null>(null);
-  const [themesError, setThemesError] = useState<string | null>(null);
-  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [targetLegs, setTargetLegs] = useState<number>(8);
-  const [tier, setTier] = useState<90 | 50>(90);
-  const [build, setBuild] = useState<BuildState>({ status: "idle" });
-
-  useEffect(() => {
-    let alive = true;
-    fetchCustomThemes()
-      .then((res) => {
-        if (!alive) return;
-        setThemes(res.themes);
-        if (res.themes.length > 0) setSelectedTheme(res.themes[0].id);
-      })
-      .catch((e) => alive && setThemesError(e instanceof Error ? e.message : "Failed to load themes"));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const runBuild = () => {
-    const q = query.trim();
-    setBuild({ status: "building" });
-    const body = q
-      ? { query: q, target_legs: targetLegs, tier }
-      : { theme: selectedTheme ?? undefined, target_legs: targetLegs, tier };
-    buildCustomBasket(body)
-      .then((basket) => setBuild({ status: "ok", basket }))
-      .catch((e) => setBuild({ status: "error", error: e instanceof Error ? e.message : "Build failed" }));
-  };
-
-  const building = build.status === "building";
-
-  return (
-    <div className="bk-builder">
-      <div className="bk-card bk-build-form">
-        <div className="bk-selector-head">
-          <div>
-            <Caption>Composer</Caption>
-            <strong>Custom basket builder</strong>
-          </div>
-        </div>
-
-        <div className="bk-field">
-          <Caption>Theme</Caption>
-          {themesError ? (
-            <div className="bk-empty-inline">{themesError}</div>
-          ) : !themes ? (
-            <div className="bk-theme-grid">
-              {Array.from({ length: 5 }).map((_, i) => <div key={i} className="bk-theme-chip bk-skeleton" style={{ height: 56 }} />)}
-            </div>
-          ) : (
-            <div className="bk-theme-grid">
-              {themes.map((t) => {
-                const active = !query.trim() && selectedTheme === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={`bk-theme-chip ${active ? "is-active" : ""}`}
-                    onClick={() => {
-                      setSelectedTheme(t.id);
-                      setQuery("");
-                      setTier(t.tier);
-                    }}
-                    title={t.description}
-                  >
-                    <strong>{t.label}</strong>
-                    <em>{t.description}</em>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="bk-field">
-          <Caption>Or free-text query</Caption>
-          <input
-            className="bk-input"
-            type="text"
-            value={query}
-            placeholder="e.g. AI labs, elections, rate cuts…"
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <p className="bk-hint">A query overrides the theme above and scans the full live market universe.</p>
-        </div>
-
-        <div className="bk-field-row">
-          <div className="bk-field">
-            <Caption>Target legs</Caption>
-            <SegmentedControl value={targetLegs} onChange={setTargetLegs} options={LEG_OPTIONS.map((v) => ({ value: v, label: String(v) }))} />
-          </div>
-          <div className="bk-field">
-            <Caption>Tier</Caption>
-            <SegmentedControl
-              value={tier}
-              onChange={(v) => setTier(v as 90 | 50)}
-              options={[
-                { value: 90 as 90 | 50, label: "High" },
-                { value: 50 as 90 | 50, label: "Long-shot" },
-              ]}
-            />
-          </div>
-        </div>
-
-        <button type="button" className="bk-action-primary" onClick={runBuild} disabled={building}>
-          {building ? "Building basket…" : "Build basket"}
-        </button>
-      </div>
-
-      {build.status === "building" && <BuildProgress />}
-      {build.status === "error" && (
-        <div className="bk-card bk-empty">
-          <strong>Build failed</strong>
-          <p className="bk-risk-sub" style={{ textAlign: "center", margin: 0 }}>{build.error}</p>
-          <button type="button" onClick={runBuild}>Retry</button>
-        </div>
-      )}
-      {build.status === "ok" && (
-        <BuildResult basket={build.basket} onDeploy={() => router.push("/app/portfolio")} onRetry={runBuild} />
-      )}
-    </div>
-  );
-}
-
-function BuildProgress() {
-  return (
-    <div className="bk-card bk-build-progress">
-      <div className="bk-spinner" />
-      <div>
-        <strong>Composing diversified basket…</strong>
-        <p>Scanning the live market universe, CLOB-pricing candidate legs and running the correlation filter. This can take 10–30s.</p>
-      </div>
-    </div>
-  );
-}
-
-function BuildResult({ basket, onDeploy, onRetry }: { basket: CustomBasket; onDeploy: () => void; onRetry: () => void }) {
-  const d = basket.diversification;
-  const fewLegs = basket.legs.length < 5;
-
-  if (basket.legs.length === 0) {
-    return (
-      <div className="bk-card bk-empty">
-        <strong>No basket could be built</strong>
-        <p className="bk-risk-sub" style={{ textAlign: "center", margin: 0 }}>
-          The live market universe is currently empty (market feed temporarily unavailable). Try again shortly.
-        </p>
-        <button type="button" onClick={onRetry}>Try again</button>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {basket.legs.length > 0 && fewLegs && (
-        <div className="bk-warning">
-          Only {basket.legs.length} CLOB-priced leg{basket.legs.length === 1 ? "" : "s"} cleared the correlation filter for this theme.
-          Try a broader theme or a different free-text query for a more diversified roster.
-        </div>
-      )}
-
-      <div className="bk-card bk-result-stats">
-        <div className="bk-stat">
-          <Caption>NAV</Caption>
-          <strong>{(basket.nav * 100).toFixed(1)}%</strong>
-        </div>
-        <div className="bk-stat">
-          <Caption>Sigma</Caption>
-          <strong>{(basket.sigma * 100).toFixed(2)}%</strong>
-        </div>
-        <div className="bk-stat">
-          <Caption>Eff. legs</Caption>
-          <strong>{d.eff_leg_count.toFixed(1)}</strong>
-        </div>
-        <div className="bk-stat">
-          <Caption>Avg pair ρ</Caption>
-          <strong>{d.avg_pair_corr.toFixed(3)}</strong>
-        </div>
-        <div className="bk-stat">
-          <Caption>Risk ratio</Caption>
-          <strong>{d.risk_ratio.toFixed(2)}</strong>
-        </div>
-        <div className="bk-stat">
-          <Caption>Accepted</Caption>
-          <strong style={{ color: d.accepted ? C.green : C.amber }}>{d.accepted ? "Yes" : "No"}</strong>
-        </div>
-      </div>
-      {basket.legs.length > 0 && d.reason && <div className="bk-diversification-note">{d.reason}</div>}
-
-      <div className="bk-card bk-legs">
-        <div className="bk-section-head">
-          <Caption>Leg roster</Caption>
-          <strong>{basket.legs.length} legs · {basket.sources.clob_priced_legs} CLOB-priced</strong>
-        </div>
-        {basket.legs.length > 0 ? (
-        <div className="bk-leg-list">
-          {basket.legs.map((leg) => (
-            <div key={leg.market_id} className="bk-leg-row">
-              <span className="bk-leg-q">
-                <strong>{leg.question}</strong>
-                <em>
-                  <i className={`bk-side ${leg.side === "YES" ? "yes" : "no"}`}>{leg.side}</i>
-                  {leg.category} · {leg.priceSource.toUpperCase()}
-                </em>
-              </span>
-              <b>{(leg.probability * 100).toFixed(1)}%</b>
-              <i className="bk-leg-w">{(leg.weight * 100).toFixed(1)}%</i>
-            </div>
-          ))}
-        </div>
-        ) : (
-          <div className="bk-empty-inline">No legs cleared the correlation filter.</div>
-        )}
-      </div>
-
-      <div className="bk-card bk-quotes">
-        <div className="bk-section-head">
-          <Caption>Tranche quotes</Caption>
-          <strong>Senior · Mezz · Junior</strong>
-        </div>
-        {basket.tranches.length > 0 ? (
-        <div className="bk-slice-list">
-          {basket.tranches.map((t) => {
-            const kind = t.kind as "senior" | "mezzanine" | "junior";
-            const color = trancheColor(kind);
-            return (
-              <div key={t.kind} className="bk-slice-row">
-                <div>
-                  <span style={{ color }}>{t.kind}</span>
-                  <em>{Math.round(t.attach * 100)}-{Math.round(t.detach * 100)}%</em>
-                </div>
-                <strong>${t.pricePerToken.toFixed(4)}</strong>
-                <b style={{ color: t.expectedYieldPct >= 50 ? C.green : C.tealLight }}>
-                  {formatYieldPct(t.expectedYieldPct)}<em> APY</em>
-                </b>
-              </div>
-            );
-          })}
-        </div>
-        ) : (
-          <div className="bk-empty-inline">No tranche quotes available.</div>
-        )}
-      </div>
-
-      <div className="bk-card bk-mm">
-        <div className="bk-section-head">
-          <Caption>Market-maker entry</Caption>
-          <strong>Live quote</strong>
-        </div>
-        <div className="bk-mm-grid">
-          <div className="bk-stat">
-            <Caption>Entry / token</Caption>
-            <strong>${basket.mm.entry_cost_per_token.toFixed(4)}</strong>
-          </div>
-          <div className="bk-stat">
-            <Caption>Protocol</Caption>
-            <strong>{basket.mm.protocol_bps} bps</strong>
-          </div>
-          <div className="bk-stat">
-            <Caption>MM spread</Caption>
-            <strong>{basket.mm.mm_spread_bps} bps</strong>
-          </div>
-        </div>
-        <button type="button" className="bk-action-primary" onClick={onDeploy}>
-          Deploy basket
-        </button>
-        <p className="bk-hint" style={{ marginTop: 8 }}>
-          Universe {basket.sources.universe} · {basket.sources.candidates_scanned} scanned · {basket.sources.kept_after_filter} kept · priced {basket.sources.price}
-        </p>
-      </div>
-    </>
-  );
-}
 
 /* ───────────────────────── CSS ───────────────────────── */
 
@@ -979,8 +689,11 @@ const BASKET_CSS = `
   .bk-metric-cell span { color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; }
   .bk-metric-cell strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 14px; font-weight: 620; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  .bk-action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .bk-action-primary { height: 42px; border-radius: 9px; font-family: ${FD}; font-size: 13px; font-weight: 620; cursor: pointer; border: 0.5px solid ${C.tealLight}; background: ${C.tealLight}; color: #03111d; transition: background 0.14s ${EASE}, border-color 0.14s ${EASE}, opacity 0.14s ${EASE}; }
   .bk-action-primary:hover { background: ${C.teal}; border-color: ${C.teal}; }
+  .bk-action-ghost { height: 42px; border-radius: 9px; font-family: ${FD}; font-size: 13px; font-weight: 600; cursor: pointer; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textPrimary}; transition: background 0.14s ${EASE}, border-color 0.14s ${EASE}; }
+  .bk-action-ghost:hover { border-color: ${C.tealLight}; color: ${C.tealLight}; }
   .bk-action-primary:disabled { opacity: 0.6; cursor: progress; }
 
   .bk-constituents { display: grid; gap: 10px; }
@@ -1012,7 +725,7 @@ const BASKET_CSS = `
   .bk-risk-head strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; font-weight: 620; }
   .bk-risk-head em { color: ${C.textMuted}; font-family: ${FM}; font-size: 9.5px; font-style: normal; letter-spacing: 0.06em; white-space: nowrap; }
   .bk-risk-sub { margin: 9px 0 14px; color: ${C.textMuted}; font-family: ${FS}; font-size: 12px; line-height: 1.5; }
-  .bk-risk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .bk-risk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
   .bk-risk-card { width: 100%; appearance: none; display: flex; flex-direction: column; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 13px; text-align: left; cursor: pointer; transition: background 0.14s ${EASE}, border-color 0.14s ${EASE}, transform 0.14s ${EASE}; }
   .bk-risk-card:hover { background: ${C.cardHover}; border-color: ${C.borderHover}; transform: translateY(-1px); }
   .bk-risk-card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

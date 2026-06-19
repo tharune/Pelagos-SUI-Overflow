@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { ConnectButton } from "./ConnectButton";
 import { HeaderFaucet } from "./HeaderFaucet";
 import { TestnetBadge } from "./TestnetBadge";
-import { C, FD } from "../_lib/tokens";
+import { C, FD, FM } from "../_lib/tokens";
 import { ThemeToggle } from "../_lib/theme";
 import { ModeToggle } from "../_lib/mode";
 
@@ -17,7 +17,7 @@ const NAV_LEFT = [
   { id: "portfolio",    label: "Portfolio",           href: "/app/portfolio" },
   { id: "distribution", label: "Distributed Options", href: "/app/distribution" },
   { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
-  { id: "basket",       label: "Baskets",             href: "/app/basket" },
+  { id: "basket",       label: "Baskets",             href: "/app/basket", beta: true },
   { id: "deepbook",     label: "DeepBook",            href: "/app/deepbook" },
   { id: "docs",         label: "About",               href: "/app/docs" },
 ];
@@ -107,6 +107,22 @@ export function Header() {
                   }}
                 >
                   {n.label}
+                  {"beta" in n && n.beta && (
+                    <sup
+                      style={{
+                        marginLeft: 4,
+                        fontFamily: FM,
+                        fontSize: 7.5,
+                        fontWeight: 600,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        color: C.tealLight,
+                        verticalAlign: "super",
+                      }}
+                    >
+                      beta
+                    </sup>
+                  )}
                   {active && (
                     <span
                       style={{

@@ -265,7 +265,7 @@ export const prepareTermBasketOpen = (b: {
 // ---- volatility desk ----
 export interface VolGreeks { delta_btc: number; gamma: number; vega_usd: number; theta_usd_day: number; position_value_usd: number; }
 export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; chain: "sui" | "cex" | "forward"; conf?: number; }
-export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_cost_usd: number; venue: string; }
+export interface HedgeQuote { side: "short" | "long" | "flat"; size_btc: number; notional_usd: number; mark: number; funding_rate: number; funding_pnl_usd: number; funding_source: string; mark_venue: string; venue: string; }
 export type VolStrategy = "straddle" | "strangle" | "butterfly" | "condor";
 export interface VolQuote {
   side: "long" | "short"; strategy: VolStrategy | "custom"; strategy_label: string; thesis: string;

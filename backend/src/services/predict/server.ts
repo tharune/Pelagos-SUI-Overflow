@@ -48,26 +48,42 @@ async function get<T>(pathname: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Short TTL cache for the read-only RENDER endpoints (oracle lists / state / SVI /
+// price). These change only on indexer ticks (seconds), so caching them collapses
+// the per-quote round-trips — esp. while the user sculpts (same oracle, new
+// weights) — without ever caching a confirmation-critical wallet read.
+const getCache = new Map<string, { at: number; data: unknown }>();
+async function cachedGet<T>(pathname: string, ttlMs: number): Promise<T> {
+  const hit = getCache.get(pathname);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.data as T;
+  const data = await get<T>(pathname);
+  getCache.set(pathname, { at: Date.now(), data });
+  if (getCache.size > 512) {
+    for (const [k, v] of getCache) if (Date.now() - v.at > 30_000) getCache.delete(k);
+  }
+  return data;
+}
+
 export const predictServer = {
   status: () => get<Record<string, unknown>>('/status'),
   config: () => get<Record<string, unknown>>('/config'),
 
   /** All oracles the indexer knows about (across statuses). */
-  oracles: () => get<PredictOracle[]>('/oracles'),
+  oracles: () => cachedGet<PredictOracle[]>('/oracles', 5_000),
 
   predictState: (predictId = PREDICT.predictObjectId) =>
     get<Record<string, unknown>>(`/predicts/${predictId}/state`),
   predictOracles: (predictId = PREDICT.predictObjectId) =>
-    get<PredictOracle[]>(`/predicts/${predictId}/oracles`),
+    cachedGet<PredictOracle[]>(`/predicts/${predictId}/oracles`, 5_000),
   vaultSummary: (predictId = PREDICT.predictObjectId) =>
     get<Record<string, unknown>>(`/predicts/${predictId}/vault/summary`),
 
   oracleState: (oracleId: string) =>
-    get<Record<string, unknown>>(`/oracles/${oracleId}/state`),
+    cachedGet<Record<string, unknown>>(`/oracles/${oracleId}/state`, 4_000),
   oracleSviLatest: (oracleId: string) =>
-    get<Record<string, unknown>>(`/oracles/${oracleId}/svi/latest`),
+    cachedGet<Record<string, unknown>>(`/oracles/${oracleId}/svi/latest`, 4_000),
   oraclePriceLatest: (oracleId: string) =>
-    get<Record<string, unknown>>(`/oracles/${oracleId}/prices/latest`),
+    cachedGet<Record<string, unknown>>(`/oracles/${oracleId}/prices/latest`, 4_000),
   oracleAskBounds: (oracleId: string) =>
     get<Record<string, unknown>>(`/oracles/${oracleId}/ask-bounds`),
 

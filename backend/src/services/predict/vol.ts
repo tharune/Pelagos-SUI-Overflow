@@ -143,42 +143,44 @@ export async function buildVolSurface(
     if (active.length >= MAX_SLICES) break;
   }
 
-  const slices: VolSlice[] = [];
-  for (const o of active) {
-    const [priceRes, sviRes] = await Promise.all([
-      predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
-      predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
-    ]);
-    if (!priceRes || !sviRes) continue;
-    const fwdRaw = forwardFromTick(priceRes);
-    const params = decodeSvi(sviRes);
-    if (fwdRaw === null || !params) continue;
+  // Fetch every oracle's price + SVI IN PARALLEL (was a sequential per-oracle
+  // loop = ~16 round-trips ≈ 5-8s; parallel collapses it to ~1 round-trip).
+  const built = await Promise.all(
+    active.map(async (o): Promise<VolSlice | null> => {
+      const [priceRes, sviRes] = await Promise.all([
+        predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
+        predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
+      ]);
+      if (!priceRes || !sviRes) return null;
+      const fwdRaw = forwardFromTick(priceRes);
+      const params = decodeSvi(sviRes);
+      if (fwdRaw === null || !params) return null;
 
-    const forwardUsd = fwdRaw / PRICE_SCALE;
-    const tYears = (o.expiry - now) / YEAR_MS;
-    const loUsd = forwardUsd * (1 - strikesPct);
-    const hiUsd = forwardUsd * (1 + strikesPct);
-    const steps = Math.max(2, strikeSteps);
-    const step = (hiUsd - loUsd) / (steps - 1);
-
-    const points: VolSlice['points'] = [];
-    for (let i = 0; i < steps; i++) {
-      const strikeUsd = loUsd + i * step;
-      const k = Math.log(strikeUsd / forwardUsd);
-      points.push({ strike_usd: strikeUsd, log_moneyness: k, iv: sviImpliedVol(params, k, tYears) });
-    }
-    const atmIv = sviImpliedVol(params, 0, tYears); // k = 0 (strike == forward)
-
-    slices.push({
-      oracle_id: o.oracle_id,
-      expiry: o.expiry,
-      tenor_label: tenorLabel(o.expiry - now),
-      t_years: tYears,
-      forward_usd: forwardUsd,
-      atm_iv: atmIv,
-      points,
-    });
-  }
+      const forwardUsd = fwdRaw / PRICE_SCALE;
+      const tYears = (o.expiry - now) / YEAR_MS;
+      const loUsd = forwardUsd * (1 - strikesPct);
+      const hiUsd = forwardUsd * (1 + strikesPct);
+      const steps = Math.max(2, strikeSteps);
+      const step = (hiUsd - loUsd) / (steps - 1);
+      const points: VolSlice['points'] = [];
+      for (let i = 0; i < steps; i++) {
+        const strikeUsd = loUsd + i * step;
+        const k = Math.log(strikeUsd / forwardUsd);
+        points.push({ strike_usd: strikeUsd, log_moneyness: k, iv: sviImpliedVol(params, k, tYears) });
+      }
+      return {
+        oracle_id: o.oracle_id,
+        expiry: o.expiry,
+        tenor_label: tenorLabel(o.expiry - now),
+        t_years: tYears,
+        forward_usd: forwardUsd,
+        atm_iv: sviImpliedVol(params, 0, tYears), // k = 0 (strike == forward)
+        points,
+      };
+    }),
+  );
+  // Preserve nearest-expiry-first order; drop slices missing price/SVI.
+  const slices: VolSlice[] = built.filter((s): s is VolSlice => s !== null);
 
   if (slices.length === 0) {
     throw new Error('no active oracles');

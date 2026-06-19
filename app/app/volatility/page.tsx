@@ -288,12 +288,26 @@ export default function VolatilityPage() {
   // quote forward; as BTC ticks away from it, gamma generates delta to re-hedge,
   // and (for long gamma) a convexity P&L accrues.
   const fwd = q?.forward_usd ?? 0;
-  const markPrice = liveMark?.mark ?? q?.mark.mark ?? fwd;
-  const moveUsd = fwd ? markPrice - fwd : 0;
-  const movePct = fwd ? (moveUsd / fwd) * 100 : 0;
+  // Re-hedge drift is measured from the SPOT AT QUOTE TIME (the quote's BTC mark),
+  // not the forward: the Greeks delta is struck at the quote, so baselining here
+  // makes the hedge's net delta reconcile with the Greeks the instant you quote
+  // (delta-neutral structure → ~0 hedge), and only a genuine post-quote tick of
+  // the live mark generates gamma delta to re-hedge. The small forward−mark basis
+  // (carry) is a pricing artifact and must not masquerade as a standing hedge.
+  const quoteSpot = q?.mark.mark ?? fwd;
+  const markPrice = liveMark?.mark ?? quoteSpot;
+  const moveUsd = quoteSpot ? markPrice - quoteSpot : 0;
+  const movePct = quoteSpot ? (moveUsd / quoteSpot) * 100 : 0;
   const runDelta = g ? g.delta_btc + g.gamma * moveUsd : 0;
   const gammaPnl = g ? 0.5 * g.gamma * moveUsd * moveUsd : 0;
-  const hedgeSide: "short" | "long" | "flat" = runDelta > 1e-6 ? "short" : runDelta < -1e-6 ? "long" : "flat";
+  // Delta-neutral cutoff scales with position size: below max($25, 0.1% of
+  // notional) the hedge is grid-discretisation dust — a symmetric strip never
+  // lands perfectly on the discrete band grid, so it carries a few-dollar
+  // residual delta that isn't a directional view worth routing a perp for.
+  const hedgeUsd = Math.abs(runDelta) * markPrice;
+  const hedgeFloorUsd = Math.max(25, 0.001 * (notionalNum || 0));
+  const hedgeSide: "short" | "long" | "flat" =
+    hedgeUsd < hedgeFloorUsd ? "flat" : runDelta > 0 ? "short" : "long";
   const hedgeBtc = Math.abs(runDelta);
   const venue = shortVenue(liveMark ?? q?.mark);
   const onSui = (liveMark ?? q?.mark)?.chain === "sui";
@@ -809,14 +823,17 @@ function AdvancedDesk(p: DeskProps) {
           <div className="vd-greeks vd-greeks-tall">
             <Greek sym="Δ" name="Delta" val={p.g ? `${p.g.delta_btc >= 0 ? "+" : ""}${p.g.delta_btc.toFixed(4)}` : "—"} unit="BTC" />
             <Greek sym="Γ" name="Gamma" val={p.g ? p.g.gamma.toFixed(5) : "—"} color={p.g ? (p.g.gamma >= 0 ? C.green : C.red) : undefined} />
-            <Greek sym="ν" name="Vega" val={p.g ? `${p.g.vega_usd >= 0 ? "+" : ""}${money(p.g.vega_usd)}` : "—"} unit="/pt" color={p.g ? (p.g.vega_usd >= 0 ? C.green : C.red) : undefined} />
             {(() => {
-              // Per-day theta is degenerate for the minute-/hour-dated testnet
-              // oracles (∝ 1/T), where it saturates to the position-value cap.
-              // Suppress it (show "—") rather than print an implausible decay.
-              const sat = !!p.g && Math.abs(p.g.theta_usd_day) >= 0.9 * Math.abs(p.g.position_value_usd);
+              // Per-pt vega (∝ √T) and per-day theta (∝ 1/T) are degenerate for
+              // sub-day tenors — the RAW model values are economically meaningless
+              // there. Suppress both rather than print an implausible number. The
+              // default ~7d tenor shows real values; only ultra-short picks hit this.
+              const degenerate = !!p.q && p.q.t_years < 1 / 365;
               return (
-                <Greek sym="Θ" name="Theta" val={!p.g ? "—" : sat ? "—" : `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}`} unit={sat ? "short tenor" : "/day"} color={p.g && !sat ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+                <>
+                  <Greek sym="ν" name="Vega" val={!p.g ? "—" : degenerate ? "—" : `${p.g.vega_usd >= 0 ? "+" : ""}${money(p.g.vega_usd)}`} unit={degenerate ? "short tenor" : "/pt"} color={p.g && !degenerate ? (p.g.vega_usd >= 0 ? C.green : C.red) : undefined} />
+                  <Greek sym="Θ" name="Theta" val={!p.g ? "—" : degenerate ? "—" : `${p.g.theta_usd_day >= 0 ? "+" : ""}${money(p.g.theta_usd_day)}`} unit={degenerate ? "short tenor" : "/day"} color={p.g && !degenerate ? (p.g.theta_usd_day >= 0 ? C.green : C.red) : undefined} />
+                </>
               );
             })()}
           </div>
@@ -890,11 +907,12 @@ function BuilderSculptor({ weights, onSculpt, quote, side }: {
 
 // ---- shared right-rail panels ---------------------------------------------
 function HedgePanel(p: DeskProps) {
-  const { q, accent, hedgeSide, hedgeBtc, runDelta, gammaPnl, markPrice, movePct, venue, hedged, routeHedge, liveMark } = p;
-  // Sub-~2-day tenors are gamma-dominated: the delta (∝ 1/√T) is large and moves
-  // fast, so the static hedge is only indicative. The default tenor (~7d) avoids
-  // this, but flag it if the user steps into a very short expiry.
-  const shortTenor = !!q && q.t_years < 2 / 365 && hedgeSide !== "flat";
+  const { q, accent, hedgeSide, hedgeBtc, runDelta, gammaPnl, markPrice, movePct, venue, hedged, routeHedge } = p;
+  const fundingSrc = q?.hedge.funding_source;
+  const fundingLabel = fundingSrc === "bluefin" ? "Bluefin" : fundingSrc === "hyperliquid" ? "Hyperliquid" : "est.";
+  // Signed hourly carry on the LIVE hedge size: + = the hedge EARNS funding (a short
+  // perp receives funding when funding>0), − = pays.
+  const carry = q && hedgeSide !== "flat" ? (hedgeSide === "short" ? 1 : -1) * hedgeBtc * markPrice * q.hedge.funding_rate : 0;
   return (
     <div className="vd-card vd-hedge">
       <div className="vd-card-head">
@@ -917,14 +935,14 @@ function HedgePanel(p: DeskProps) {
         <Row k="Hedge order" v={hedgeSide === "flat" ? "delta-neutral" : `${hedgeSide === "short" ? "Short" : "Long"} ${hedgeBtc.toFixed(4)} BTC`} color={hedgeSide === "flat" ? undefined : accent} />
         <Row k="BTC-PERP mark" v={dollars(markPrice)} live />
         <Row k="Spot drift" v={`${pct2(movePct)}%`} color={Math.abs(movePct) < 0.005 ? undefined : movePct > 0 ? C.green : C.red} />
-        <Row k="Funding (8h)" v={q ? `${(q.hedge.funding_rate * 100).toFixed(3)}%` : "—"} hint={(liveMark ?? q?.mark)?.funding_source === "bluefin" ? "Bluefin" : "est."} />
+        <Row k="Funding (1h)" v={q ? `${(q.hedge.funding_rate * 100).toFixed(4)}%` : "—"} hint={fundingLabel} />
+        <Row k="Hedge carry (1h)" v={!q || hedgeSide === "flat" ? "—" : `${carry >= 0 ? "+" : ""}${money(carry)}`} color={hedgeSide === "flat" ? undefined : carry >= 0 ? C.green : C.red} hint={hedgeSide === "flat" ? undefined : carry >= 0 ? "earn" : "pay"} />
       </div>
       <button className="vd-hedge-btn" disabled={!q || hedgeSide === "flat" || Boolean(hedged)} onClick={routeHedge}>
         {hedged ? "✓ Hedge routed" : hedgeSide === "flat" ? "Delta-neutral" : `Route ${hedgeSide} ${hedgeBtc.toFixed(4)} BTC`}
       </button>
       {hedged && <div className="vd-sim">✓ {hedged}</div>}
-      {shortTenor && <p className="vd-note" style={{ color: C.amber }}>Short tenor — delta is gamma-dominated and re-hedges fast; this order is indicative. Pick a longer expiry for a stable hedge.</p>}
-      <p className="vd-note">Structure minted on‑chain on Sui. BTC mark live from {venue}; perp routing simulated on testnet.</p>
+      <p className="vd-note">Structure minted on‑chain on Sui. Delta hedge routed to Bluefin BTC‑PERP (the Sui perp) — live mark from {venue}, funding {fundingLabel === "est." ? "estimated" : `live · ${fundingLabel}`}; order submission simulated on testnet.</p>
     </div>
   );
 }

@@ -224,7 +224,10 @@ export default function VolatilityPage() {
   // Re-price the structure (debounced) + poll every 8s so Greeks stay live.
   const timer = useRef<number | null>(null);
   useEffect(() => {
-    if (!valid) return;
+    // In Advanced, wait for the selected tenor's oracle so the first quote prices
+    // the SHOWN tenor (not the backend's default) — otherwise the ticket greeks
+    // briefly disagree with every "tenor" label on first paint.
+    if (!valid || (mode === "advanced" && !quoteOracle)) return;
     let alive = true;
     // Advanced prices the SCULPTED structure (custom weights); Basic prices the
     // named preset. Same endpoint, same on-chain MM path.
@@ -254,7 +257,9 @@ export default function VolatilityPage() {
     return () => { alive = false; window.clearInterval(id); };
   }, []);
 
-  useEffect(() => { setHedged(null); }, [strategy, notionalNum, horizon]);
+  // Reset the routed-hedge banner whenever the position the hedge was sized for
+  // changes — Basic (strategy/horizon) AND Advanced (tenor/sculpt/width) drivers.
+  useEffect(() => { setHedged(null); }, [strategy, notionalNum, horizon, sliceIdx, weights, spanSigma]);
 
   const g = q?.greeks ?? null;
   const tradeable = q ? q.strip.buckets.filter((b) => b.tradeable).length : 0;
@@ -618,7 +623,7 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
 // ===========================================================================
 function AdvancedDesk(p: DeskProps) {
   const { surfErr, q, advSlices, advSel, advFilteredSurface, sliceIdx, setSliceIdx } = p;
-  const [tab, setTab] = useState<"surface" | "smile" | "term">("surface");
+  const [tab, setTab] = useState<"payoff" | "surface" | "smile" | "term">("payoff");
 
   // ---- bespoke-builder actions (drive the parent's sculpted weights) -------
   const loadTemplate = (id: string) => {
@@ -649,16 +654,23 @@ function AdvancedDesk(p: DeskProps) {
         <div className="vd-card vd-analytics">
           <div className="vd-card-head">
             <div className="vd-tabs" role="tablist" aria-label="Analytics view">
-              {([["surface", "Surface"], ["smile", "Smile"], ["term", "Term"]] as const).map(([id, label]) => (
+              {([["payoff", "Payoff"], ["surface", "Surface"], ["smile", "Smile"], ["term", "Term"]] as const).map(([id, label]) => (
                 <button key={id} role="tab" aria-selected={tab === id} className={`vd-tab${tab === id ? " on" : ""}`} onClick={() => setTab(id)}>{label}</button>
               ))}
             </div>
             <span className="vd-dim">
-              {tab === "surface" ? `${nT} tenors × ${advSel?.points.length ?? 0} strikes · drag to rotate`
-                : tab === "smile" ? `IV vs strike · ${tenor}`
-                  : `${nT} expiries · click to select`}
+              {tab === "payoff" ? `P&L vs BTC settlement · ${tenor}`
+                : tab === "surface" ? `${nT} tenors × ${advSel?.points.length ?? 0} strikes · drag to rotate`
+                  : tab === "smile" ? `IV vs strike · ${tenor}`
+                    : `${nT} expiries · click to select`}
             </span>
           </div>
+
+          {tab === "payoff" && (
+            <div className="vd-analytics-body">
+              <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} h={452} />
+            </div>
+          )}
 
           {tab === "surface" && (
             <div className="vd-analytics-body">
@@ -727,31 +739,28 @@ function AdvancedDesk(p: DeskProps) {
           </div>
         </div>
 
-        {/* payoff */}
-        <div className="vd-card vd-payoff-adv">
-          <div className="vd-card-head"><Cap>Payoff at expiry</Cap><span className="vd-dim">P&amp;L vs BTC settlement · {tenor}</span></div>
-          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} compact />
-        </div>
       </div>
 
       {/* ── RIGHT: execute ──────────────────────────────────────────────── */}
       <div className="vd-adv2-right">
 
-        {/* trade selection: tenor + size */}
+        {/* trade selection: tenor (dropdown of every expiry) + size */}
         <div className="vd-card vd-trade">
           <div className="vd-card-head"><Cap>{p.advStructLabel}</Cap><span className="vd-dim" style={{ color: sideColor(p.advStructSide) }}>{p.advStructSide} vol</span></div>
-          <div className="vd-trade-row">
+          <label className="vd-field">
             <span className="vd-build-lbl">Expiry</span>
-            <div className="vd-stepper">
-              <button onClick={() => setSliceIdx(Math.max(0, sliceIdx - 1))} disabled={sliceIdx <= 0} aria-label="Earlier tenor">‹</button>
-              <strong>{tenor}</strong>
-              <button onClick={() => setSliceIdx(Math.min(nT - 1, sliceIdx + 1))} disabled={sliceIdx >= nT - 1} aria-label="Later tenor">›</button>
+            <div className="vd-select-wrap">
+              <select className="vd-select" value={sliceIdx} onChange={(e) => setSliceIdx(Number(e.target.value))} disabled={nT === 0} aria-label="Expiry tenor">
+                {nT === 0 ? <option>loading…</option> : advSlices.map((s, i) => (
+                  <option key={i} value={i}>{s.tenor_label} · {(s.atm_iv * 100).toFixed(1)}% IV</option>
+                ))}
+              </select>
             </div>
-          </div>
-          <div className="vd-trade-amt">
+          </label>
+          <label className="vd-field">
             <span className="vd-build-lbl">Amount · dUSDC</span>
             <input className="vd-num vd-num-sm" inputMode="decimal" value={p.notional} onChange={(e) => p.setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-          </div>
+          </label>
         </div>
 
         {/* order ticket */}
@@ -1106,8 +1115,8 @@ function TermChart({ surface, selectedIdx, onPick, h }: { surface: VolDeskSurfac
 
 /** Classic options payoff diagram: net P&L vs BTC settlement price, with the
  *  forward and the live mark marked. Profit shaded accent, loss shaded red. */
-function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean }) {
-  const W = 760, H = compact ? 168 : 272, PL = 52, PR = 16, PT = 16, PB = 28;
+function PayoffDiagram({ quote, markPrice, accent, compact, h }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean; h?: number }) {
+  const W = 760, H = h ?? (compact ? 168 : 272), PL = 52, PR = 16, PT = 16, PB = 28;
   const { ref, ratio } = useSvgXRatio(W);
   const model = useMemo(() => {
     if (!quote) return null;
@@ -1129,7 +1138,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
     return { pts, lo, hi, fwd, cost, yMin: Math.min(...ys, 0), yMax: Math.max(...ys, 0) };
   }, [quote]);
 
-  if (!model) return <div className="vd-payoff-empty" style={compact ? { height: H } : { flex: 1, minHeight: 240 }}>pricing…</div>;
+  if (!model) return <div className="vd-payoff-empty" style={h ? { height: h } : compact ? { height: H } : { flex: 1, minHeight: 240 }}>pricing…</div>;
   const { pts, lo, hi, fwd, yMin, yMax } = model;
   const sx = (x: number) => PL + ((x - lo) / (hi - lo || 1)) * (W - PL - PR);
   const yPad = (yMax - yMin) * 0.12 || 1;
@@ -1141,7 +1150,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact }: { quote: VolQuote 
   const markX = Math.max(lo, Math.min(hi, markPrice));
 
   return (
-    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={compact ? H : "100%"} preserveAspectRatio="none" style={{ display: "block", ...(compact ? {} : { flex: 1, minHeight: 240 }) }}>
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={h ?? (compact ? H : "100%")} preserveAspectRatio="none" style={{ display: "block", ...(h || compact ? {} : { flex: 1, minHeight: 240 }) }}>
       <defs>
         <clipPath id="vd-pos"><rect x={PL} y={PT} width={W - PL - PR} height={Math.max(0, zeroY - PT)} /></clipPath>
         <clipPath id="vd-neg"><rect x={PL} y={zeroY} width={W - PL - PR} height={Math.max(0, H - PB - zeroY)} /></clipPath>
@@ -1302,9 +1311,11 @@ const VD_CSS = `
   .vd-open-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* ---- ADVANCED desk — 2-column trade terminal ---- */
-  .vd-adv2 { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(330px, 0.9fr); gap: 14px; align-items: start; min-width: 0; }
+  .vd-adv2 { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(330px, 0.9fr); gap: 14px; align-items: stretch; min-width: 0; }
   @media (max-width: 1180px) { .vd-adv2 { grid-template-columns: 1fr; } }
-  .vd-adv2-left, .vd-adv2-right { display: grid; gap: 14px; min-width: 0; align-content: start; }
+  /* flex columns so the LAST card in each (builder ⟷ hedge) grows to fill —
+     their bottoms line up regardless of which column is naturally taller. */
+  .vd-adv2-left, .vd-adv2-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
   /* tabbed analytics card (surface / smile / term) */
   .vd-analytics { display: flex; flex-direction: column; }
@@ -1326,20 +1337,21 @@ const VD_CSS = `
   .vd-smile-stat > div { background: ${C.card}; padding: 10px 13px; display: grid; gap: 3px; }
   .vd-smile-stat span { font-family: ${FM}; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: ${C.textMuted}; }
   .vd-smile-stat strong { font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
-  .vd-payoff-adv { display: flex; flex-direction: column; }
-
-  /* right rail — trade selection */
+  /* right rail — trade selection (expiry dropdown + amount) */
   .vd-trade { display: grid; gap: 12px; }
-  .vd-trade-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .vd-stepper { display: inline-flex; align-items: center; gap: 4px; }
-  .vd-stepper button { appearance: none; width: 30px; height: 30px; border-radius: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textPrimary}; font-size: 16px; line-height: 1; cursor: pointer; transition: border-color 0.14s ${EASE}; }
-  .vd-stepper button:hover:not(:disabled) { border-color: ${C.borderHover}; }
-  .vd-stepper button:disabled { opacity: 0.4; cursor: default; }
-  .vd-stepper strong { min-width: 56px; text-align: center; font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
-  .vd-trade-amt { display: grid; gap: 6px; padding: 10px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
-  .vd-trade-amt .vd-num-sm { font-size: 20px; width: 100%; }
+  .vd-field { display: grid; gap: 6px; padding: 10px 13px; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: text; }
+  .vd-field:focus-within { border-color: ${C.borderHover}; }
+  .vd-field .vd-num-sm { font-size: 20px; width: 100%; }
+  .vd-select-wrap { position: relative; }
+  .vd-select-wrap::after { content: "▾"; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); pointer-events: none; color: ${C.textMuted}; font-size: 11px; }
+  .vd-select { appearance: none; width: 100%; padding: 2px 18px 2px 0; border: none; background: transparent; color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 600; cursor: pointer; outline: none; }
+  .vd-select option { color: #04121d; }
+  /* hedge is the right column's last card — fill so its bottom aligns with the
+     builder; pin the disclaimer note to the bottom edge. */
+  .vd-hedge { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .vd-hedge .vd-note { margin-top: auto; }
 
-  .vd-builder { display: grid; gap: 12px; align-content: start; }
+  .vd-builder { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; }
   /* template "tiers" — load a starting profile into the sculptor */
   .vd-tpl-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
   .vd-tpl { display: grid; gap: 3px; justify-items: start; padding: 8px 10px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.15s ${EASE}; text-align: left; }
@@ -1348,8 +1360,8 @@ const VD_CSS = `
   .vd-tpl em { font-family: ${FM}; font-size: 8px; font-style: normal; text-transform: uppercase; letter-spacing: 0.04em; color: ${C.textMuted}; }
 
   /* the weight-profile sculptor (drag the bars to shape the payout) */
-  .vd-sculpt { display: grid; gap: 7px; }
-  .vd-sculpt-track { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 116px; padding: 10px 10px 0; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: ns-resize; touch-action: none; }
+  .vd-sculpt { display: flex; flex-direction: column; gap: 7px; flex: 1 1 auto; min-height: 0; }
+  .vd-sculpt-track { position: relative; display: flex; align-items: flex-end; gap: 3px; flex: 1 1 auto; min-height: 116px; padding: 10px 10px 0; border-radius: 10px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: ns-resize; touch-action: none; }
   .vd-sculpt-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
   .vd-sculpt-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 4px; transition: height 0.05s linear; }
   .vd-sculpt-axis { display: flex; justify-content: space-between; font-family: ${FM}; font-size: 9px; letter-spacing: 0.04em; color: ${C.textMuted}; padding: 0 2px; font-variant-numeric: tabular-nums; }

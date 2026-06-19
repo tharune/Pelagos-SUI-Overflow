@@ -20,7 +20,8 @@ import dynamic from "next/dynamic";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { friendlyWalletError } from "../_lib/chain";
-import { useWalletSigner } from "../_lib/wallet-bridge";
+import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
+import { DusdcFaucetButton } from "../_components/DusdcFaucet";
 import { useMode, BetaTag } from "../_lib/mode";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { ResultLine, Cap, StripStyles, openableBuckets, dollars } from "../_components/strip-products";
@@ -593,8 +594,11 @@ function BasicDesk(p: DeskProps) {
 // Review-and-sign modal for Basic. Surfaces the trade summary + an OPTIONAL
 // delta-neutral perp hedge before the on-chain mint is signed.
 function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedgeOn: boolean; setHedgeOn: (v: boolean) => void; onClose: () => void }) {
-  const { q, meta, accent, busy, stage, result, openErr, openPosition, runDelta, hedgeSide, hedgeBtc, markPrice, gammaPnl, routeHedge, hedged } = p;
+  const { q, meta, accent, busy, stage, result, openErr, openPosition, runDelta, hedgeSide, hedgeBtc, markPrice, gammaPnl, routeHedge, hedged, wallet } = p;
   const hasDelta = hedgeSide !== "flat" && Math.abs(runDelta) > 1e-3;
+  const dusdc = useDusdcBalance();
+  const costUsd = q ? Number(q.strip.total_cost_raw) / 1e6 : 0;
+  const shortDusdc = wallet.connected && !result && dusdc.uiAmount + 1e-9 < costUsd;
   const confirm = () => {
     if (hedgeOn && hasDelta && !hedged) routeHedge();
     openPosition();
@@ -638,11 +642,25 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
           </div>
         )}
 
+        {wallet.connected && !result && (
+          <div className="vd-hedge-rows" style={{ marginTop: 12 }}>
+            <Row k="Your dUSDC" v={`${dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC`} color={shortDusdc ? C.amber : undefined} />
+          </div>
+        )}
+        {shortDusdc && (
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+            <p style={{ fontFamily: FM, fontSize: 11, color: C.textMuted, lineHeight: 1.5, margin: 0 }}>
+              Opening settles in dUSDC — Predict&apos;s faucet-gated quote asset. Grab a test grant, or lower the amount.
+            </p>
+            <DusdcFaucetButton address={wallet.address ?? null} amount={25} onFunded={dusdc.refresh} compact />
+          </div>
+        )}
+
         {result ? (
           <ResultLine digest={result} label={`${meta.label} opened${hedgeOn && hasDelta ? " + hedged" : ""}`} />
         ) : (
-          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q} onClick={confirm}>
-            {busy ? (stage ?? "Submitting…") : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
+          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q || shortDusdc} onClick={confirm}>
+            {busy ? (stage ?? "Submitting…") : shortDusdc ? "Need more dUSDC to open" : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
           </button>
         )}
         {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}

@@ -6,9 +6,10 @@ import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { useMode } from "../_lib/mode";
-import { useWalletSigner, useUsdcBalance } from "../_lib/wallet-bridge";
+import { useWalletSigner, useDusdcBalance, airdropDusdc } from "../_lib/wallet-bridge";
 import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } from "../_components/dist-chart";
 import { Stat, openableBuckets } from "../_components/strip-products";
+import { DusdcFaucetButton } from "../_components/DusdcFaucet";
 import {
   stripPreview,
   ensureManager,
@@ -67,7 +68,7 @@ interface Sel { expiryIdx: number; strikeIdx: number; side: Side }
 
 function BasicOptionsChain() {
   const wallet = useWalletSigner();
-  const usdc = useUsdcBalance();
+  const usdc = useDusdcBalance();
 
   const [chain, setChain] = useState<OptionsChain | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -395,6 +396,11 @@ function BasicOptionsChain() {
                           {busy ? (stage ?? "Submitting…") : overCap ? `Exceeds pool depth · max ${maxContracts!.toLocaleString()}` : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
                       )}
+                      {wallet.connected && usdc.uiAmount < orderCost && (
+                        <div style={{ marginTop: 10 }}>
+                          <DusdcFaucetButton address={wallet.address ?? null} onFunded={usdc.refresh} compact />
+                        </div>
+                      )}
                       <p className="oc-note">Buys {nContracts} whole {sel!.side} {nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.</p>
                     </>
                   ) : (
@@ -642,7 +648,7 @@ function Slider({ label, value, min, max, step, fmt, onChange }: { label: string
 
 function AdvancedDistribution() {
   const wallet = useWalletSigner();
-  const usdc = useUsdcBalance();
+  const usdc = useDusdcBalance();
 
   const [markets, setMarkets] = useState<DeepBookMarket[]>([]);
   const [marketId, setMarketId] = useState<string | null>(null);
@@ -929,8 +935,13 @@ function AdvancedDistribution() {
               )}
 
               {wallet.connected && (
-                <div style={{ marginTop: 12, fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                  Opening needs dUSDC (Predict&apos;s faucet-gated quote asset). Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC.
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                    Opening needs dUSDC (Predict&apos;s faucet-gated quote asset). Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC.
+                  </div>
+                  {usdc.uiAmount < 25 && (
+                    <DusdcFaucetButton address={wallet.address ?? null} onFunded={usdc.refresh} compact />
+                  )}
                 </div>
               )}
 

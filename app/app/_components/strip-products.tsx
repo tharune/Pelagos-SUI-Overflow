@@ -19,7 +19,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { C, FD, FM, FS, EASE, trancheColor } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
-import { useWalletSigner, useUsdcBalance } from "../_lib/wallet-bridge";
+import { useWalletSigner, useUsdcBalance, useDusdcBalance } from "../_lib/wallet-bridge";
+import { DusdcFaucetButton } from "./DusdcFaucet";
 import {
   ppnQuote,
   trancheQuote,
@@ -300,6 +301,7 @@ export function OpenButton({
   label,
   busyLabel,
   onOpen,
+  needUsdc,
 }: {
   wallet: Wallet;
   busy: boolean;
@@ -307,7 +309,11 @@ export function OpenButton({
   label: string;
   busyLabel: string;
   onOpen: () => void;
+  /** dUSDC the open will cost — when set and the wallet is short, surface the
+   *  test-dUSDC faucet so a connected wallet is never stuck without the asset. */
+  needUsdc?: number;
 }) {
+  const dusdc = useDusdcBalance();
   if (!wallet.connected) {
     return (
       <ConnectModal
@@ -319,10 +325,21 @@ export function OpenButton({
       />
     );
   }
+  const short = needUsdc !== undefined && needUsdc > 0 && dusdc.uiAmount + 1e-9 < needUsdc;
   return (
-    <button className="mk-open" disabled={busy || disabled} onClick={onOpen}>
-      {busy ? busyLabel : label}
-    </button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <button className="mk-open" disabled={busy || disabled} onClick={onOpen}>
+        {busy ? busyLabel : label}
+      </button>
+      {short && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontFamily: FM, fontSize: 10.5, color: C.amber }}>
+            Needs {needUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC · you hold {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </span>
+          <DusdcFaucetButton address={wallet.address ?? null} onFunded={dusdc.refresh} compact />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -454,6 +471,7 @@ export function TranchesPanel({ wallet, oracleId, baseSigmaUsd }: { wallet: Wall
                   label="Open this tranche"
                   busyLabel={stage ?? "Submitting…"}
                   onOpen={() => openTranche(t)}
+                  needUsdc={Number(t.strip.total_cost_raw) / 1e6}
                 />
                 {results[t.tranche] && <ResultLine digest={results[t.tranche]} label={`${t.tranche} opened`} />}
               </div>
@@ -612,6 +630,7 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
             label={`Open protected note · ${quote ? usd(quote.budget_raw) : ""}`}
             busyLabel={stage ?? "Submitting…"}
             onOpen={open}
+            needUsdc={quote ? Number(quote.budget_raw) / 1e6 : budgetNum}
           />
           {result && <ResultLine digest={result} label="Protected note opened" />}
           {openErr && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}
@@ -626,6 +645,9 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
 // ===========================================================================
 
 export function LpWidget({ wallet, usdc }: { wallet: Wallet; usdc: Usdc }) {
+  // The PLP pool settles in dUSDC (faucet-gated), not mUSDC — gate + display on
+  // the asset the supply actually moves so the balance reads true.
+  const dusdc = useDusdcBalance();
   const [amount, setAmount] = useState("250");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -649,6 +671,7 @@ export function LpWidget({ wallet, usdc }: { wallet: Wallet; usdc: Usdc }) {
       const c = await confirmPredict(digest);
       setResult(c.digest);
       usdc.refresh();
+      dusdc.refresh();
     } catch (e) {
       setError(friendlyWalletError(e));
     } finally {
@@ -691,8 +714,11 @@ export function LpWidget({ wallet, usdc }: { wallet: Wallet; usdc: Usdc }) {
           )}
           {wallet.connected && (
             <span style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
-              Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} mUSDC · pool needs dUSDC
+              Balance {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC
             </span>
+          )}
+          {wallet.connected && dusdc.uiAmount < amt && (
+            <DusdcFaucetButton address={wallet.address ?? null} onFunded={dusdc.refresh} compact />
           )}
         </div>
       </div>

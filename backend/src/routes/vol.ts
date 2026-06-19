@@ -14,13 +14,28 @@ import * as structured from '../services/predict/structured';
 import { impliedSigmaRaw } from '../services/predict/products';
 import { buildVolSurface } from '../services/predict/vol';
 import { findActiveOracle, predictServer } from '../services/predict/server';
-import { volWeights, computeVolGreeks, strategyProfile, type VolSide, type VolStrategy } from '../services/predict/volatility';
+import { volWeights, computeVolGreeks, strategyProfile, customVolProfile, type VolSide, type VolStrategy } from '../services/predict/volatility';
 import { fetchBtcMark, fetchBtcMarkCached, fetchRealizedVol, quoteHedge } from '../services/bluefin';
 
 const STRATEGIES: VolStrategy[] = ['straddle', 'strangle', 'butterfly', 'condor'];
 function parseStrategy(v: unknown, side: VolSide): VolStrategy {
   if (typeof v === 'string' && STRATEGIES.includes(v as VolStrategy)) return v as VolStrategy;
   return side === 'short' ? 'butterfly' : 'straddle'; // side fallback
+}
+
+/**
+ * A bespoke (Advanced builder) structure: a sculpted per-band weight vector +
+ * strip half-width. Returns null if the body carries no valid custom weights, so
+ * the named-preset path runs instead. Bounded to keep the strip tradeable.
+ */
+function parseCustom(body: Record<string, unknown>): { weights: number[]; spanSigma: number } | null {
+  const w = body.weights;
+  if (!Array.isArray(w) || w.length < 4 || w.length > 16) return null;
+  const weights = w.map((x) => Number(x));
+  if (weights.some((x) => !Number.isFinite(x) || x < 0)) return null;
+  if (!(weights.reduce((a, b) => a + b, 0) > 0)) return null;
+  const spanSigma = Math.min(5, Math.max(0.6, Number(body.span_sigma ?? 2.4)));
+  return { weights, spanSigma };
 }
 
 const router = Router();
@@ -98,8 +113,11 @@ router.post('/quote', async (req: Request, res: Response) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const sideHint: VolSide = body.side === 'short' ? 'short' : 'long';
-    const n = 8;
-    const profile = strategyProfile(parseStrategy(body.strategy, sideHint), n);
+    const custom = parseCustom(body);
+    const profile = custom
+      ? customVolProfile(custom.weights, custom.spanSigma)
+      : strategyProfile(parseStrategy(body.strategy, sideHint), 8);
+    const n = profile.weights.length;
     const side = profile.side;
     const o = await resolveVolOracle(typeof body.oracle_id === 'string' ? body.oracle_id : undefined);
     const notionalUsd = Math.max(1, Number(body.notional_usd ?? body.budget_usd ?? 100));

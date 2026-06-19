@@ -199,8 +199,8 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     // surface, so it left the mesh tiny in dead space. Projecting the actual
     // corners sizes the surface to FILL the card while keeping the IV / TENOR /
     // strike labels (which live just outside the mesh) in frame.
-    const bmin = new THREE.Vector3(-SX - 1.3, -0.3, -SY / 2 - 0.5);
-    const bmax = new THREE.Vector3(SX + 1.5, SZ + 0.6, SY / 2 + 1.4);
+    const bmin = new THREE.Vector3(-SX - 1.12, -0.25, -SY / 2 - 0.4);
+    const bmax = new THREE.Vector3(SX + 1.32, SZ + 0.45, SY / 2 + 1.12);
     const center = bmin.clone().add(bmax).multiplyScalar(0.5);
     const vFov = (camera.fov * Math.PI) / 180;
     const aspect = width / height;
@@ -215,7 +215,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
       const fwd = rel.dot(dir);
       dist = Math.max(dist, fwd + Math.abs(rel.dot(right)) / hHalf, fwd + Math.abs(rel.dot(camUp)) / vHalf);
     }
-    dist *= 1.06; // small safety margin so nothing kisses the edge
+    dist *= 1.0; // gutters already include label margin; fill the card
     camera.position.copy(center.clone().add(dir.clone().multiplyScalar(dist)));
     camera.lookAt(center);
     controls.target.copy(center);

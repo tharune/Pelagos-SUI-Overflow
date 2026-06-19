@@ -14,8 +14,8 @@ on **Sui testnet**.
 A global **Basic / Advanced** toggle (header, persisted per browser) reskins every product:
 
 - **Basic** — clean, guided, prebuilt. The default.
-- **Advanced** — the institutional desk: order books, an interactive 3D SVI vol surface, a custom
-  basket builder, full greeks, and on-chain deployment detail.
+- **Advanced** — the institutional desk: order books, an interactive 3D SVI vol surface, the
+  risk-slice tranching engine, full greeks, and on-chain deployment detail.
 
 ## Products
 
@@ -25,7 +25,7 @@ Nav: **Portfolio · Distributed Options · Volatility · Baskets · DeepBook · 
 |---|---|
 | **Distributed Options** | Live BTC options chain — calls/puts across every on-chain expiry (≈15m → 22d). Each contract is a DeepBook Predict range with a $1 binary payout, priced live off the protocol's own bid/ask. Whole contracts, depth/risk-capped, settled on Sui. |
 | **Volatility** | Trade implied-vs-realized vol with prebuilt structures (straddle / strangle / butterfly / iron condor), a live payoff diagram + greeks, and a delta-hedge sleeve. Advanced adds an interactive **3D SVI vol surface** + smile / term-structure analytics + a multi-leg trade builder. |
-| **Baskets** | Diversified, low-correlation event baskets (Polymarket CLOB-priced) alongside risk slices (senior / mezzanine / junior tranches). Advanced adds an NLP **custom-basket builder**. |
+| **Baskets** | Diversified event baskets (Polymarket CLOB-priced), de-correlated by an NLP layer (TF-IDF cosine + theme clustering) so the legs are genuinely uncorrelated, not 30 variants of one bet. Basic is a clean basket terminal; **Advanced** is the risk-slice tranching engine (senior / mezzanine / junior). |
 | **DeepBook** | Prebuilt DeepBook Predict range strategies + principal-protected notes (a DeFi-yield sleeve allocated into the strategies). |
 | **Portfolio** | Holdings, live mark-to-market, P&L, and per-strategy backtests on real price history. |
 

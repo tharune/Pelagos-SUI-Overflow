@@ -47,4 +47,35 @@ Operator manager: `0x7806a6636dd9764ec017134241fbff6d630e8fa7f594661489aeb622659
 - Indexer confirms: **4 range mints + 1 redeem**, PLP balance 9.98, wallet dUSDC 919 remaining.
 - Pricing: real MM ask/bid + slippage from `get_(range_)trade_amounts`; mintable-band filter ([2%,98%]) keeps every surfaced bucket actually mintable (sub-1% bands abort `assert_mintable_ask`).
 
-Remaining: seed larger pools when the 1M dUSDC grant lands; frontend wiring; settlement/redeem_permissionless keeper.
+Remaining: seed larger pools when the 1M dUSDC grant lands; settlement/redeem_permissionless keeper.
+
+## Full-flow re-verification (2026-06-19)
+Every wallet-signed build dry-runs clean on-chain (operator as sender), and a fresh
+real mint→redeem cycle confirms the live path on current code:
+- create_manager ✅ · **strip/open (Distribution)** ✅ (~1.16 SUI gas, 8 bands) ·
+  **vol/open (Volatility)** ✅ · **ppn/open (Protected Note)** ✅ · **lp/supply (PLP)** ✅ ·
+  **termbasket/open (Calendar, 12 bands)** ✅ — all dry-run `success`.
+- **REAL range mint** ✅ digest `61QFVhzFLoZ3BgcdaFmWz8Mmm2ZYXa5L8pHFoedx6d7P`
+- **REAL range redeem** ✅ digest `ExPD5HRuos8U9bzsUGJHjqjErntmCFdfMt9UDbHdHxVz`
+- Gas note: a 6–8 band Predict mint costs ~0.8–1.2 SUI; a 12-band term basket ~1.7 SUI.
+  The connecting wallet (judge) pays its own gas — top it from the free Sui faucet.
+
+## Judge / E2E testing — funding the operator
+The whole product is **non-custodial**: the judge connects their OWN wallet and signs.
+They need two assets:
+- **SUI for gas** — free from `sui client faucet` / faucet.sui.io. Not a bottleneck.
+- **dUSDC** — the ONLY asset DeepBook Predict settles in, and it is **faucet-gated**
+  (its TreasuryCap is Mysten's — it cannot be minted like mUSDC).
+
+So the app ships an **in-app dUSDC faucet**: every Predict surface (Distribution,
+Volatility, PPN, Tranche, PLP) shows a **"Get test dUSDC"** button when the connected
+wallet is short. It transfers a 25-dUSDC grant from the operator float
+(`POST /api/dev/airdrop-dusdc`, operator-signed) so anyone can run the full flow without
+the manual DeepBook form. Proven to a fresh wallet: digest `8hTzz3yvUmjACoTJLbX8EvDcsSdz3Nsbp9fxwEFssNh7`.
+
+**To keep it topped up, send testnet funds to the operator:**
+`0xcad0f800f44a48360c01e9fa2d21e779bd829cb60e7220227ed16bb74d4d73e5`
+- **dUSDC** (the float the faucet hands out, ~25/grant): request to that address via
+  https://tally.so/r/Xx102L. This is the one worth topping up for a judging session.
+- **SUI** (operator dispenser/faucet gas, ~0.003/grant): a couple of SUI is plenty.
+- mUSDC is freely minted on demand (vault/basket products), no top-up needed.

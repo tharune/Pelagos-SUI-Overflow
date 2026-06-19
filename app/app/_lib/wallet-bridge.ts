@@ -124,6 +124,72 @@ export function useUsdcBalance() {
   return { ...state, refresh };
 }
 
+/**
+ * Live dUSDC balance of the connected wallet — the asset DeepBook Predict
+ * actually settles in (distribution / volatility / PPN / tranche / term
+ * baskets). Distinct from {@link useUsdcBalance} (mUSDC, used by the vault /
+ * basket products): a wallet can hold plenty of mUSDC and still be unable to
+ * open a Predict structure, so these surfaces must gate on THIS balance.
+ */
+export function useDusdcBalance() {
+  const account = useCurrentAccount();
+  const address = account?.address ?? null;
+  const [state, setState] = useState({ uiAmount: 0, loading: false, error: null as string | null });
+  const inFlight = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    if (!address) {
+      setState({ uiAmount: 0, loading: false, error: null });
+      return;
+    }
+    inFlight.current = true;
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/dev/dusdc-balance/${address}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { dusdc?: number };
+      setState({ uiAmount: Number(data.dusdc ?? 0), loading: false, error: null });
+    } catch (err) {
+      setState((prev) => ({ ...prev, loading: false, error: err instanceof Error ? err.message : String(err) }));
+      window.setTimeout(() => void refresh(), 2_500);
+    } finally {
+      inFlight.current = false;
+    }
+  }, [address]);
+
+  useEffect(() => {
+    const initial = window.setTimeout(() => void refresh(), 0);
+    const interval = window.setInterval(() => void refresh(), 8_000);
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refresh]);
+
+  return { ...state, refresh };
+}
+
+/**
+ * Request a small dUSDC test grant for `address` from the operator float.
+ * dUSDC is faucet-gated (it cannot be minted like mUSDC), so this transfers
+ * from the operator wallet — letting anyone run the full Predict flow without
+ * the manual DeepBook faucet form. Returns the tx digest.
+ */
+export async function airdropDusdc(address: string, amount = 25): Promise<{ digest: string; amount: number; explorer_url: string }> {
+  const res = await fetch(`${BACKEND_URL}/api/dev/airdrop-dusdc`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ walletAddress: address, amount }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export function explorerTxUrl(digest: string): string {
   return suiExplorerTxUrl(digest);
 }

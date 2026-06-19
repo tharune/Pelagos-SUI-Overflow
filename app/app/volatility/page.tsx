@@ -85,7 +85,7 @@ function tplWeights(id: string, n: number): number[] {
     strangle: (i) => (dist(i) < 0.34 ? 0.05 : 0.12 + dist(i) * 1.25),
     butterfly: (i) => 0.12 + (1 - dist(i)) * 1.4,
     condor: (i) => (dist(i) < 0.55 ? 0.95 : 0.08),
-    putskew: (i) => 0.18 + Math.max(0, -sgn(i)) * 1.25 + dist(i) * 0.15,
+    putskew: (i) => 0.22 + Math.max(0, -sgn(i)) * 0.7 + dist(i) * 0.12,
     flat: () => 0.6,
   };
   const f = fns[id] ?? fns.straddle;
@@ -221,8 +221,9 @@ export default function VolatilityPage() {
     return () => { alive = false; };
   }, []);
 
-  // Re-price the structure (debounced) + poll every 8s so Greeks stay live.
+  // Re-price the structure (throttled) + poll every 8s so Greeks stay live.
   const timer = useRef<number | null>(null);
+  const lastQuoteAt = useRef(0);
   useEffect(() => {
     // In Advanced, wait for the selected tenor's oracle so the first quote prices
     // the SHOWN tenor (not the backend's default) — otherwise the ticket greeks
@@ -231,14 +232,19 @@ export default function VolatilityPage() {
     let alive = true;
     // Advanced prices the SCULPTED structure (custom weights); Basic prices the
     // named preset. Same endpoint, same on-chain MM path.
-    const run = () =>
+    const run = () => {
+      lastQuoteAt.current = performance.now();
       volQuote(mode === "advanced"
         ? { notional_usd: notionalNum, oracle_id: quoteOracle, weights, span_sigma: spanSigma, sender: wallet.address ?? undefined }
         : { strategy, notional_usd: notionalNum, oracle_id: quoteOracle, sender: wallet.address ?? undefined })
         .then((r) => { if (alive) { setQ(r); setErr(null); } })
         .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
+    };
+    // THROTTLE (not debounce): fire at most ~every 130ms so the ticket + Greeks
+    // keep updating WHILE the user sculpts/drags, not only after they stop.
+    const wait = Math.max(0, 130 - (performance.now() - lastQuoteAt.current));
     if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(run, 220);
+    timer.current = window.setTimeout(run, wait);
     const poll = window.setInterval(run, 8000);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); window.clearInterval(poll); };
   }, [strategy, notionalNum, valid, quoteOracle, wallet.address, mode, weights, spanSigma]);
@@ -247,6 +253,20 @@ export default function VolatilityPage() {
   useEffect(() => {
     if (sliceIdx > advSlices.length - 1) setSliceIdx(0);
   }, [advSlices.length, sliceIdx]);
+
+  // Default the Advanced tenor to a MEANINGFUL vol horizon (~7 days) once the
+  // surface loads. The front tenor makes the per-move greeks degenerate (delta
+  // ∝ 1/√T blows up — a tiny structure "needs" a 100+ BTC hedge), so never open
+  // there by default. The user can still pick any tenor from the dropdown.
+  const didInitTenor = useRef(false);
+  useEffect(() => {
+    if (didInitTenor.current || advSlices.length === 0) return;
+    didInitTenor.current = true;
+    const targetYears = 7 / 365;
+    let best = 0, bestD = Infinity;
+    advSlices.forEach((s, i) => { const d = Math.abs(s.t_years - targetYears); if (d < bestD) { bestD = d; best = i; } });
+    setSliceIdx(best);
+  }, [advSlices]);
 
   // Fast live BTC mark — ticks the desk in real time (2s).
   useEffect(() => {
@@ -641,6 +661,14 @@ function AdvancedDesk(p: DeskProps) {
     p.setWeights((w) => { const nw = [...w]; nw[idx] = v; return nw; });
   };
 
+  // Instant client-side payoff preview — tracks the sculpted weights every frame
+  // (forward + σ from the live quote, stable per tenor). The throttled server
+  // quote refines the priced ticket numbers.
+  const previewModel = useMemo(
+    () => previewPayoffModel(p.weights, p.spanSigma, q?.forward_usd ?? 0, q?.sigma_usd ?? 0, Number(p.notional)),
+    [p.weights, p.spanSigma, q?.forward_usd, q?.sigma_usd, p.notional],
+  );
+
   const tenor = advSel?.tenor_label ?? "—";
   const nT = advSlices.length;
 
@@ -668,7 +696,7 @@ function AdvancedDesk(p: DeskProps) {
 
           {tab === "payoff" && (
             <div className="vd-analytics-body">
-              <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} h={452} />
+              <PayoffDiagram quote={q} markPrice={p.markPrice} accent={p.accent} h={452} model={previewModel} />
             </div>
           )}
 
@@ -863,6 +891,10 @@ function BuilderSculptor({ weights, onSculpt, quote, side }: {
 // ---- shared right-rail panels ---------------------------------------------
 function HedgePanel(p: DeskProps) {
   const { q, accent, hedgeSide, hedgeBtc, runDelta, gammaPnl, markPrice, movePct, venue, hedged, routeHedge, liveMark } = p;
+  // Sub-~2-day tenors are gamma-dominated: the delta (∝ 1/√T) is large and moves
+  // fast, so the static hedge is only indicative. The default tenor (~7d) avoids
+  // this, but flag it if the user steps into a very short expiry.
+  const shortTenor = !!q && q.t_years < 2 / 365 && hedgeSide !== "flat";
   return (
     <div className="vd-card vd-hedge">
       <div className="vd-card-head">
@@ -891,6 +923,7 @@ function HedgePanel(p: DeskProps) {
         {hedged ? "✓ Hedge routed" : hedgeSide === "flat" ? "Delta-neutral" : `Route ${hedgeSide} ${hedgeBtc.toFixed(4)} BTC`}
       </button>
       {hedged && <div className="vd-sim">✓ {hedged}</div>}
+      {shortTenor && <p className="vd-note" style={{ color: C.amber }}>Short tenor — delta is gamma-dominated and re-hedges fast; this order is indicative. Pick a longer expiry for a stable hedge.</p>}
       <p className="vd-note">Structure minted on‑chain on Sui. BTC mark live from {venue}; perp routing simulated on testnet.</p>
     </div>
   );
@@ -1115,10 +1148,50 @@ function TermChart({ surface, selectedIdx, onPick, h }: { surface: VolDeskSurfac
 
 /** Classic options payoff diagram: net P&L vs BTC settlement price, with the
  *  forward and the live mark marked. Profit shaded accent, loss shaded red. */
-function PayoffDiagram({ quote, markPrice, accent, compact, h }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean; h?: number }) {
+type PayoffModel = { pts: { x: number; pnl: number }[]; lo: number; hi: number; fwd: number; cost: number; yMin: number; yMax: number };
+
+// Standard-normal CDF (Abramowitz–Stegun 26.2.17) for the client-side preview.
+function ncdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804 * Math.exp((-x * x) / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x >= 0 ? 1 - p : p;
+}
+
+// Client-side payoff preview — mirrors the server strip allocation (qty ∝ weight,
+// scaled so Σ price·weight = notional, bands tradeable only in [2%,98%]) so the
+// payoff SHAPE updates instantly every frame while the user sculpts; the throttled
+// server quote then refines the exact priced numbers in the ticket. Forward + σ
+// come from the live quote (stable per tenor).
+function previewPayoffModel(weights: number[], spanSigma: number, fwd: number, sig: number, notional: number): PayoffModel | null {
+  if (!(fwd > 0) || !(sig > 0) || !(notional > 0) || weights.length < 2) return null;
+  const n = weights.length;
+  const lo = Math.max(0, fwd - spanSigma * sig), hi = fwd + spanSigma * sig;
+  const bw = (hi - lo) / n;
+  const edges: { a: number; b: number }[] = [];
+  const ws: number[] = [];
+  let denom = 0;
+  for (let i = 0; i < n; i++) {
+    const a = lo + i * bw, b = lo + (i + 1) * bw;
+    const prob = ncdf((b - fwd) / sig) - ncdf((a - fwd) / sig);
+    const w = prob >= 0.02 && prob <= 0.98 ? Math.max(0, weights[i]) : 0;
+    edges.push({ a, b }); ws.push(w); denom += prob * w;
+  }
+  const K = denom > 0 ? notional / denom : 0;
+  const qty = ws.map((w) => K * w);
+  const plo = Math.max(0, fwd - 3.4 * sig), phi = fwd + 3.4 * sig;
+  const payoffAt = (x: number) => { for (let i = 0; i < n; i++) if (x > edges[i].a && x <= edges[i].b) return qty[i]; return 0; };
+  const N = 160;
+  const pts = Array.from({ length: N }, (_, i) => { const x = plo + (i / (N - 1)) * (phi - plo); return { x, pnl: payoffAt(x) - notional }; });
+  const ys = pts.map((p) => p.pnl);
+  return { pts, lo: plo, hi: phi, fwd, cost: notional, yMin: Math.min(...ys, 0), yMax: Math.max(...ys, 0) };
+}
+
+function PayoffDiagram({ quote, markPrice, accent, compact, h, model: modelOverride }: { quote: VolQuote | null; markPrice: number; accent: string; compact?: boolean; h?: number; model?: PayoffModel | null }) {
   const W = 760, H = h ?? (compact ? 168 : 272), PL = 52, PR = 16, PT = 16, PB = 28;
   const { ref, ratio } = useSvgXRatio(W);
   const model = useMemo(() => {
+    if (modelOverride) return modelOverride;
     if (!quote) return null;
     const bands = quote.strip.buckets;
     const cost = Number(quote.strip.total_cost_raw) / 1e6;
@@ -1136,7 +1209,7 @@ function PayoffDiagram({ quote, markPrice, accent, compact, h }: { quote: VolQuo
     });
     const ys = pts.map((p) => p.pnl);
     return { pts, lo, hi, fwd, cost, yMin: Math.min(...ys, 0), yMax: Math.max(...ys, 0) };
-  }, [quote]);
+  }, [quote, modelOverride]);
 
   if (!model) return <div className="vd-payoff-empty" style={h ? { height: h } : compact ? { height: H } : { flex: 1, minHeight: 240 }}>pricing…</div>;
   const { pts, lo, hi, fwd, yMin, yMax } = model;

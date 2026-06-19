@@ -128,11 +128,12 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     if (!isFinite(ivMin) || !isFinite(ivMax) || ivMax <= ivMin) { ivMin = 0; ivMax = Math.max(1, ivMax); }
 
     // ---- world-space layout ----------------------------------------------
-    // Roughly-square footprint (strike × tenor) with real vertical relief so the
-    // surface reads as a surface — not a thin wide ribbon lost in the panel.
-    const SX = 4.6;  // log-moneyness axis half-width -> [-SX, +SX]  (x-extent 9.2)
-    const SY = 8.4;  // tenor axis depth
-    const SZ = 4.4;  // IV height
+    // WIDE strike × moderate-depth tenor footprint (matches the wide analytics
+    // panel so the surface FILLS it) with real vertical relief — a Bloomberg-ish
+    // vol surface, not a small mesh adrift in dead space.
+    const SX = 7.0;  // log-moneyness axis half-width -> [-SX, +SX]  (x-extent 14)
+    const SY = 6.5;  // tenor axis depth
+    const SZ = 3.3;  // IV height
     const xAt = (cI: number) => -SX + (cI / (cols.length - 1)) * 2 * SX;
     const yAt = (r: number) => (rows === 1 ? 0 : -SY / 2 + (r / (rows - 1)) * SY);
     const zAt = (v: number) => ((v - ivMin) / (ivMax - ivMin)) * SZ;
@@ -199,14 +200,14 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     // surface, so it left the mesh tiny in dead space. Projecting the actual
     // corners sizes the surface to FILL the card while keeping the IV / TENOR /
     // strike labels (which live just outside the mesh) in frame.
-    const bmin = new THREE.Vector3(-SX - 1.12, -0.25, -SY / 2 - 0.4);
-    const bmax = new THREE.Vector3(SX + 1.32, SZ + 0.45, SY / 2 + 1.12);
+    const bmin = new THREE.Vector3(-SX - 1.2, -0.35, -SY / 2 - 0.55);
+    const bmax = new THREE.Vector3(SX + 1.05, SZ + 0.6, SY / 2 + 0.85);
     const center = bmin.clone().add(bmax).multiplyScalar(0.5);
     const vFov = (camera.fov * Math.PI) / 180;
     const aspect = width / height;
     const vHalf = Math.tan(vFov / 2);
     const hHalf = vHalf * aspect;
-    const dir = new THREE.Vector3(0.42, 0.44, 0.86).normalize(); // center → camera
+    const dir = new THREE.Vector3(0.40, 0.50, 0.84).normalize(); // center → camera
     const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
     const camUp = new THREE.Vector3().crossVectors(dir, right).normalize();
     let dist = 0;
@@ -292,32 +293,61 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     }
     scene.add(grp);
 
-    // axis text sprites (canvas textures) ----------------------------------
+    // ---- axis titles + value ticks (crisp canvas billboards) -------------
+    // Hi-DPI, tightly-cropped canvas per label so text stays sharp (the old
+    // fixed 256×64 canvas blurred once the camera framed the surface large).
     const sprites: THREE.Sprite[] = [];
-    const makeLabel = (text: string, color = "#9fb3c8", size = 46) => {
+    const makeLabel = (text: string, opts?: { color?: string; px?: number; wWorld?: number; weight?: number }) => {
+      const color = opts?.color ?? "#8da0b4";
+      const px = opts?.px ?? 54;
+      const weight = opts?.weight ?? 600;
+      const dpr = 2, pad = 10;
+      const meas = document.createElement("canvas").getContext("2d")!;
+      meas.font = `${weight} ${px}px ui-monospace, monospace`;
+      const tw = Math.ceil(meas.measureText(text).width);
       const cv = document.createElement("canvas");
-      cv.width = 256; cv.height = 64;
+      cv.width = (tw + pad * 2) * dpr; cv.height = (px + pad * 2) * dpr;
       const ctx = cv.getContext("2d")!;
-      ctx.font = `600 ${size}px ui-monospace, monospace`;
-      ctx.fillStyle = color;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, 128, 32);
+      ctx.scale(dpr, dpr);
+      ctx.font = `${weight} ${px}px ui-monospace, monospace`;
+      ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(text, (tw + pad * 2) / 2, (px + pad * 2) / 2);
       const tex = new THREE.CanvasTexture(cv);
-      tex.anisotropy = 4;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-      sp.scale.set(2.6, 0.65, 1);
+      tex.anisotropy = 8; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+      const wWorld = opts?.wWorld ?? 1.4;
+      sp.scale.set(wWorld, (wWorld * cv.height) / cv.width, 1);
       sprites.push(sp);
       return sp;
     };
-    // Labels sit just outside the mesh, inside the fitted gutter (bmin/bmax),
-    // so they stay on-screen. Offsets reduced from the old values that clipped.
-    const axX = makeLabel("LOG-MONEYNESS", "#7de7ff"); axX.position.set(0, -0.4, SY / 2 + 1.0); axX.scale.set(2.4, 0.6, 1); scene.add(axX);
-    const axY = makeLabel("TENOR", "#7de7ff"); axY.position.set(SX + 1.25, -0.4, 0); axY.scale.set(1.5, 0.55, 1); scene.add(axY);
-    const axZ = makeLabel("IV", "#7de7ff"); axZ.position.set(-SX - 1.05, SZ + 0.35, -SY / 2); axZ.scale.set(1.0, 0.5, 1); scene.add(axZ);
-    // IV min/max tick labels
-    const zHi = makeLabel(`${(ivMax * 100).toFixed(0)}%`, "#ea580c", 40); zHi.position.set(-SX - 0.85, SZ, SY / 2); zHi.scale.set(1.2, 0.48, 1); scene.add(zHi);
-    const zLo = makeLabel(`${(ivMin * 100).toFixed(0)}%`, "#4da2ff", 40); zLo.position.set(-SX - 0.85, 0.1, SY / 2); zLo.scale.set(1.2, 0.48, 1); scene.add(zLo);
+    const TITLE = "#7de7ff", TICK = "#8da0b4";
+    const add = (s: THREE.Sprite, x: number, y: number, z: number) => { s.position.set(x, y, z); scene.add(s); };
+
+    // axis titles
+    add(makeLabel("MONEYNESS", { color: TITLE, px: 56, wWorld: 2.7 }), 0, -0.5, SY / 2 + 0.68);
+    add(makeLabel("TENOR", { color: TITLE, px: 56, wWorld: 1.6 }), SX + 0.85, -0.5, 0);
+    add(makeLabel("IV", { color: TITLE, px: 56, wWorld: 0.8 }), -SX - 0.95, SZ + 0.42, SY / 2);
+
+    // moneyness % ticks along the front edge: k → (eᵏ − 1)·100% (kLo/kHi are the
+    // uniform-grid bounds from the resample above = cols[0]/cols[last]).
+    const xForK = (k: number) => -SX + ((k - kLo) / (kHi - kLo || 1)) * 2 * SX;
+    for (let i = 0; i <= 4; i++) {
+      const k = kLo + (i / 4) * (kHi - kLo);
+      const m = (Math.exp(k) - 1) * 100;
+      const lbl = Math.abs(m) < 0.6 ? "ATM" : `${m >= 0 ? "+" : ""}${m.toFixed(0)}%`;
+      add(makeLabel(lbl, { color: Math.abs(m) < 0.6 ? "#7de7ff" : TICK, px: 48, wWorld: 0.95 }), xForK(k), -0.08, SY / 2 + 0.3);
+    }
+    // tenor ticks along the right edge: front / mid / back
+    const tIdx = rows <= 1 ? [0] : [...new Set([0, Math.floor((rows - 1) / 2), rows - 1])];
+    for (const r of tIdx) add(makeLabel(slices[r]?.tenor_label ?? "", { color: TICK, px: 46, wWorld: 0.82 }), SX + 0.45, -0.08, yAt(r));
+
+    // IV % ticks up the front-left vertical edge (nice round steps)
+    const ivSpan = ivMax - ivMin;
+    const ivStep = ivSpan > 0.5 ? 0.25 : ivSpan > 0.2 ? 0.1 : 0.05;
+    for (let v = Math.ceil(ivMin / ivStep) * ivStep; v <= ivMax + 1e-9; v += ivStep) {
+      const hot = v >= (ivMin + ivMax) / 2;
+      add(makeLabel(`${(v * 100).toFixed(0)}%`, { color: hot ? "#e08a4a" : "#5aa0e8", px: 46, wWorld: 0.8 }), -SX - 0.55, zAt(v), SY / 2);
+    }
 
     // ---- render loop -----------------------------------------------------
     let raf = 0;

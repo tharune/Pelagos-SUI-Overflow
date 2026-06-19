@@ -3,7 +3,7 @@
 import React, { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
-import { C, FS, FD, FM, EASE, trancheColor, tc, tl } from "../_lib/tokens";
+import { C, FS, FD, FM, EASE, trancheColor, tc } from "../_lib/tokens";
 import { BUNDLES } from "../_lib/bundles";
 import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "./_quote";
@@ -37,7 +37,7 @@ export default function TranchesPage() {
         ({
           ...b,
           live: false as const,
-          window: (tl(b.daysLeft) === "This week" ? "week" : tl(b.daysLeft) === "This month" ? "month" : "long") as "week" | "month" | "long",
+          window: (b.id.includes("-SHORT") ? "week" : b.id.includes("-MED") ? "month" : "long") as "week" | "month" | "long",
           markets: [],
         } as unknown as LiveBasket),
     );
@@ -147,7 +147,7 @@ function TrancheRow({ quote }: { quote: TrancheQuote }) {
   const color = trancheColor(quote.kind);
   const attach = Math.round(quote.attach * 100);
   const detach = Math.round(quote.detach * 100);
-  const apyColor = quote.expectedApyPct >= 50 ? C.green : quote.expectedApyPct >= 10 ? C.tealLight : quote.expectedApyPct >= 0 ? C.textSecondary : C.red;
+  const apyColor = quote.expectedApyPct >= 50 ? C.green : quote.expectedApyPct >= 10 ? C.tealLight : quote.expectedApyPct > 0 ? C.teal : quote.expectedApyPct === 0 ? C.textSecondary : C.red;
   return (
     <div className="risk-slice-row">
       <div>

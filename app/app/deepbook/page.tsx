@@ -33,8 +33,11 @@ import { ResultLine } from "../_components/strip-products";
 import {
   ensureManager,
   prepareOpenStrip,
+  prepareVolOpen,
+  volQuote,
   confirmPredict,
   usd,
+  type VolStrategy,
 } from "../_lib/predict-strip-client";
 import {
   fetchDeepBookStrategies,
@@ -133,7 +136,7 @@ export default function DeepBookPage() {
 
           {tab === "strategies"
             ? <StrategiesSurface wallet={wallet} mode={mode} />
-            : <NotesSurface mode={mode} />}
+            : <NotesSurface wallet={wallet} mode={mode} />}
         </div>
       </PageFrame>
       <style jsx global>{DB_CSS}</style>
@@ -349,6 +352,9 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
     return <div className="db-card db-empty">{pricing ? "Pricing the strip on DeepBook…" : "Enter a notional to price this strategy."}</div>;
   }
   const g = quote.greeks;
+  // theta now smooth-squashes toward its position-value cap; near the cap the
+  // per-day number is no longer meaningful, so show "—" with a short-tenor note.
+  const thetaSaturated = Math.abs(g.theta_usd_day) >= 0.9 * Math.abs(g.position_value_usd);
   return (
     <div className="db-adv-grid">
       {/* left: orderbook / strip buckets */}
@@ -407,7 +413,7 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
             <Greek sym="Δ" name="Delta" val={`${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}`} unit="BTC" />
             <Greek sym="Γ" name="Gamma" val={g.gamma.toFixed(5)} color={g.gamma >= 0 ? C.green : C.red} />
             <Greek sym="ν" name="Vega" val={`${g.vega_usd >= 0 ? "+" : ""}${money2(g.vega_usd)}`} unit="/pt" color={g.vega_usd >= 0 ? C.green : C.red} />
-            <Greek sym="Θ" name="Theta" val={`${g.theta_usd_day >= 0 ? "+" : ""}${money2(g.theta_usd_day)}`} unit="/day" color={g.theta_usd_day >= 0 ? C.green : C.red} />
+            <Greek sym="Θ" name="Theta" val={thetaSaturated ? "—" : `${g.theta_usd_day >= 0 ? "+" : ""}${money2(g.theta_usd_day)}`} unit={thetaSaturated ? "short tenor" : "/day"} color={thetaSaturated ? undefined : (g.theta_usd_day >= 0 ? C.green : C.red)} />
           </div>
           <div className="db-greek-foot">
             <RouteHandle k="Position value" v={money2(g.position_value_usd)} />
@@ -427,7 +433,7 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
 // ═══════════════════════════════════════════════════════════════
 //  PROTECTED NOTES SURFACE
 // ═══════════════════════════════════════════════════════════════
-function NotesSurface({ mode }: { mode: "basic" | "advanced" }) {
+function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSigner>; mode: "basic" | "advanced" }) {
   const [presets, setPresets] = useState<NotePreset[] | null>(null);
   const [apySources, setApySources] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -537,14 +543,14 @@ function NotesSurface({ mode }: { mode: "basic" | "advanced" }) {
       {qErr && !quote && <div className="db-banner err">{qErr}</div>}
 
       {mode === "basic"
-        ? <NoteBasic quote={quote} pricing={pricing} principal={principalNum} />
-        : <NoteAdvanced quote={quote} pricing={pricing} apySources={apySources} />}
+        ? <NoteBasic quote={quote} pricing={pricing} principal={principalNum} wallet={wallet} strategy={sel?.strategy} />
+        : <NoteAdvanced quote={quote} pricing={pricing} apySources={apySources} wallet={wallet} strategy={sel?.strategy} />}
     </div>
   );
 }
 
 // ── BASIC: floor / expected / best + projected bar + deploy note
-function NoteBasic({ quote, pricing, principal }: { quote: NoteQuote | null; pricing: boolean; principal: number }) {
+function NoteBasic({ quote, pricing, principal, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; principal: number; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const { floor_usd, expected_usd, best_usd } = quote.projected;
   const gainExp = pctSigned(((expected_usd - principal) / principal) * 100);
@@ -586,8 +592,8 @@ function NoteBasic({ quote, pricing, principal }: { quote: NoteQuote | null; pri
           </div>
         </div>
         <div className="db-card">
-          <button className="db-cta" style={{ background: C.tealLight }} disabled>Deploy protected note · {money(principal)}</button>
-          <p className="db-note">Allocation routes principal to the yield sleeve and deploys the yield as a DeepBook strip. Connect a wallet to open. Pool APYs live from DeFiLlama.</p>
+          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label={`Deploy protected note · ${money(principal)}`} />
+          <p className="db-note">Allocation routes principal to the yield sleeve and deploys the yield as a DeepBook strip. Pool APYs live from DeFiLlama.</p>
         </div>
       </div>
     </div>
@@ -595,7 +601,7 @@ function NoteBasic({ quote, pricing, principal }: { quote: NoteQuote | null; pri
 }
 
 // ── ADVANCED: full yield-sleeve breakdown + deployed strip detail
-function NoteAdvanced({ quote, pricing, apySources }: { quote: NoteQuote | null; pricing: boolean; apySources: string[] }) {
+function NoteAdvanced({ quote, pricing, apySources, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; apySources: string[]; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const sleeveTotal = quote.yield_sleeve.reduce((a, p) => a + p.allocation_usd, 0) || 1;
   return (
@@ -665,11 +671,78 @@ function NoteAdvanced({ quote, pricing, apySources }: { quote: NoteQuote | null;
           </div>
         </div>
         <div className="db-card">
-          <button className="db-cta" style={{ background: C.tealLight }} disabled>Deploy protected note</button>
+          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label="Deploy protected note" />
           <p className="db-note">Floor allocated to the live yield sleeve; the yield funds a deployed DeepBook strip. Settles on Sui testnet.</p>
         </div>
       </div>
     </div>
+  );
+}
+
+// ── note deploy: routes the floor's yield budget into a real on-chain DeepBook
+//    strip. The note's upside is the preset's vol-style strip (straddle / strangle
+//    / butterfly), priced live for the real upside_budget_usd notional, then opened
+//    via the SAME predict open/sign/confirm plumbing Strategies uses.
+const VOL_STRATEGIES: VolStrategy[] = ["straddle", "strangle", "butterfly", "condor"];
+function asVolStrategy(s: string | undefined): VolStrategy {
+  const k = (s ?? "").toLowerCase();
+  return (VOL_STRATEGIES as string[]).includes(k) ? (k as VolStrategy) : "straddle";
+}
+
+function NoteDeployButton({ quote, wallet, strategy, label }: {
+  quote: NoteQuote; wallet: ReturnType<typeof useWalletSigner>; strategy: string | undefined; label: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [openErr, setOpenErr] = useState<string | null>(null);
+
+  // reset the deploy result whenever the priced note changes
+  useEffect(() => { setResult(null); setOpenErr(null); }, [quote.preset_id, quote.principal_usd, quote.upside_budget_usd]);
+
+  async function deploy() {
+    if (busy) return;
+    setBusy(true); setOpenErr(null); setResult(null);
+    try {
+      setStage("Pricing upside strip…");
+      const vq = await volQuote({ strategy: asVolStrategy(strategy), side: "long", notional_usd: quote.upside_budget_usd });
+      const buckets = vq.strip.buckets
+        .filter((b) => b.tradeable && Number(b.quantity) > 0)
+        .map((b) => ({ lower: b.lower, higher: b.higher, quantity: b.quantity }));
+      if (buckets.length === 0) throw new Error("No tradeable upside legs in this note right now.");
+      setStage("Preparing manager…");
+      const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
+      setStage("Building note…");
+      const deposit = ((BigInt(vq.strip.total_cost_raw) * 12n) / 10n).toString();
+      const prep = await prepareVolOpen({
+        owner: wallet.address as string,
+        manager_id: mgr,
+        oracle_id: vq.oracle_id,
+        expiry: vq.expiry,
+        buckets,
+        deposit_amount_raw: deposit,
+      });
+      setStage("Sign in wallet…");
+      const digest = await wallet.signAndExecute(prep.tx_bytes);
+      setStage("Confirming…");
+      const c = await confirmPredict(digest);
+      setResult(c.digest);
+    } catch (e) { setOpenErr(friendlyWalletError(e)); }
+    finally { setBusy(false); setStage(null); }
+  }
+
+  return (
+    <>
+      {!wallet.connected ? (
+        <ConnectModal trigger={<button className="db-cta" style={{ background: C.tealLight }}>Connect a wallet</button>} />
+      ) : (
+        <button className="db-cta" style={{ background: C.tealLight }} disabled={busy} onClick={deploy}>
+          {busy ? (stage ?? "Submitting…") : label}
+        </button>
+      )}
+      {result && <ResultLine digest={result} label={`${quote.preset_name} deployed`} />}
+      {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+    </>
   );
 }
 
@@ -718,9 +791,36 @@ function ProjRow({ label, value, note, color, width, barColor }: { label: string
   );
 }
 
+// The payoff svg renders at width:100% with preserveAspectRatio="none", so the
+// viewBox x-axis stretches by ratio r = containerWidth / viewBoxWidth while y is
+// fixed — that distorts <text> glyphs (strokes are already non-scaling). Measure
+// the live ratio and counter-scale each label horizontally by 1/r about its own
+// anchor x so positions/numbers stay identical, only the distortion is removed.
+function useSvgXRatio(viewBoxW: number) {
+  const ref = useRef<SVGSVGElement | null>(null);
+  const [ratio, setRatio] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth || el.getBoundingClientRect().width;
+      if (w > 0) setRatio(w / viewBoxW);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewBoxW]);
+  return { ref, ratio };
+}
+// Horizontal counter-scale about anchor x: matrix(1/r,0,0,1, x*(1-1/r), 0).
+const noStretchX = (x: number, ratio: number): string =>
+  `matrix(${(1 / ratio).toFixed(5)},0,0,1,${(x * (1 - 1 / ratio)).toFixed(3)},0)`;
+
 // payoff diagram: contract payout vs settlement (range strip)
 function PayoffDiagram({ quote, accent, compact }: { quote: DeepBookQuote; accent: string; compact?: boolean }) {
   const W = 760, H = compact ? 168 : 220, PL = 46, PR = 14, PT = 12, PB = 24;
+  const { ref, ratio } = useSvgXRatio(W);
   const model = useMemo(() => {
     const bands = quote.strip.buckets.filter((b) => b.tradeable && Number(b.quantity) > 0);
     if (bands.length === 0) return null;
@@ -753,7 +853,7 @@ function PayoffDiagram({ quote, accent, compact }: { quote: DeepBookQuote; accen
   const area = `${line} L ${sx(hi).toFixed(1)} ${zeroY} L ${sx(lo).toFixed(1)} ${zeroY} Z`;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block" }}>
       <defs>
         <clipPath id="db-pos"><rect x={PL} y={PT} width={W - PL - PR} height={Math.max(0, zeroY - PT)} /></clipPath>
         <clipPath id="db-neg"><rect x={PL} y={zeroY} width={W - PL - PR} height={Math.max(0, H - PB - zeroY)} /></clipPath>
@@ -761,13 +861,13 @@ function PayoffDiagram({ quote, accent, compact }: { quote: DeepBookQuote; accen
       {[yMax, 0, yMin].map((v, i) => (
         <g key={i}>
           <line x1={PL} x2={W - PR} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth="1" opacity={v === 0 ? 0.9 : 0.4} vectorEffect="non-scaling-stroke" />
-          <text x={PL - 7} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9">{v >= 0 ? "+$" : "-$"}{Math.abs(Math.round(v)).toLocaleString()}</text>
+          <text x={PL - 7} y={sy(v) + 3} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(PL - 7, ratio)}>{v >= 0 ? "+$" : "-$"}{Math.abs(Math.round(v)).toLocaleString()}</text>
         </g>
       ))}
       <g clipPath="url(#db-pos)"><path d={area} fill={accent} opacity={0.16} /></g>
       <g clipPath="url(#db-neg)"><path d={area} fill={C.red} opacity={0.12} /></g>
       <line x1={sx(fwd)} x2={sx(fwd)} y1={PT} y2={H - PB} stroke={C.textMuted} strokeWidth="1" strokeDasharray="3 3" opacity={0.6} />
-      <text x={sx(fwd)} y={H - 7} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9">fwd {money(fwd)}</text>
+      <text x={sx(fwd)} y={H - 7} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9" transform={noStretchX(sx(fwd), ratio)}>fwd {money(fwd)}</text>
       <path d={line} fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );

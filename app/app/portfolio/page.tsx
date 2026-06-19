@@ -24,6 +24,7 @@ import {
   fetchContinuousPositions,
   type ContinuousPosition,
 } from "../_lib/distribution-continuous-client";
+import { useLendingSnapshot } from "../_lib/lending-client";
 
 type View = "positions" | "backtest" | "history";
 
@@ -36,6 +37,11 @@ export default function PortfolioPage() {
   const [redeemBusy, setRedeemBusy] = useState<string | null>(null);
   const [redeemError, setRedeemError] = useState<Record<string, string>>({});
   const basketState = useLiveBaskets();
+
+  // Live Sui USDC lending market (DeFiLlama-sourced supply APY + utilization).
+  // The position $-value stays the user's actual lent amount (0 until they
+  // deposit); this just surfaces the real external yield in the allocation row.
+  const { snapshot: lendingSnapshot, loading: lendingLoading } = useLendingSnapshot();
 
   // Authoritative on-chain PBU unit balances per bundle. The ONLY source we
   // trust for "how many basket tokens does this wallet actually own"; cancelled
@@ -245,6 +251,19 @@ export default function PortfolioPage() {
   };
 
   // Allocation rows — same sources as displayTotal so headline + rows reconcile.
+  // Live lending market APY for the allocation row's right cell. While the
+  // snapshot loads we show "…"; once live we surface the real supply APY (and
+  // utilization when present) rather than the position's allocation share.
+  const lendingApyLabel = lendingSnapshot
+    ? `${lendingSnapshot.market_supply_apy.toFixed(2)}% APY${
+        Number.isFinite(lendingSnapshot.utilization)
+          ? ` · ${(lendingSnapshot.utilization * 100).toFixed(0)}% util`
+          : ""
+      }`
+    : lendingLoading
+      ? "…"
+      : "—";
+
   const productRows: Array<{
     id: string;
     label: string;
@@ -252,13 +271,15 @@ export default function PortfolioPage() {
     value: number;
     color: string;
     href?: string;
+    /** When set, the row's right-hand percentage cell shows this instead of the allocation share. */
+    metaOverride?: string;
   }> = [
     { id: "cash", label: "Cash", description: "Sui testnet mUSDC available", value: liveUsdc, color: C.textMuted },
     { id: "baskets", label: "Market Baskets", description: "Basket units held directly", value: onchainBasketValue, color: C.tealLight, href: "/app/basket" },
     { id: "tranches", label: "Risk Slices", description: "Senior / mezzanine / junior", value: effectiveTrancheValue + trancheAccruedYield, color: C.amber, href: "/app/tranche" },
     { id: "ppn", label: "Protected Notes", description: "Principal-protected notes", value: effectivePpnValue + ppnAccruedYield, color: C.violet, href: "/app/ppn" },
     { id: "distribution", label: "Distribution Markets", description: "Continuous μ/σ · collateral at risk", value: distValue, color: C.coral, href: "/app/distribution" },
-    { id: "lending", label: "Lending", description: "Sui DeFi routing", value: totals.lendValue, color: C.blue },
+    { id: "lending", label: "Lending", description: "Sui USDC market rate", value: walletReady ? totals.lendValue : 0, color: C.blue, metaOverride: lendingApyLabel },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
 
@@ -428,7 +449,7 @@ export default function PortfolioPage() {
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div style={{ color: C.textPrimary, fontFamily: FD, fontSize: 13.5, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(row.value, 2)}</div>
-                          <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{share.toFixed(1)}%</div>
+                          <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 10, marginTop: 3 }}>{row.metaOverride ?? `${share.toFixed(1)}%`}</div>
                         </div>
                       </>
                     );

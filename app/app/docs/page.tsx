@@ -119,7 +119,14 @@ export default function DocsPage() {
     <>
       <Header />
       <PageFrame>
+        <style>{`
+          @media (max-width: 860px) {
+            .pelagos-docs-grid { grid-template-columns: 1fr !important; }
+            .pelagos-docs-sidebar { position: static !important; max-height: none !important; }
+          }
+        `}</style>
         <div
+          className="pelagos-docs-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 250px) minmax(0, 1fr)",
@@ -163,8 +170,9 @@ function HackathonNote() {
     <aside
       role="note"
       style={{
-        background: "rgba(255, 255, 255, 0.02)",
-        border: "1px solid rgba(255, 255, 255, 0.16)",
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderLeft: `3px solid ${C.amber}`,
         borderRadius: 10,
         padding: "22px 26px",
         marginBottom: 32,
@@ -219,6 +227,7 @@ function Sidebar({
   return (
     <nav
       aria-label="Docs"
+      className="pelagos-docs-sidebar"
       style={{
         position: "sticky",
         top: 80,
@@ -304,7 +313,7 @@ function SidebarSection({
                   padding: "6px 10px",
                   border: "none",
                   borderRadius: 6,
-                  background: active ? "rgba(45, 212, 191, 0.08)" : "transparent",
+                  background: active ? `${C.teal}14` : "transparent",
                   color: active ? C.tealLight : C.textSecondary,
                   fontFamily: FS,
                   fontSize: 13,
@@ -594,7 +603,7 @@ function Architecture() {
           <>
             <B>Frontend</B> — Next.js App Router under{" "}
             <Code>app/</Code>. Each product page consumes the
-            nine-basket roster, derives tranche, PPN, and payoff
+            six-basket roster, derives tranche, PPN, and payoff
             previews client-side, and dispatches local state
             transitions through a reducer whose action shapes mirror
             the on-chain program instructions.
@@ -627,7 +636,7 @@ function Architecture() {
           </>,
           <>
             The frontend runs the basket-construction pipeline on the
-            market list and materialises the nine canonical baskets
+            market list and materialises the six canonical baskets
             keyed by (tier, window).
           </>,
           <>
@@ -1919,10 +1928,10 @@ function Code({ children }: { children: React.ReactNode }) {
         fontFamily: FM,
         fontSize: "0.88em",
         color: C.textPrimary,
-        background: "rgba(255, 255, 255, 0.04)",
+        background: C.surface,
         padding: "1px 6px",
         borderRadius: 4,
-        border: "0.5px solid rgba(255, 255, 255, 0.08)",
+        border: `0.5px solid ${C.border}`,
       }}
     >
       {children}
@@ -2016,7 +2025,7 @@ function Table({
           gridTemplateColumns: cols.map(() => "minmax(0, 1fr)").join(" "),
           gap: 12,
           padding: "10px 14px",
-          background: "rgba(255, 255, 255, 0.02)",
+          background: C.bg,
           borderBottom: `0.5px solid ${C.border}`,
           fontFamily: FM,
           fontSize: 10,
@@ -2099,7 +2108,7 @@ function Endpoint({
           alignItems: "center",
           gap: 10,
           padding: "10px 14px",
-          background: "rgba(255, 255, 255, 0.02)",
+          background: C.bg,
           borderBottom: `0.5px solid ${C.border}`,
         }}
       >

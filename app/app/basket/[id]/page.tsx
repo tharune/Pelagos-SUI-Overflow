@@ -278,7 +278,7 @@ export default function BasketDetail() {
             >
               <MetricTile
                 label="ISSUE PRICE"
-                value={`$${bundle.nav.toFixed(3)}`}
+                value={`$${(detailVaultPrice ?? bundle.issue ?? bundle.nav).toFixed(3)}`}
                 sub="per PBU unit"
               />
               <MetricTile
@@ -2005,44 +2005,59 @@ function ConstituentTable({
           live from polymarket
         </div>
       </div>
+      {/* Horizontally-scrollable container so the header row and the data
+          rows scroll together and stay aligned on narrow viewports — the
+          fixed-min grid would otherwise clip the right columns (Resolves,
+          arrow) with no way to reach them. */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns:
-            "28px 80px minmax(200px, 1fr) 70px 74px 90px 80px 32px",
-          alignItems: "center",
-          padding: "10px 20px",
-          borderBottom: `0.5px solid ${C.border}`,
-          fontFamily: FM,
-          fontSize: 10,
-          letterSpacing: "0.12em",
-          color: C.textMuted,
-          textTransform: "uppercase",
-          columnGap: 12,
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflowX: "auto",
         }}
       >
-        <div>#</div>
-        <div>Category</div>
-        <div>Question</div>
-        <div style={{ textAlign: "right" }}>Weight</div>
-        <div style={{ textAlign: "right" }}>Prob</div>
-        <div style={{ textAlign: "right" }}>Volume</div>
-        <div style={{ textAlign: "right" }}>Resolves</div>
-        <div />
-      </div>
-      {/* Scrollable body: fills the flex:1 card and scrolls internally so the
-          full leg list is auditable without making the whole page taller than
-          the buy panel on the right. */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {rows.map((m, i) => (
-          <ConstituentRow
-            key={m.id}
-            index={i + 1}
-            market={m}
-            tierColor={tierColor}
-            isLast={i === rows.length - 1}
-          />
-        ))}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "28px 80px minmax(200px, 1fr) 70px 74px 90px 80px 32px",
+            minWidth: 738,
+            alignItems: "center",
+            padding: "10px 20px",
+            borderBottom: `0.5px solid ${C.border}`,
+            fontFamily: FM,
+            fontSize: 10,
+            letterSpacing: "0.12em",
+            color: C.textMuted,
+            textTransform: "uppercase",
+            columnGap: 12,
+          }}
+        >
+          <div>#</div>
+          <div>Category</div>
+          <div>Question</div>
+          <div style={{ textAlign: "right" }}>Weight</div>
+          <div style={{ textAlign: "right" }}>Prob</div>
+          <div style={{ textAlign: "right" }}>Volume</div>
+          <div style={{ textAlign: "right" }}>Resolves</div>
+          <div />
+        </div>
+        {/* Scrollable body: fills the flex:1 card and scrolls internally so the
+            full leg list is auditable without making the whole page taller than
+            the buy panel on the right. */}
+        <div style={{ flex: 1, minHeight: 0, minWidth: 738, overflowY: "auto" }}>
+          {rows.map((m, i) => (
+            <ConstituentRow
+              key={m.id}
+              index={i + 1}
+              market={m}
+              tierColor={tierColor}
+              isLast={i === rows.length - 1}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2593,7 +2608,7 @@ function ConstituentRow({
         alignItems: "center",
         padding: "12px 20px",
         borderBottom: isLast ? "none" : `0.5px solid ${C.border}`,
-        background: hov ? "rgba(45, 212, 191, 0.03)" : "transparent",
+        background: hov ? `${tierColor || C.teal}0a` : "transparent",
         textDecoration: "none",
         transition: `background 0.15s ${EASE}`,
         columnGap: 12,

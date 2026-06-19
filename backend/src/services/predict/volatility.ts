@@ -156,7 +156,14 @@ export function computeVolGreeks(strip: StripQuote, forwardUsd: number, sigmaUsd
   // mathematically correct annualisation, but it reads as broken. Bound both by
   // the position value so the desk shows an honest, sane magnitude ("you can
   // lose at most the position per day"); normal multi-day tenors stay untouched.
+  //
+  // Use a SMOOTH squash (tanh), not a hard clamp: a hard clamp saturated theta to
+  // EXACTLY ±position_value to the cent (so theta_usd_day === position_value_usd,
+  // which reads as a placeholder/aliasing bug and made adjacent strips identical).
+  // tanh(x/cap)·cap is ~identity for sane tenors (|x| ≪ cap) and only asymptotes
+  // toward ±cap in the T→0 wings, so values stay strictly inside the bound and
+  // keep their ordering between strips.
   const cap = Math.max(1, Math.abs(value));
-  const clamp = (x: number) => Math.max(-cap, Math.min(cap, x));
-  return { delta_btc: delta, gamma, vega_usd: clamp(vega), theta_usd_day: clamp(theta), position_value_usd: value };
+  const squash = (x: number) => (Number.isFinite(x) ? cap * Math.tanh(x / cap) : 0);
+  return { delta_btc: delta, gamma, vega_usd: squash(vega), theta_usd_day: squash(theta), position_value_usd: value };
 }

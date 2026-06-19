@@ -263,11 +263,13 @@ export function History({ walletAddress, connected }: HistoryProps) {
       );
     }
     return (
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <HeaderRow />
-        {rows.map((r) => (
-          <TxRowView key={r.id} row={r} />
-        ))}
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 640 }}>
+          <HeaderRow />
+          {rows.map((r) => (
+            <TxRowView key={r.id} row={r} />
+          ))}
+        </div>
       </div>
     );
   }, [connected, loading, rows, error]);
@@ -276,7 +278,7 @@ export function History({ walletAddress, connected }: HistoryProps) {
     <div
       style={{
         background: C.panelGradient,
-        border: "0.5px solid rgba(45, 212, 191, 0.1)",
+        border: `0.5px solid ${C.border}`,
         borderRadius: 24,
         overflow: "hidden",
         position: "relative",
@@ -289,7 +291,7 @@ export function History({ walletAddress, connected }: HistoryProps) {
           display: "flex",
           alignItems: "baseline",
           justifyContent: "space-between",
-          borderBottom: "0.5px solid rgba(255,255,255,0.04)",
+          borderBottom: `0.5px solid ${C.border}`,
         }}
       >
         <div>
@@ -339,7 +341,7 @@ function HeaderRow() {
         gridTemplateColumns: "150px 70px 1fr 110px 110px 90px",
         gap: 12,
         padding: "10px 22px",
-        borderBottom: "0.5px solid rgba(255,255,255,0.04)",
+        borderBottom: `0.5px solid ${C.border}`,
         fontFamily: FM,
         fontSize: 10,
         letterSpacing: "0.12em",
@@ -400,7 +402,7 @@ function TxRowView({ row }: { row: TxRow }) {
         gridTemplateColumns: "150px 70px 1fr 110px 110px 90px",
         gap: 12,
         padding: "12px 22px",
-        borderBottom: "0.5px solid rgba(255,255,255,0.03)",
+        borderBottom: `0.5px solid ${C.border}`,
         fontFamily: FS,
         fontSize: 12,
         color: C.textPrimary,
@@ -408,7 +410,7 @@ function TxRowView({ row }: { row: TxRow }) {
         transition: `background 0.15s ${EASE}`,
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.02)";
+        (e.currentTarget as HTMLElement).style.background = C.cardHover;
       }}
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLElement).style.background = "transparent";

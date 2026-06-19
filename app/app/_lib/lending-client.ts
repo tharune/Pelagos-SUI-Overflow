@@ -25,7 +25,12 @@ export interface LendingPoolSnapshot {
   total_borrows: number;
   utilization: number;
   borrow_rate_apy: number;
+  /** Rate a lender to THIS pool earns: borrow·util·(1−reserve). */
   supply_rate_apy: number;
+  /** REAL live TVL-weighted Sui USDC supply APY (DeFiLlama-sourced market rate). */
+  market_supply_apy: number;
+  /** Provenance of `market_supply_apy` (e.g. "defillama" / fallback). */
+  rate_source?: string;
   ltv_table: {
     basket: Record<90 | 70 | 50, number>;
     tranche: Record<TrancheKind, number>;

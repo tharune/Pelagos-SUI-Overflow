@@ -1690,7 +1690,7 @@ function TrancheBuyPanel({
               hint="fixed by tranche risk profile, lightly adjusted by liquidity and tenor"
             />
             <FeeRow
-              label="Slippage"
+              label="Slippage & underwriting"
               bps={order.slippageBps}
               usd={(usdcAmount * order.slippageBps) / 10_000}
               hint="live market impact + dealer hedge carry + residual tail-risk cost"

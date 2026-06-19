@@ -152,7 +152,6 @@ export interface OrderQuote {
   /** Decomposed order-time fees. All in basis points. */
   protocolFeeBps: number;
   mmSpreadBps: number;
-  underwritingBps: number;
   slippageBps: number;
   totalFeeBps: number;
   /** The binding capacity used to clamp this order (min of hard cap / depth cap). */
@@ -1319,7 +1318,6 @@ export function quoteTrancheOrder(
     tokensOut,
     protocolFeeBps,
     mmSpreadBps,
-    underwritingBps: 0,
     slippageBps,
     totalFeeBps,
     capacityUsdc,

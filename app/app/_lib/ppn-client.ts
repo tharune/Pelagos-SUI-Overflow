@@ -119,63 +119,6 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return payload as T;
 }
 
-// ---- Capital deployment plan (floor sleeve + multi-product risk sleeve) ----
-
-export interface NoteSleeveLeg {
-  product: "basket" | "tranche" | "distribution";
-  kind?: "senior" | "mezzanine" | "junior";
-  pct: number;
-  usdc: number;
-  label: string;
-}
-
-export interface NoteExitLeg {
-  product: "basket" | "tranche" | "distribution" | "floor";
-  label: string;
-  weight: number;
-  fee_bps: number;
-  fee_usdc: number;
-}
-
-export interface NoteExitPlan {
-  blended_fee_bps: number;
-  est_fee_usdc: number;
-  legs: NoteExitLeg[];
-}
-
-export interface NoteAllocation {
-  profile: string;
-  deposit_usdc: number;
-  apy: number;
-  maturity_days: number;
-  floor: { pct: number; usdc: number; at_maturity_usdc: number };
-  risk_sleeve: { pct: number; usdc: number; legs: NoteSleeveLeg[] };
-  exit: NoteExitPlan;
-}
-
-/** Ask the backend allocator how a note's capital deploys across products. */
-export function fetchNoteAllocation(args: {
-  profile: string;
-  amountUsdc: number;
-  apy: number;
-  days: number;
-  basketLabel?: string;
-  distributionLabel?: string;
-  baskets?: string[];
-  distributions?: string[];
-}): Promise<NoteAllocation> {
-  return postJson<NoteAllocation>("/api/ppn/allocate", {
-    profile: args.profile,
-    amount_usdc: args.amountUsdc,
-    apy: args.apy,
-    days: args.days,
-    basket_label: args.basketLabel,
-    distribution_label: args.distributionLabel,
-    baskets: args.baskets,
-    distributions: args.distributions,
-  });
-}
-
 export interface PpnPrepareResponse {
   kind: "prepared";
   vault_id: string | null;

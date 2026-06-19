@@ -52,7 +52,6 @@ export function Header() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
         .pelagos-nav-link:hover { color: ${C.textPrimary} !important; }
       `}</style>
       <header style={{
@@ -67,7 +66,7 @@ export function Header() {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 24px",
+        padding: "0 min(40px, 6vw)",
         gap: 20,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 24, flex: 1, minWidth: 0 }}>
@@ -96,6 +95,7 @@ export function Header() {
                   style={{
                     position: "relative",
                     padding: "4px 0",
+                    paddingBottom: 6,
                     fontSize: 13,
                     fontWeight: 400,
                     fontFamily: FD,
@@ -112,7 +112,7 @@ export function Header() {
                         position: "absolute",
                         left: 0,
                         right: 0,
-                        bottom: -18,
+                        bottom: 0,
                         height: 1,
                         background: C.tealLight,
                       }}
@@ -154,7 +154,6 @@ export function PageFrame({
       maxWidth: wide ? 1760 : 1440,
       margin: "0 auto",
       position: "relative",
-      ...(zoom ? ({ zoom } as React.CSSProperties) : {}),
     }}>
       <div style={{
         position: "fixed",
@@ -163,7 +162,11 @@ export function PageFrame({
         pointerEvents: "none",
         zIndex: 0,
       }} />
-      <div style={{ position: "relative", zIndex: 1 }}>
+      <div style={{
+        position: "relative",
+        zIndex: 1,
+        ...(zoom ? ({ zoom } as React.CSSProperties) : {}),
+      }}>
         {children}
       </div>
     </main>

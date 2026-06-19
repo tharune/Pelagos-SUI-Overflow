@@ -26,6 +26,7 @@
 import { fetchMarkets } from './polymarket';
 import { proxiedFetch } from './proxy';
 import { PolymarketMarket } from '../types';
+import { buildTfIdf, tfidfCosine, type TfIdfCorpus } from './nlp';
 
 const CLOB_API = 'https://clob.polymarket.com';
 
@@ -70,21 +71,31 @@ const WINDOW_CODE: Record<WindowKey, string> = {
 };
 
 // HIGH first — it's the sparsest pool, so it gets first pick on dedupe.
+// Medium (`month`) was dropped — the ladder is just SHORT and LONG now.
 const TARGET_COMBOS: Array<[Tier, WindowKey]> = [
-  [90, 'week'], [90, 'month'], [90, 'long'],
-  [50, 'week'], [50, 'month'], [50, 'long'],
+  [90, 'week'], [90, 'long'],
+  [50, 'week'], [50, 'long'],
 ];
 
 const MIN_BASKET_LEGS = 4;
 const MIN_VOLUME_USD = 10_000;
 const CATEGORY_SHARE_CEIL = 0.35;
 // Cap the constituent list so a single basket can't balloon the API payload
-// or fan out hundreds of CLOB calls. The richest baskets still carry a deep,
-// honest roster; the UI shows the top legs by weight.
-const MAX_BASKET_LEGS = 30;
-// How wide a live universe to pull. 6 baskets over ~1200 top-by-volume
-// markets fills every HIGH/LOW × window comfortably; fetchMarkets caches it.
-const UNIVERSE_LIMIT = 1200;
+// or fan out hundreds of CLOB calls. With the de-correlation gate below the
+// real count lands wherever the uncorrelated supply runs out, usually well
+// under this cap — it's a ceiling, not a target.
+const MAX_BASKET_LEGS = 50;
+// At most this many legs from one correlation THEME (Middle-East, US-rates, a
+// single primary season, …) — they move together, so a basket of 30 election
+// races isn't diversified. Complements the TF-IDF cosine gate.
+const MAX_PER_THEME = 2;
+// Reject a leg whose TF-IDF cosine to ANY leg already in the basket exceeds
+// this — catches near-duplicate phrasings ("Will X be the Democratic nominee
+// for …") that the theme map and topic fingerprint both miss.
+const CORR_COSINE_MAX = 0.45;
+// How wide a live universe to pull. A wider pull gives the de-correlation gate
+// more distinct themes to draw from, so baskets stay deep AND uncorrelated.
+const UNIVERSE_LIMIT = 1800;
 
 const LEG_DAILY_CHANGE_CLAMP = 0.5;
 const BASKET_DAILY_CHANGE_CLAMP_PCT = 30;
@@ -168,6 +179,7 @@ interface Candidate {
   marketSlug?: string;
   eventSlug?: string;
   topicKey: string;
+  theme: string | null;
   category: Category;
   weight: number;
   bestBid?: number;
@@ -209,6 +221,27 @@ function topicFingerprint(question: string): string {
   const unique = Array.from(new Set(cleaned));
   unique.sort();
   return unique.slice(0, 4).join('|');
+}
+
+// Correlation themes — markets in the same theme react to the same shocks, so a
+// basket of "Iran meeting" + "Hormuz reopens" + "Israel ceasefire" is one bet,
+// not three. Each market maps to at most one theme (first match wins); the
+// selector admits at most MAX_PER_THEME per basket. This is the entity-level
+// half of the de-correlation; tfidfCosine is the lexical half.
+const THEME_CLUSTERS: Array<[string, RegExp]> = [
+  ['mideast', /\b(iran|tehran|israel|israeli|gaza|hamas|hezbollah|hormuz|strait|saudi|uae|qatar|netanyahu|houthi|lebanon|syria|persian gulf)\b/i],
+  ['ukraine-russia', /\b(ukraine|ukrainian|russia|russian|putin|zelensky|kremlin|moscow|kyiv|donbas|crimea)\b/i],
+  ['china-taiwan', /\b(china|chinese|taiwan|taiwanese|xi jinping|beijing|taipei|south china sea)\b/i],
+  ['us-monetary', /\b(fed|fomc|federal reserve|rate cut|rate hike|powell|\bcpi\b|inflation|interest rate|jobs report|unemployment)\b/i],
+  ['us-politics', /\b(trump|biden|harris|vance|newsom|democratic nominee|republican nominee|presidential|gubernatorial|congressional|\bprimary\b|senate|midterm|house seat|nominee for)\b/i],
+  ['btc', /\b(bitcoin|btc)\b/i],
+  ['eth', /\b(ethereum|\bether\b|\beth\b)\b/i],
+  ['ai-labs', /\b(openai|gpt-?5|gpt-?6|chatgpt|anthropic|claude|gemini|\bagi\b|\bllm\b)\b/i],
+];
+
+function themeOf(question: string): string | null {
+  for (const [theme, re] of THEME_CLUSTERS) if (re.test(question)) return theme;
+  return null;
 }
 
 function parseYesProbability(outcomePrices: string): number | null {
@@ -287,6 +320,7 @@ function normalizeMarketCandidates(m: PolymarketMarket): Candidate[] {
     eventId: m.event_id,
     eventTitle: m.event_title,
     topicKey,
+    theme: themeOf(m.question),
     category,
     bestBid: typeof m.best_bid === 'number' ? m.best_bid : undefined,
     bestAsk: typeof m.best_ask === 'number' ? m.best_ask : undefined,
@@ -489,6 +523,22 @@ function buildBasketRosters(candidates: Candidate[]): Array<{ tier: Tier; window
   const rosters: Array<{ tier: Tier; window: WindowKey; id: string; legs: Candidate[] }> = [];
   const claimedUnderlying = new Set<string>();
 
+  // NLP de-correlation: TF-IDF over every candidate question once, then reject a
+  // leg whose cosine to one already in the basket exceeds CORR_COSINE_MAX. This
+  // is the lexical half — it kills near-duplicate phrasings the theme map misses.
+  const corpus: TfIdfCorpus = buildTfIdf(candidates.map((c, i) => ({ id: String(i), text: c.question })));
+  const corpusIdx = new Map<Candidate, number>();
+  candidates.forEach((c, i) => corpusIdx.set(c, i));
+  const tooSimilar = (m: Candidate, admitted: Candidate[]): boolean => {
+    const mi = corpusIdx.get(m);
+    if (mi === undefined) return false;
+    for (const a of admitted) {
+      const ai = corpusIdx.get(a);
+      if (ai !== undefined && tfidfCosine(corpus, mi, ai) > CORR_COSINE_MAX) return true;
+    }
+    return false;
+  };
+
   for (const [tier, win] of TARGET_COMBOS) {
     const id = `PBU-${TIER_CODE[tier]}-${WINDOW_CODE[win]}`;
 
@@ -505,20 +555,24 @@ function buildBasketRosters(candidates: Candidate[]): Array<{ tier: Tier; window
     const takenUnderlying = new Set<string>();
     const takenEvents = new Set<string>();
     const takenTopics = new Set<string>();
+    const themeCounts = new Map<string, number>();
     const catCounts = new Map<Category, number>();
     const admit = (m: Candidate) => {
       legs.push(m);
       takenUnderlying.add(m.underlyingId);
       if (m.eventId) takenEvents.add(m.eventId);
       if (m.topicKey) takenTopics.add(m.topicKey);
+      if (m.theme) themeCounts.set(m.theme, (themeCounts.get(m.theme) ?? 0) + 1);
     };
 
-    // Pass 1: strict dedupe + category ceil.
+    // Pass 1: strict dedupe + category ceil + NLP de-correlation (theme + cosine).
     for (const { m } of scored) {
       if (legs.length >= MAX_BASKET_LEGS) break;
       if (takenUnderlying.has(m.underlyingId)) continue;
       if (m.eventId && takenEvents.has(m.eventId)) continue;
       if (m.topicKey && takenTopics.has(m.topicKey)) continue;
+      if (m.theme && (themeCounts.get(m.theme) ?? 0) >= MAX_PER_THEME) continue;
+      if (tooSimilar(m, legs)) continue;
       const catSoFar = catCounts.get(m.category) ?? 0;
       const projected = legs.length + 1;
       const ceil = Math.max(3, Math.ceil(projected * CATEGORY_SHARE_CEIL));

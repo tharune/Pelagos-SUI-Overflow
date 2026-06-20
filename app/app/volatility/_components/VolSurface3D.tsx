@@ -76,7 +76,7 @@ export interface VolSurface3DProps {
   height?: number;
 }
 
-type Lbl = { el: HTMLDivElement; anchor: THREE.Vector3 };
+type Lbl = { el: HTMLDivElement; anchor: THREE.Vector3; priority: number };
 
 export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 }: VolSurface3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -129,12 +129,29 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
       for (let cI = 0; cI < cols.length; cI++) { const v = sampleIv(slices[r], cols[cI]); row.push(v); all.push(v); }
       grid.push(row);
     }
-    // Robust scale — winsorize so the minute-tenor spike can't blow out the range.
-    all.sort((a, b) => a - b);
-    let ivLo = quantile(all, 0.05);
-    let ivHi = quantile(all, 0.92);
-    if (!(ivHi > ivLo)) { ivLo = all[0]; ivHi = Math.max(all[all.length - 1], ivLo + 0.01); }
-    const norm = (v: number) => Math.max(0, Math.min(1, (v - ivLo) / (ivHi - ivLo)));
+    // Smooth the IV grid: the short-tenor rows are microstructure-noisy, so a
+    // light separable blur (heavier along the noisy tenor axis) turns the jagged
+    // ridges into continuous relief without erasing the smile / term structure.
+    const blurRows = (g: number[][], k: number) => g.map((row, r) =>
+      row.map((_, c) => (g[Math.max(0, r - 1)][c] + k * g[r][c] + g[Math.min(g.length - 1, r + 1)][c]) / (k + 2)));
+    const blurCols = (g: number[][], k: number) => g.map((row, r) =>
+      row.map((_, c) => (g[r][Math.max(0, c - 1)] + k * g[r][c] + g[r][Math.min(row.length - 1, c + 1)]) / (k + 2)));
+    let sgrid = blurRows(grid, 1.4);
+    sgrid = blurRows(sgrid, 2.2);
+    sgrid = blurCols(sgrid, 3);
+
+    // Robust scale from the SMOOTHED values + SOFT compression: linear inside
+    // [p4, p90], a gentle tanh roll-off above so any residual spike is a soft bump,
+    // not a clamped plateau with a cliff. Colour saturates at the top (normC).
+    const flat = sgrid.flat().sort((a, b) => a - b);
+    let ivLo = quantile(flat, 0.04);
+    let ivHi = quantile(flat, 0.9);
+    if (!(ivHi > ivLo)) { ivLo = flat[0]; ivHi = Math.max(flat[flat.length - 1], ivLo + 0.01); }
+    const norm = (v: number) => {
+      const r = (v - ivLo) / (ivHi - ivLo);
+      return r <= 0 ? 0 : r <= 1 ? r : 1 + 0.16 * Math.tanh((r - 1) * 1.1);
+    };
+    const normC = (v: number) => Math.min(1, norm(v));
 
     // ---- world layout ------------------------------------------------------
     const SX = 7.4;   // moneyness half-width (wide — fills the wide analytics card)
@@ -177,15 +194,26 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     controls.maxPolarAngle = Math.PI * 0.46;
 
     // ---- surface mesh ------------------------------------------------------
+    // Upsample the tenor axis so the mesh reads smooth between the few raw slices
+    // (yAtM(r*UP) === yAt(r), so the tenor labels stay aligned to the fine mesh).
+    const UP = rows >= 14 ? 2 : rows >= 6 ? 3 : 4;
+    const MROWS = rows <= 1 ? 1 : (rows - 1) * UP + 1;
+    const yAtM = (fr: number) => (MROWS === 1 ? 0 : -SY / 2 + (fr / (MROWS - 1)) * SY);
+    const ivFine = (fr: number, c: number) => {
+      const t = MROWS === 1 ? 0 : fr / UP;
+      const r0 = Math.floor(t), r1 = Math.min(rows - 1, r0 + 1), f = t - r0;
+      return sgrid[r0][c] * (1 - f) + sgrid[r1][c] * f;
+    };
     const vert: THREE.Vector3[] = [];
     const vcol: THREE.Color[] = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols.length; c++) {
-      vert.push(new THREE.Vector3(xAt(c), zAt(grid[r][c]), yAt(r)));
-      vcol.push(ivColor(norm(grid[r][c])));
+    for (let fr = 0; fr < MROWS; fr++) for (let c = 0; c < cols.length; c++) {
+      const v = ivFine(fr, c);
+      vert.push(new THREE.Vector3(xAt(c), zAt(v), yAtM(fr)));
+      vcol.push(ivColor(normC(v)));
     }
     const idx = (r: number, c: number) => r * cols.length + c;
     const indices: number[] = [];
-    for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols.length - 1; c++) {
+    for (let r = 0; r < MROWS - 1; r++) for (let c = 0; c < cols.length - 1; c++) {
       const a = idx(r, c), b = idx(r, c + 1), d = idx(r + 1, c), e = idx(r + 1, c + 1);
       indices.push(a, d, b, b, d, e);
     }
@@ -205,18 +233,11 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     }));
     scene.add(surfaceMesh);
 
-    // faint wireframe for desk-plot precision (kept very subtle so colour leads)
-    const wire = new THREE.LineSegments(
-      new THREE.WireframeGeometry(geo),
-      new THREE.LineBasicMaterial({ color: 0x0a1626, transparent: true, opacity: 0.14 }),
-    );
-    scene.add(wire);
-
     // ---- ATM ridge (log-moneyness 0) + selected-tenor ribbon ---------------
     let atmCol = 0, best = Infinity;
     for (let c = 0; c < cols.length; c++) { const d = Math.abs(cols[c]); if (d < best) { best = d; atmCol = c; } }
     const atmPts: THREE.Vector3[] = [];
-    for (let r = 0; r < rows; r++) atmPts.push(new THREE.Vector3(xAt(atmCol), zAt(grid[r][atmCol]) + 0.03, yAt(r)));
+    for (let r = 0; r < rows; r++) atmPts.push(new THREE.Vector3(xAt(atmCol), zAt(sgrid[r][atmCol]) + 0.03, yAt(r)));
     const atmLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(atmPts),
       new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.22, gapSize: 0.16, transparent: true, opacity: 0.45 }),
@@ -230,7 +251,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
       if (ribbon) { scene.remove(ribbon); ribbon.geometry.dispose(); }
       const rr = Math.max(0, Math.min(rows - 1, r));
       const pts: THREE.Vector3[] = [];
-      for (let c = 0; c < cols.length; c++) pts.push(new THREE.Vector3(xAt(c), zAt(grid[rr][c]) + 0.05, yAt(rr)));
+      for (let c = 0; c < cols.length; c++) pts.push(new THREE.Vector3(xAt(c), zAt(sgrid[rr][c]) + 0.05, yAt(rr)));
       ribbon = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ribbonMat);
       scene.add(ribbon);
     };
@@ -275,7 +296,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
         el.style.textShadow = "0 1px 5px rgba(0,0,0,0.9)";
       }
       labelLayer.appendChild(el);
-      labels.push({ el, anchor });
+      labels.push({ el, anchor, priority: kind === "title" ? 0 : 1 });
     };
 
     const TITLE = "#7de7ff";
@@ -301,7 +322,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     const ivStep = [0.05, 0.1, 0.15, 0.2, 0.25, 0.5, 1].find((s) => ivSpan / s <= 3.0) ?? 0.5;
     const ivStart = Math.ceil((ivLo + ivStep * 0.25) / ivStep) * ivStep;
     for (let v = ivStart; v <= ivHi - ivStep * 0.15; v += ivStep) {
-      mkLabel(`${(v * 100).toFixed(0)}%`, new THREE.Vector3(-SX - 0.75, zAt(v), -SY / 2), "iv", rampCss(norm(v)));
+      mkLabel(`${(v * 100).toFixed(0)}%`, new THREE.Vector3(-SX - 0.75, zAt(v), -SY / 2), "iv", rampCss(normC(v)));
     }
     mkLabel("IV", new THREE.Vector3(-SX - 0.75, SZ + 0.55, -SY / 2), "title", TITLE);
 
@@ -329,18 +350,36 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     controls.target.copy(center);
     controls.minDistance = dist * 0.5;
     controls.maxDistance = dist * 2.2;
+    // Constrain horizontal rotation to a wedge around the framing azimuth so the
+    // axis edges (and their labels) can never rotate into each other / overlap.
+    controls.update();
+    const az0 = controls.getAzimuthalAngle();
+    controls.minAzimuthAngle = az0 - 0.6;
+    controls.maxAzimuthAngle = az0 + 0.6;
 
-    // ---- project labels to screen ------------------------------------------
+    // ---- project labels to screen, cull collisions -------------------------
+    // Project every anchor, then greedily place by priority (titles first) and
+    // HIDE any label whose screen box overlaps one already placed — so even as
+    // the user orbits, ticks never pile on top of each other or the titles.
     const v3 = new THREE.Vector3();
     const updateLabels = () => {
       const w = mount.clientWidth || width;
-      for (const { el, anchor } of labels) {
-        v3.copy(anchor).project(camera);
+      const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+      const ordered = [...labels].sort((a, b) => a.priority - b.priority);
+      for (const L of ordered) {
+        v3.copy(L.anchor).project(camera);
         const behind = v3.z > 1;
-        el.style.opacity = behind ? "0" : "1";
         const sx = (v3.x * 0.5 + 0.5) * w;
         const sy = (-v3.y * 0.5 + 0.5) * height;
-        el.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+        L.el.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+        const bw = L.el.offsetWidth || 36, bh = L.el.offsetHeight || 13;
+        const box = { x: sx - bw / 2 - 3, y: sy - bh / 2 - 2, w: bw + 6, h: bh + 4 };
+        let hit = behind;
+        if (!hit) for (const p of placed) {
+          if (box.x < p.x + p.w && box.x + box.w > p.x && box.y < p.y + p.h && box.y + box.h > p.y) { hit = true; break; }
+        }
+        L.el.style.opacity = hit ? "0" : "1";
+        if (!hit) placed.push(box);
       }
     };
 

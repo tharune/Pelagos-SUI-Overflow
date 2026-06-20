@@ -17,9 +17,8 @@ const NAV_LEFT = [
   { id: "portfolio",    label: "Portfolio",           href: "/app/portfolio" },
   { id: "distribution", label: "Distributed Options", href: "/app/distribution" },
   { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
-  { id: "basket",       label: "Baskets",             href: "/app/basket", beta: true },
   { id: "deepbook",     label: "DeepBook",            href: "/app/deepbook" },
-  { id: "docs",         label: "About",               href: "/app/docs" },
+  { id: "basket",       label: "Baskets",             href: "/app/basket", beta: true },
 ];
 
 function PelagosMark() {

@@ -25,7 +25,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
-import { useMode, BetaTag } from "../_lib/mode";
+import { useMode } from "../_lib/mode";
 import { friendlyWalletError } from "../_lib/chain";
 import { useWalletSigner } from "../_lib/wallet-bridge";
 import { ConnectModal } from "@mysten/dapp-kit";
@@ -118,7 +118,7 @@ export default function DeepBookPage() {
           <div className="db-head">
             <div>
               <div className="db-eyebrow">STRUCTURED STRATEGIES · BUILT ON DEEPBOOK</div>
-              <h1>DeepBook <BetaTag style={{ marginLeft: 4, transform: "translateY(-4px)" }} /></h1>
+              <h1>DeepBook</h1>
               <p>
                 Prebuilt range-strip strategies priced live off the DeepBook order book, plus principal-protected
                 notes that route real Sui DeFi yield into a deployed DeepBook upside strip.
@@ -316,14 +316,15 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
   const best = ui(quote.strip.realized_max_payout_raw);
   const mult = cost > 0 ? best / cost : 0;
   return (
-    <div className="db-quote-grid">
-      <div className="db-card db-payoff">
+    <div className="db-basic">
+      {/* the payoff chart is the hero — full width, front and centre */}
+      <div className="db-card db-payoff db-hero">
         <div className="db-card-head"><span className="db-cap">Payoff at expiry</span><span className="db-dim">{quote.name}</span></div>
         <PayoffDiagram quote={quote} accent={accent} />
         <p className="db-risk">{quote.risk_note}</p>
       </div>
 
-      <div className="db-side">
+      <div className="db-quote-row">
         <div className="db-card">
           <div className="db-card-head"><span className="db-cap">Quote</span><span className="db-dim">{tradeable} legs · live</span></div>
           <div className="db-metrics">
@@ -333,7 +334,7 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
             <Metric label="Max loss" value={money2(quote.max_loss_usd)} hint="premium" />
           </div>
         </div>
-        <div className="db-card">
+        <div className="db-card db-deploy-card">
           {deployBtn}
           {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
           {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
@@ -356,11 +357,39 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
   // per-day number is no longer meaningful, so show "—" with a short-tenor note.
   const thetaSaturated = Math.abs(g.theta_usd_day) >= 0.9 * Math.abs(g.position_value_usd);
   return (
-    <div className="db-adv-grid">
-      {/* left: orderbook / strip buckets */}
+    <div className="db-adv">
+      {/* top: payoff chart front-and-centre (big) + greeks / deploy beside it */}
+      <div className="db-adv-top">
+        <div className="db-card db-payoff db-hero">
+          <div className="db-card-head"><span className="db-cap">Payoff at expiry</span><span className="db-dim">{quote.payoff_shape}</span></div>
+          <PayoffDiagram quote={quote} accent={accent} />
+        </div>
+        <div className="db-side">
+          <div className="db-card">
+            <div className="db-card-head"><span className="db-cap">Greeks</span><span className="db-dim">position</span></div>
+            <div className="db-greeks">
+              <Greek sym="Δ" name="Delta" val={`${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}`} unit="BTC" />
+              <Greek sym="Γ" name="Gamma" val={g.gamma.toFixed(5)} color={g.gamma >= 0 ? C.green : C.red} />
+              <Greek sym="ν" name="Vega" val={`${g.vega_usd >= 0 ? "+" : ""}${money2(g.vega_usd)}`} unit="/pt" color={g.vega_usd >= 0 ? C.green : C.red} />
+              <Greek sym="Θ" name="Theta" val={thetaSaturated ? "—" : `${g.theta_usd_day >= 0 ? "+" : ""}${money2(g.theta_usd_day)}`} unit={thetaSaturated ? "short tenor" : "/day"} color={thetaSaturated ? undefined : (g.theta_usd_day >= 0 ? C.green : C.red)} />
+            </div>
+            <div className="db-greek-foot">
+              <RouteHandle k="Position value" v={money2(g.position_value_usd)} />
+              <RouteHandle k="Max loss" v={money2(quote.max_loss_usd)} />
+            </div>
+          </div>
+          <div className="db-card db-deploy-card">
+            {deployBtn}
+            {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
+            {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* under: the live DeepBook order book — the deployed range bands */}
       <div className="db-card db-book">
         <div className="db-card-head">
-          <span className="db-cap">Deployment · range bands on DeepBook</span>
+          <span className="db-cap">Order book · range bands on DeepBook</span>
           <span className="db-dim">{buckets.length} / {quote.strip.buckets.length} tradeable</span>
         </div>
         <div className="db-book-table">
@@ -398,32 +427,6 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
           <RouteHandle k="ATM IV" v={`${(quote.atm_iv * 100).toFixed(1)}%`} />
           <RouteHandle k="Buckets" v={String(quote.strip.n)} />
           <RouteHandle k="Source" v={quote.source} />
-        </div>
-      </div>
-
-      {/* right: greeks + payoff + deploy */}
-      <div className="db-side">
-        <div className="db-card db-payoff">
-          <div className="db-card-head"><span className="db-cap">Payoff</span><span className="db-dim">{quote.payoff_shape}</span></div>
-          <PayoffDiagram quote={quote} accent={accent} compact />
-        </div>
-        <div className="db-card">
-          <div className="db-card-head"><span className="db-cap">Greeks</span><span className="db-dim">position</span></div>
-          <div className="db-greeks">
-            <Greek sym="Δ" name="Delta" val={`${g.delta_btc >= 0 ? "+" : ""}${g.delta_btc.toFixed(4)}`} unit="BTC" />
-            <Greek sym="Γ" name="Gamma" val={g.gamma.toFixed(5)} color={g.gamma >= 0 ? C.green : C.red} />
-            <Greek sym="ν" name="Vega" val={`${g.vega_usd >= 0 ? "+" : ""}${money2(g.vega_usd)}`} unit="/pt" color={g.vega_usd >= 0 ? C.green : C.red} />
-            <Greek sym="Θ" name="Theta" val={thetaSaturated ? "—" : `${g.theta_usd_day >= 0 ? "+" : ""}${money2(g.theta_usd_day)}`} unit={thetaSaturated ? "short tenor" : "/day"} color={thetaSaturated ? undefined : (g.theta_usd_day >= 0 ? C.green : C.red)} />
-          </div>
-          <div className="db-greek-foot">
-            <RouteHandle k="Position value" v={money2(g.position_value_usd)} />
-            <RouteHandle k="Max loss" v={money2(quote.max_loss_usd)} />
-          </div>
-        </div>
-        <div className="db-card">
-          {deployBtn}
-          {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
-          {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
         </div>
       </div>
     </div>
@@ -819,7 +822,7 @@ const noStretchX = (x: number, ratio: number): string =>
 
 // payoff diagram: contract payout vs settlement (range strip)
 function PayoffDiagram({ quote, accent, compact }: { quote: DeepBookQuote; accent: string; compact?: boolean }) {
-  const W = 760, H = compact ? 168 : 220, PL = 46, PR = 14, PT = 12, PB = 24;
+  const W = 760, H = compact ? 168 : 300, PL = 46, PR = 14, PT = 12, PB = 24;
   const { ref, ratio } = useSvgXRatio(W);
   const model = useMemo(() => {
     const bands = quote.strip.buckets.filter((b) => b.tradeable && Number(b.quantity) > 0);
@@ -897,10 +900,12 @@ const DB_CSS = `
   .db-skel { border-radius: 14px; background: linear-gradient(90deg, ${C.card}, ${C.surface}, ${C.card}); background-size: 200% 100%; animation: db-sk 1.4s ${EASE} infinite; }
   @keyframes db-sk { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-  /* strategy / preset cards */
-  .db-strat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; }
-  @media (max-width: 1320px) { .db-strat-grid { grid-template-columns: repeat(3, 1fr); } }
-  @media (max-width: 1000px) { .db-strat-grid { grid-template-columns: repeat(2, 1fr); } }
+  /* strategy / preset cards — flex with centered wrap so 7 cards never leave a
+     ragged empty cell: the trailing row (3) centers under a full row of 4. */
+  .db-strat-grid { display: flex; flex-wrap: wrap; gap: 11px; justify-content: center; }
+  .db-strat-grid > .db-strat { flex: 1 1 220px; max-width: calc((100% - 33px) / 4); }
+  @media (max-width: 1180px) { .db-strat-grid > .db-strat { max-width: calc((100% - 22px) / 3); } }
+  @media (max-width: 820px) { .db-strat-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
   .db-note-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   @media (max-width: 900px) { .db-note-grid { grid-template-columns: 1fr; } }
   .db-strat { text-align: left; display: grid; gap: 7px; align-content: start; cursor: pointer; transition: all 0.15s ${EASE}; }
@@ -916,15 +921,16 @@ const DB_CSS = `
   .db-note-stats span { font-family: ${FM}; font-size: 9.5px; color: ${C.textMuted}; letter-spacing: 0.04em; }
   .db-note-stats b { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; margin-left: 4px; }
 
-  /* controls */
-  .db-controls { display: grid; grid-template-columns: 200px 200px 1fr; gap: 18px; align-items: center; }
+  /* controls — flexible columns aligned to a shared bottom baseline; the segmented
+     Expiry control stretches to fill its column instead of floating/overflowing. */
+  .db-controls { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(200px, 1fr) 1.5fr; gap: 20px; align-items: end; }
   @media (max-width: 900px) { .db-controls { grid-template-columns: 1fr; } }
   .db-amount, .db-expiry, .db-tenor { display: grid; gap: 8px; }
   .db-amount-in { display: flex; align-items: baseline; gap: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 9px 12px; }
   .db-num { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 21px; font-weight: 600; padding: 0; }
   .db-amount-in > span { font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
-  .db-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
-  .db-seg button { appearance: none; border: 0; background: transparent; border-radius: 6px; padding: 7px 14px; color: ${C.textMuted}; font-family: ${FM}; font-size: 10.5px; cursor: pointer; transition: all 0.14s ${EASE}; text-transform: capitalize; }
+  .db-seg { display: flex; width: 100%; gap: 2px; padding: 3px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
+  .db-seg button { flex: 1; appearance: none; border: 0; background: transparent; border-radius: 6px; padding: 8px 10px; color: ${C.textMuted}; font-family: ${FM}; font-size: 10.5px; cursor: pointer; transition: all 0.14s ${EASE}; text-transform: capitalize; }
   .db-seg button:hover { color: ${C.textSecondary}; }
   .db-seg button.is-on { background: ${C.card}; color: ${C.textPrimary}; }
   .db-controls-meta { display: grid; gap: 4px; align-content: center; min-width: 0; }
@@ -935,10 +941,17 @@ const DB_CSS = `
   .db-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: ${C.tealLight}; cursor: pointer; border: none; }
 
   /* quote layouts */
+  /* chart-first layouts — payoff is the full-width hero, supporting cards below/beside */
+  .db-basic, .db-adv { display: grid; gap: 14px; min-width: 0; }
+  .db-quote-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 14px; align-items: stretch; }
+  .db-adv-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.95fr); gap: 14px; align-items: start; }
+  @media (max-width: 1000px) { .db-quote-row, .db-adv-top { grid-template-columns: 1fr; } }
+  .db-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
+  .db-deploy-card { display: grid; gap: 0; align-content: start; }
+
   .db-quote-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.95fr); gap: 14px; align-items: start; }
   .db-adv-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.92fr); gap: 14px; align-items: start; }
   @media (max-width: 1100px) { .db-quote-grid, .db-adv-grid { grid-template-columns: 1fr; } }
-  .db-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
 
   .db-payoff p.db-risk { margin: 10px 0 0; font-family: ${FS}; font-size: 11px; line-height: 1.5; color: ${C.textMuted}; }
   .db-payoff-empty { display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }

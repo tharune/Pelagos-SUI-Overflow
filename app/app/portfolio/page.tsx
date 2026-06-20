@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, tc, trancheColor, fmtUsd } from "../_lib/tokens";
-import { useMode, BetaTag } from "../_lib/mode";
+import { useMode } from "../_lib/mode";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
 import { useSandbox, type BasketPosition } from "../_lib/demo-state";
@@ -353,7 +353,6 @@ export default function PortfolioPage() {
             </div>
             <h1 style={{ margin: 0, color: C.textPrimary, fontFamily: FD, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.02em", fontWeight: 600, display: "flex", alignItems: "center", gap: 12 }}>
               {view === "positions" ? "Portfolio" : view === "backtest" ? "Backtests" : "Activity"}
-              <BetaTag />
             </h1>
             <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: FS, marginTop: 8, maxWidth: 680, lineHeight: 1.55 }}>
               {view === "positions"

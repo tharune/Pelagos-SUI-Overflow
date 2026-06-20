@@ -264,6 +264,7 @@ function BasketSelectorRow({
 /* ───────────────────────── BASIC · Trend chart ───────────────────────── */
 
 const TREND_TABS = [
+  { key: "1D", label: "1D" },
   { key: "7D", label: "7D" },
   { key: "30D", label: "30D" },
   { key: "1Y", label: "1Y" },
@@ -271,11 +272,14 @@ const TREND_TABS = [
 type TrendKey = (typeof TREND_TABS)[number]["key"];
 
 function trendXLabels(key: TrendKey): [string, string, string] {
-  return key === "7D" ? ["7d ago", "3d", "now"] : key === "30D" ? ["30d ago", "15d", "now"] : ["1y ago", "6m", "now"];
+  return key === "1D" ? ["24h ago", "12h", "now"]
+    : key === "7D" ? ["7d ago", "3d", "now"]
+    : key === "30D" ? ["30d ago", "15d", "now"]
+    : ["1y ago", "6m", "now"];
 }
 
-function BasketTrendChart({ history, color }: { history: number[]; color: string }) {
-  const [range, setRange] = useState<TrendKey>("30D");
+function BasketTrendChart({ history, dayHistory, color }: { history: number[]; dayHistory: number[]; color: string }) {
+  const [range, setRange] = useState<TrendKey>("1D");
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [dim, setDim] = useState<{ w: number; h: number }>({ w: 600, h: 150 });
   useEffect(() => {
@@ -293,10 +297,14 @@ function BasketTrendChart({ history, color }: { history: number[]; color: string
   }, []);
 
   const series = useMemo(() => {
-    const raw = range === "7D" ? history.slice(-7) : range === "30D" ? history.slice(-30) : history;
+    // 1D = the 24h intraday series; the rest slice the daily history.
+    const raw = range === "1D" ? (dayHistory && dayHistory.length > 1 ? dayHistory : history.slice(-2))
+      : range === "7D" ? history.slice(-7)
+      : range === "30D" ? history.slice(-30)
+      : history;
     const clean = raw.filter((v) => Number.isFinite(v) && v > 0 && v <= 1);
     return clean.length >= 2 ? clean : raw.length >= 2 ? raw : [raw[0] ?? 0, raw[0] ?? 0];
-  }, [range, history]);
+  }, [range, history, dayHistory]);
 
   const W = dim.w, H = dim.h, PL = 44, PR = 10, PT = 10, PB = 22;
   const n = series.length;
@@ -404,7 +412,7 @@ function SelectedBasketPanel({
       </div>
 
       <div className="bk-chart">
-        <BasketTrendChart history={basket.history} color={color} />
+        <BasketTrendChart history={basket.history} dayHistory={basket.dayHistory} color={color} />
       </div>
 
       <div className="bk-metrics">
@@ -427,8 +435,8 @@ function SelectedBasketPanel({
 
       <div className="bk-constituents">
         <div className="bk-section-head">
-          <Caption>Underlying markets</Caption>
-          <strong>{basket.live ? `${basket.markets.length} legs` : "Seed data"}</strong>
+          <Caption>Top markets by weight</Caption>
+          <strong>{basket.live ? `Top ${topMarkets.length} of ${basket.markets.length}` : "Seed data"}</strong>
         </div>
         {topMarkets.length > 0 ? (
           <div className="bk-market-list">

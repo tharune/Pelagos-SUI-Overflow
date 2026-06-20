@@ -402,12 +402,23 @@ function clampAndNormalize(weights: number[], minWeight: number, maxWeight: numb
   return total > 0 ? w.map((x) => x / total) : Array(n).fill(1 / n);
 }
 
+/**
+ * Liquidity-weighted basket weights. Primary factor is traded VOLUME (sqrt-damped
+ * so a whale market can't dominate), boosted gently by live order-book DEPTH
+ * (liquidityUsd, quarter-power) so two markets with equal volume tilt toward the
+ * one that's actually deep/tradeable. Both signals are liquidity; depth degrades
+ * gracefully to neutral when a market doesn't report it. Then size-scaled clamps.
+ */
 function computeLegWeights(legs: Candidate[]): number[] {
   const n = legs.length;
   if (n === 0) return [];
   const minWeight = minLegWeightFor(n);
   const maxWeight = maxLegWeightFor(n);
-  const raw = legs.map((l) => Math.sqrt(Math.max(1, l.volumeUsd)));
+  const raw = legs.map((l) => {
+    const vol = Math.sqrt(Math.max(1, l.volumeUsd));
+    const depth = Math.pow(Math.max(1, l.liquidityUsd || 0), 0.25); // depth boost, ≥1
+    return vol * depth;
+  });
   const sum = raw.reduce((a, b) => a + b, 0);
   const start = sum > 0 ? raw.map((r) => r / sum) : Array(n).fill(1 / n);
   return clampAndNormalize(start, minWeight, maxWeight);

@@ -22,7 +22,7 @@ import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { friendlyWalletError } from "../_lib/chain";
 import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";
-import { useMode, BetaTag } from "../_lib/mode";
+import { useMode } from "../_lib/mode";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { ResultLine, Cap, StripStyles, openableBuckets, dollars } from "../_components/strip-products";
 import {
@@ -363,7 +363,7 @@ export default function VolatilityPage() {
           <div className="vd-top">
             <div>
               <div className="vd-eyebrow">BTC volatility</div>
-              <h1>Volatility <BetaTag style={{ marginLeft: 4, transform: "translateY(-4px)" }} /></h1>
+              <h1>Volatility</h1>
               <p>
                 {mode === "advanced"
                   ? "Institutional vol desk: a live SVI implied-vol surface, smile and term-structure analytics, and a multi-leg trade builder minted on Sui."

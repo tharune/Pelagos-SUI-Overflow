@@ -303,13 +303,7 @@ export default function BasketDetail() {
             </div>
 
             {liveMarkets.length > 0 && (
-              // flex:1 on the constituents card makes it absorb the
-              // remaining vertical space of the left column so its
-              // bottom border lines up exactly with the buy panel’s
-              // bottom border on the right. Without this, any mismatch
-              // between right-content height and left-content height
-              // shows up as a dead gap below the constituent table.
-              <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+              <div style={{ display: "flex" }}>
                 <ConstituentTable markets={liveMarkets} tierColor={color} />
               </div>
             )}
@@ -1952,9 +1946,9 @@ function ConstituentTable({
       ),
     [markets],
   );
-  // Show every constituent (scrollable) so the user can audit the whole basket,
-  // not just the top legs — this also fills the column instead of leaving a void.
-  const rows = sorted;
+  // Show the top legs by weight (liquidity-weighted) — the basket holds the full
+  // de-correlated roster, but the table surfaces only the most material positions.
+  const rows = sorted.slice(0, TOP_CONSTITUENTS);
   const weightCovered = rows.reduce((s, m) => s + (m.weight ?? 0), 0);
 
   return (
@@ -1964,11 +1958,6 @@ function ConstituentTable({
         border: `0.5px solid ${C.border}`,
         borderRadius: 14,
         overflow: "hidden",
-        // Flex-grow so the card's bottom border tracks the grid cell
-        // bottom. Inside, the header / column row / 5 data rows all
-        // stack at their natural heights; any spare space falls to the
-        // trailing spacer at the end of the card.
-        flex: 1,
         display: "flex",
         flexDirection: "column",
       }}
@@ -1991,7 +1980,7 @@ function ConstituentTable({
             textTransform: "uppercase",
           }}
         >
-          All {sorted.length} constituents ·{" "}
+          Top {rows.length} of {sorted.length} ·{" "}
           {(weightCovered * 100).toFixed(0)}% of basket
         </div>
         <div
@@ -2044,10 +2033,8 @@ function ConstituentTable({
           <div style={{ textAlign: "right" }}>Resolves</div>
           <div />
         </div>
-        {/* Scrollable body: fills the flex:1 card and scrolls internally so the
-            full leg list is auditable without making the whole page taller than
-            the buy panel on the right. */}
-        <div style={{ flex: 1, minHeight: 0, minWidth: 738, overflowY: "auto" }}>
+        {/* Top-5 body at natural height — no internal scroll/fill needed. */}
+        <div style={{ minWidth: 738 }}>
           {rows.map((m, i) => (
             <ConstituentRow
               key={m.id}

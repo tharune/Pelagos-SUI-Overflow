@@ -200,16 +200,40 @@ export interface NotePreset {
  * principal; they differ in how aggressively the yield is spent on convexity and
  * in the *shape* of that convexity (pinned vs ATM vs OTM tail).
  */
+// Institutional protected-note lineup — every preset is 100% principal-protected
+// (floor_pct 1.0); they differ by the upside strip's shape, how much of the yield
+// is spent on it (convexity_pct) and tenor, spanning all four strip geometries
+// (butterfly pin · condor plateau · ATM straddle · OTM strangle).
 const NOTE_PRESETS: NotePreset[] = [
   {
     id: 'capital-guard',
     name: 'Capital Guard',
     tail_risk: 'low',
     floor_pct: 1.0,
-    convexity_pct: 0.6, // retain 40% of yield as a floor buffer
+    convexity_pct: 0.55, // retain ~45% of the yield as an extra floor buffer
     strategy: 'butterfly', // short-gamma pin: pays if BTC stays, cheap convexity
     default_tenor_days: 90,
-    blurb: 'Full principal floor, a yield buffer retained, modest pinned convexity. Lowest tail-risk.',
+    blurb: 'Full principal floor with the largest yield buffer retained and a tight pinned-convexity strip. The lowest tail-risk note.',
+  },
+  {
+    id: 'range-income',
+    name: 'Range Income',
+    tail_risk: 'low',
+    floor_pct: 1.0,
+    convexity_pct: 0.7,
+    strategy: 'condor', // wide plateau: pays across a range around the forward
+    default_tenor_days: 120,
+    blurb: 'Full principal floor, a wide condor plateau that pays across a range, with part of the yield retained.',
+  },
+  {
+    id: 'steady-straddle',
+    name: 'Steady Straddle',
+    tail_risk: 'medium',
+    floor_pct: 1.0,
+    convexity_pct: 0.8,
+    strategy: 'straddle',
+    default_tenor_days: 90,
+    blurb: 'Full principal floor on a short tenor, most of the yield into a near-ATM straddle for faster two-sided convexity.',
   },
   {
     id: 'balanced-convexity',
@@ -219,7 +243,27 @@ const NOTE_PRESETS: NotePreset[] = [
     convexity_pct: 0.9,
     strategy: 'straddle', // long-gamma ATM: gains as BTC moves either way
     default_tenor_days: 180,
-    blurb: 'Full principal floor, most of the yield into an ATM straddle for two-sided upside.',
+    blurb: 'Full principal floor, most of the yield into an ATM straddle for balanced two-sided upside.',
+  },
+  {
+    id: 'two-way-breakout',
+    name: 'Two-Way Breakout',
+    tail_risk: 'medium',
+    floor_pct: 1.0,
+    convexity_pct: 0.85,
+    strategy: 'strangle', // OTM wings, cheaper than a straddle
+    default_tenor_days: 120,
+    blurb: 'Full principal floor, the yield into OTM strangle wings — cheaper carry that pays on a decisive move either way.',
+  },
+  {
+    id: 'full-gamma',
+    name: 'Full Gamma',
+    tail_risk: 'high',
+    floor_pct: 1.0,
+    convexity_pct: 1.0,
+    strategy: 'straddle', // entire yield into an ATM straddle
+    default_tenor_days: 270,
+    blurb: 'Full principal floor, the entire yield into an ATM straddle for maximal two-sided gamma.',
   },
   {
     id: 'long-tail',
@@ -229,7 +273,7 @@ const NOTE_PRESETS: NotePreset[] = [
     convexity_pct: 1.0, // spend the entire yield on the tail
     strategy: 'strangle', // long-gamma OTM wings: cheap, pays big on a large move
     default_tenor_days: 365,
-    blurb: 'Full principal floor, all yield into OTM strangle wings. Highest convexity, biggest best-case.',
+    blurb: 'Full principal floor, all yield into far OTM strangle wings. Highest convexity and the biggest best-case.',
   },
 ];
 

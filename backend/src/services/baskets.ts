@@ -71,10 +71,11 @@ const WINDOW_CODE: Record<WindowKey, string> = {
 };
 
 // HIGH first — it's the sparsest pool, so it gets first pick on dedupe.
-// Medium (`month`) was dropped — the ladder is just SHORT and LONG now.
+// Full SHORT / MED / LONG ladder for both tiers (6 baskets): the `month`
+// window fills the gap between the week and long horizons.
 const TARGET_COMBOS: Array<[Tier, WindowKey]> = [
-  [90, 'week'], [90, 'long'],
-  [50, 'week'], [50, 'long'],
+  [90, 'week'], [90, 'month'], [90, 'long'],
+  [50, 'week'], [50, 'month'], [50, 'long'],
 ];
 
 const MIN_BASKET_LEGS = 4;

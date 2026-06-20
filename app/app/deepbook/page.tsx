@@ -462,7 +462,6 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
 // ═══════════════════════════════════════════════════════════════
 function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSigner>; mode: "basic" | "advanced" }) {
   const [presets, setPresets] = useState<NotePreset[] | null>(null);
-  const [apySources, setApySources] = useState<string[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [principal, setPrincipal] = useState("10000");
@@ -480,7 +479,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
     fetchNotePresets()
       .then((r) => {
         if (!alive) return;
-        setPresets(r.presets); setApySources(r.apy_sources);
+        setPresets(r.presets);
         if (r.presets[0]) { setSelected(r.presets[0].id); setTenor(r.presets[0].default_tenor_days); }
       })
       .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : String(e)); });
@@ -507,7 +506,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
 
   if (loadErr && !presets) return <div className="db-banner err">Couldn’t load note presets — {loadErr}</div>;
   if (!presets) {
-    return <div className="db-note-grid">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="db-card db-skel" style={{ height: 150 }} />)}</div>;
+    return <div className="db-note-grid">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="db-card db-skel" style={{ height: 150 }} />)}</div>;
   }
 
   return (
@@ -573,7 +572,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
 
       {mode === "basic"
         ? <NoteBasic quote={quote} pricing={pricing} principal={principalNum} wallet={wallet} strategy={sel?.strategy} />
-        : <NoteAdvanced quote={quote} pricing={pricing} apySources={apySources} wallet={wallet} strategy={sel?.strategy} />}
+        : <NoteAdvanced quote={quote} pricing={pricing} wallet={wallet} strategy={sel?.strategy} />}
     </div>
   );
 }
@@ -630,7 +629,7 @@ function NoteBasic({ quote, pricing, principal, wallet, strategy }: { quote: Not
 }
 
 // ── ADVANCED: full yield-sleeve breakdown + deployed strip detail
-function NoteAdvanced({ quote, pricing, apySources, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; apySources: string[]; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
+function NoteAdvanced({ quote, pricing, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const sleeveTotal = quote.yield_sleeve.reduce((a, p) => a + p.allocation_usd, 0) || 1;
   return (
@@ -667,13 +666,7 @@ function NoteAdvanced({ quote, pricing, apySources, wallet, strategy }: { quote:
           <DeployStat label="Strategy" value={quote.upside_strategy.name} />
           <DeployStat label="Upside budget" value={money2(quote.upside_budget_usd)} color={C.tealLight} />
           <DeployStat label="Expected best" value={money2(quote.upside_strategy.expected_best_usd)} color={C.green} />
-          <DeployStat label="Expected worst" value={money2(quote.upside_strategy.expected_worst_usd)} color={C.textMuted} />
-        </div>
-        <div className="db-srcs">
-          <span className="db-cap" style={{ fontSize: 9 }}>APY universe</span>
-          <div className="db-src-chips">
-            {apySources.map((s) => <span key={s} className="db-chip">{s.replace("defillama:", "")}</span>)}
-          </div>
+          <DeployStat label="Strip worst" value={money2(quote.upside_strategy.expected_worst_usd)} color={C.textMuted} hint="floor protects principal" />
         </div>
       </div>
 
@@ -800,10 +793,10 @@ function RouteHandle({ k, v }: { k: string; v: string }) {
     </div>
   );
 }
-function DeployStat({ label, value, color }: { label: string; value: string; color?: string }) {
+function DeployStat({ label, value, color, hint }: { label: string; value: string; color?: string; hint?: string }) {
   return (
     <div className="db-dstat">
-      <span>{label}</span>
+      <span>{label}{hint && <i> · {hint}</i>}</span>
       <strong style={color ? { color } : undefined}>{value}</strong>
     </div>
   );
@@ -932,8 +925,8 @@ const DB_CSS = `
   .db-strat-grid > .db-strat { flex: 1 1 220px; max-width: calc((100% - 33px) / 4); }
   @media (max-width: 1180px) { .db-strat-grid > .db-strat { max-width: calc((100% - 22px) / 3); } }
   @media (max-width: 820px) { .db-strat-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
-  .db-note-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  @media (max-width: 900px) { .db-note-grid { grid-template-columns: 1fr; } }
+  .db-note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 12px; }
+  @media (max-width: 560px) { .db-note-grid { grid-template-columns: 1fr; } }
   .db-strat { text-align: left; display: grid; gap: 7px; align-content: start; cursor: pointer; transition: all 0.15s ${EASE}; }
   .db-strat:hover { border-color: ${C.borderHover}; transform: translateY(-1px); }
   .db-strat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1068,11 +1061,9 @@ const DB_CSS = `
   .db-deployed { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
   .db-dstat { background: ${C.card}; padding: 10px 13px; display: grid; gap: 4px; }
   .db-dstat span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; }
+  .db-dstat span i { font-style: normal; opacity: 0.72; }
   .db-dstat strong { font-family: ${FD}; font-size: 14px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }
 
-  .db-srcs { margin-top: 13px; display: grid; gap: 8px; }
-  .db-src-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .db-chip { font-family: ${FM}; font-size: 9.5px; color: ${C.textSecondary}; padding: 4px 8px; border-radius: 6px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
 
   .db-alloc-bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; }
   .db-alloc-bar span { display: block; height: 100%; }

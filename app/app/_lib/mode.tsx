@@ -28,7 +28,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { C, FD, FM, EASE } from "./tokens";
+import { C, FM, EASE } from "./tokens";
 
 export type Mode = "basic" | "advanced";
 

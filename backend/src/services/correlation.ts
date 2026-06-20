@@ -77,7 +77,7 @@ function readJson<T>(filePath: string): T | null {
 
 let _artifacts: ModelArtifacts | null = null;
 
-export function loadArtifacts(): ModelArtifacts {
+function loadArtifacts(): ModelArtifacts {
   if (_artifacts) return _artifacts;
 
   const dir = locateDir();

@@ -198,7 +198,7 @@ function digitalGreeks(
  * the oracle's on-chain grid), then price every CALL [K,far] and PUT [floor,K]
  * leg at 1 contract in ONE batched on-chain devInspect.
  */
-export async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
+async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
   const now = Date.now();
   const want = underlying.toUpperCase();
 

@@ -760,16 +760,3 @@ async function computeLiveBaskets(): Promise<LiveBasketsResult> {
   _cache = { at: result.at, result };
   return result;
 }
-
-/**
- * Compact NAV map keyed by basket id — used by the DB-bundle overlay and the
- * cron warmer. Derived from the same CLOB-priced build so every surface agrees.
- */
-export async function getBasketNAVMap(): Promise<Map<string, { id: string; nav: number; leg_count: number; daily_change: number }>> {
-  const { baskets } = await getLiveBaskets();
-  const map = new Map<string, { id: string; nav: number; leg_count: number; daily_change: number }>();
-  for (const b of baskets) {
-    map.set(b.id, { id: b.id, nav: b.nav, leg_count: b.totalLegs, daily_change: Number((b.change / 100).toFixed(4)) });
-  }
-  return map;
-}

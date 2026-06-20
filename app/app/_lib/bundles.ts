@@ -120,21 +120,10 @@ function genBundleHistories(nav: number, id: string): {
   };
 }
 
-function genFlatHistory(days: number, seedId: string): number[] {
-  const rng = seededRng(seedId);
-  const pts: number[] = [];
-  for (let i = 0; i <= days; i++) {
-    pts.push(parseFloat((1 + (rng() - 0.5) * 0.0004).toFixed(4)));
-  }
-  return pts;
-}
-
 function dateLabel(daysAhead: number): string {
   const d = new Date(Date.now() + daysAhead * 86400_000);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
-
-export const USDC_HISTORY = genFlatHistory(29, "usdc-flat");
 
 // Six fallbacks — one per (tier, window) combo, matching the live grid
 // ids emitted by `buildLiveBaskets` in ./live-baskets.ts. Histories cover

@@ -5,7 +5,6 @@ import {
   createPosition,
   createTransaction,
   getPositionsByWalletAndBundle,
-  getBundleById,
 } from '../db/queries';
 import { getLiveNAV, getIssuePriceForBundle } from '../services/pricing';
 import { config } from '../config';

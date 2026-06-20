@@ -1,7 +1,6 @@
 import { createBundle, createLeg, getBundleByName } from '../db/queries';
 import { getMarketProbability } from '../services/polymarket';
 import { calculateIssuePrice } from '../services/nav';
-import { supabase } from '../db/supabase';
 import { Leg } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';

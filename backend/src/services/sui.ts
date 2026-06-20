@@ -91,7 +91,7 @@ function digest(json: SuiJson): string | null {
   return typeof raw === 'string' ? raw : null;
 }
 
-export function suiConfig() {
+function suiConfig() {
   return {
     network: SUI_NETWORK,
     rpc_url: process.env.SUI_RPC_URL ?? 'https://fullnode.testnet.sui.io:443',

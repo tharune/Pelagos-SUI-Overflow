@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getLiveNAV } from '../services/pricing';
 import { getAllBundles, getPositionsByWallet, getLegsByBundleId } from '../db/queries';
-import { calculateNAV } from '../services/nav';
 
 const router = Router();
 

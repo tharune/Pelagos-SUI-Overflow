@@ -14,7 +14,7 @@ import * as structured from '../services/predict/structured';
 import { impliedSigmaAndIv } from '../services/predict/products';
 import { buildVolSurface } from '../services/predict/vol';
 import { findActiveOracle, predictServer } from '../services/predict/server';
-import { volWeights, computeVolGreeks, strategyProfile, customVolProfile, type VolSide, type VolStrategy } from '../services/predict/volatility';
+import { computeVolGreeks, strategyProfile, customVolProfile, type VolSide, type VolStrategy } from '../services/predict/volatility';
 import { fetchBtcMark, fetchBtcMarkCached, fetchRealizedVol, quoteHedge } from '../services/bluefin';
 
 const STRATEGIES: VolStrategy[] = ['straddle', 'strangle', 'butterfly', 'condor'];
@@ -202,7 +202,7 @@ router.post('/quote', async (req: Request, res: Response) => {
     // Headline IV = the TRUE SVI ATM IV (matches /surface); only fall back to the
     // back-implied value (inflated when the σ floor binds) if SVI is unavailable.
     const atmIv = sviAtmIv ?? sigmaUsd / (forwardUsd * Math.sqrt(Math.max(tYears, 1e-9)));
-    const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, atmIv, tYears);
+    const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, tYears);
     const mark = await fetchBtcMarkCached(forwardUsd); // cached (3s) — was an uncached multi-venue fetch per quote
     const hedge = quoteHedge(greeks.delta_btc, mark);
     // The vol leg is a bought strip — max risk is the premium paid, full stop.

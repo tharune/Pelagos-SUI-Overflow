@@ -607,13 +607,8 @@ const BASKET_CSS = `
   .bk-eyebrow { display: block; color: ${C.textMuted}; font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 9px; }
   .bk-hero h1 { margin: 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 30px; line-height: 1.05; letter-spacing: -0.02em; font-weight: 600; display: flex; align-items: center; gap: 10px; }
   .bk-hero p { max-width: 620px; margin: 9px 0 0; color: ${C.textSecondary}; font-family: ${FS}; font-size: 13px; line-height: 1.55; }
-  .bk-hero-controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
   .bk-caption { display: block; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
 
-  .bk-segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
-  .bk-segmented button { appearance: none; border: 0; background: transparent; border-radius: 999px; min-width: 48px; height: 28px; padding: 0 12px; color: ${C.textSecondary}; font-family: ${FD}; font-size: 12px; font-weight: 520; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}; }
-  .bk-segmented button:hover { color: ${C.textPrimary}; }
-  .bk-segmented button.is-active { background: ${C.card}; color: ${C.textPrimary}; }
 
   .bk-split { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 16px; align-items: start; min-width: 0; }
   .bk-col-left, .bk-col-right { min-width: 0; }
@@ -663,8 +658,8 @@ const BASKET_CSS = `
   .bk-constituents { display: grid; gap: 10px; }
   .bk-section-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
   .bk-section-head strong { color: ${C.textSecondary}; font-family: ${FM}; font-size: 10px; font-weight: 520; white-space: nowrap; }
-  .bk-market-list, .bk-leg-list { border: 0.5px solid ${C.border}; border-radius: 9px; overflow: hidden; }
-  .bk-leg-list:empty, .bk-slice-list:empty { display: none; }
+  .bk-market-list { border: 0.5px solid ${C.border}; border-radius: 9px; overflow: hidden; }
+  .bk-slice-list:empty { display: none; }
   .bk-market-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 0.5px solid ${C.border}; background: ${C.surface}; }
   .bk-market-row:last-child { border-bottom: 0; }
   .bk-market-row span { min-width: 0; display: grid; gap: 3px; }
@@ -712,56 +707,13 @@ const BASKET_CSS = `
   .bk-slice-row b { font-family: ${FM}; font-size: 10px; font-weight: 580; text-align: right; font-variant-numeric: tabular-nums; }
   .bk-slice-row b em { margin-left: 3px; color: ${C.textMuted}; font-size: 9px; }
 
-  /* Builder */
-  .bk-builder { display: grid; gap: 14px; }
-  .bk-build-form { padding: 16px; display: grid; gap: 16px; }
-  .bk-field { display: grid; gap: 9px; }
-  .bk-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .bk-theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .bk-theme-chip { appearance: none; text-align: left; display: grid; gap: 4px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 11px 12px; cursor: pointer; transition: background 0.14s ${EASE}, border-color 0.14s ${EASE}; min-width: 0; }
-  .bk-theme-chip:hover { background: ${C.cardHover}; border-color: ${C.borderHover}; }
-  .bk-theme-chip.is-active { border-color: ${C.tealLight}; background: ${C.tealLight}12; box-shadow: inset 0 0 0 0.5px ${C.tealLight}; }
-  .bk-theme-chip strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 13px; font-weight: 600; }
-  .bk-theme-chip em { color: ${C.textMuted}; font-family: ${FS}; font-size: 10.5px; font-style: normal; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .bk-input { width: 100%; height: 40px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.textPrimary}; font-family: ${FM}; font-size: 13px; padding: 0 13px; outline: none; transition: border-color 0.14s ${EASE}; }
-  .bk-input:focus { border-color: ${C.tealLight}; }
-  .bk-input::placeholder { color: ${C.textMuted}; }
-  .bk-hint { margin: 0; color: ${C.textMuted}; font-family: ${FS}; font-size: 11px; line-height: 1.45; }
-
-  .bk-warning { border: 0.5px solid ${C.amber}44; background: ${C.amber}10; color: ${C.amber}; border-radius: 10px; padding: 12px 14px; font-family: ${FM}; font-size: 11px; letter-spacing: 0.02em; line-height: 1.5; }
-
-  .bk-build-progress { padding: 18px; display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: center; }
-  .bk-build-progress strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 14px; font-weight: 600; display: block; }
-  .bk-build-progress p { margin: 6px 0 0; color: ${C.textMuted}; font-family: ${FS}; font-size: 12px; line-height: 1.5; }
-  .bk-spinner { width: 26px; height: 26px; border-radius: 999px; border: 2px solid ${C.border}; border-top-color: ${C.tealLight}; animation: bk-spin 0.8s linear infinite; }
-  @keyframes bk-spin { to { transform: rotate(360deg); } }
-
-  .bk-result-stats { padding: 14px 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; }
-  .bk-stat { display: grid; gap: 6px; min-width: 0; }
-  .bk-stat strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 620; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bk-diversification-note { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 9px; padding: 11px 13px; color: ${C.textSecondary}; font-family: ${FM}; font-size: 10.5px; line-height: 1.5; }
-
-  .bk-legs, .bk-quotes, .bk-mm { padding: 14px 16px; display: grid; gap: 11px; }
-  .bk-leg-row { display: grid; grid-template-columns: minmax(0, 1fr) 56px 52px; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 0.5px solid ${C.border}; background: ${C.surface}; }
-  .bk-leg-row:last-child { border-bottom: 0; }
-  .bk-leg-q { min-width: 0; display: grid; gap: 4px; }
-  .bk-leg-q strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 12px; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bk-leg-q em { display: inline-flex; align-items: center; gap: 7px; color: ${C.textMuted}; font-family: ${FM}; font-size: 9.5px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bk-side { font-family: ${FM}; font-size: 8.5px; font-weight: 600; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 4px; font-style: normal; flex: 0 0 auto; }
-  .bk-side.yes { color: ${C.green}; background: ${C.green}1a; }
-  .bk-side.no { color: ${C.coral}; background: ${C.coral}1a; }
-  .bk-leg-row b { color: ${C.textSecondary}; font-family: ${FM}; font-size: 11px; font-style: normal; font-weight: 620; text-align: right; font-variant-numeric: tabular-nums; }
-  .bk-leg-w { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
-  .bk-mm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-
   @media (max-width: 1180px) {
     .bk-hero { grid-template-columns: 1fr; }
-    .bk-hero-controls { justify-content: flex-start; }
     .bk-split { grid-template-columns: 1fr; }
     .bk-risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 720px) {
-    .bk-theme-grid, .bk-field-row, .bk-metrics, .bk-mm-grid, .bk-result-stats, .bk-risk-grid { grid-template-columns: 1fr; }
+    .bk-metrics, .bk-risk-grid { grid-template-columns: 1fr; }
     .bk-selector-row { grid-template-columns: minmax(0, 1fr) 60px; }
     .bk-selector-row > span:nth-child(3), .bk-selector-row > span:nth-child(4) { display: none; }
     .bk-detail-head { flex-direction: column; }

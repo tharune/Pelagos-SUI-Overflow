@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, trancheColor, tc } from "../_lib/tokens";
@@ -180,14 +180,13 @@ const RISK_CSS = `
   .risk-tier-head span { color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
   .risk-stack { display: grid; gap: 26px; }
   .risk-tier { border-top: 0.5px solid ${C.border}; padding-top: 22px; }
-  .risk-tier--lead, .risk-tier:first-child { border-top: 0; padding-top: 4px; }
+  .risk-tier:first-child { border-top: 0; padding-top: 4px; }
   .risk-tier-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 14px; }
   .risk-tier-head p { margin: 5px 0 0; max-width: 640px; color: ${C.textMuted}; font-family: ${FS}; font-size: 12px; line-height: 1.45; }
   .risk-tier-head strong { color: ${C.textSecondary}; font-family: ${FM}; font-size: 10px; font-weight: 520; white-space: nowrap; }
   .risk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; grid-auto-rows: 1fr; }
   .risk-card { width: 100%; appearance: none; display: flex; flex-direction: column; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; padding: 13px; text-align: left; cursor: pointer; transition: background 0.14s ${EASE}, border-color 0.14s ${EASE}, transform 0.14s ${EASE}; }
   .risk-card:hover { background: ${C.card}; border-color: ${C.borderHover}; transform: translateY(-1px); }
-  .risk-card--hybrid { border-color: ${C.violet}55; background: ${C.panelGradient}; }
   .risk-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .risk-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .risk-card-title i { width: 6px; height: 6px; border-radius: 999px; flex: 0 0 auto; }

@@ -2,7 +2,6 @@ import { PolymarketMarket, PolymarketEvent } from '../types';
 import { proxiedFetch } from './proxy';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
-const CLOB_API = 'https://clob.polymarket.com';
 
 interface GammaMarketResponse {
   id: string;
@@ -290,15 +289,6 @@ export async function fetchEvents(params: {
   return data.map(toPolymarketEvent);
 }
 
-export async function fetchEventById(eventId: string): Promise<PolymarketEvent | null> {
-  const url = `${GAMMA_API}/events/${eventId}`;
-  const res = await fetchWithRetry(url);
-  if (!res) return null;
-
-  const data = (await res.json()) as GammaEventResponse;
-  return toPolymarketEvent(data);
-}
-
 export async function getMarketProbability(conditionId: string): Promise<number | null> {
   const market = await fetchMarketByConditionId(conditionId);
   if (!market) return null;
@@ -307,23 +297,6 @@ export async function getMarketProbability(conditionId: string): Promise<number 
   if (prices.length === 0) return null;
 
   return prices[0]; // first outcome = YES
-}
-
-export async function getBatchProbabilities(
-  conditionIds: string[]
-): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
-  if (conditionIds.length === 0) return result;
-
-  const promises = conditionIds.map(async (id) => {
-    const prob = await getMarketProbability(id);
-    if (prob !== null) {
-      result.set(id, prob);
-    }
-  });
-
-  await Promise.all(promises);
-  return result;
 }
 
 export async function searchMarkets(
@@ -501,7 +474,7 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
 
     // Check both YES and NO sides; pick the first basket that accepts it.
     const sides: [number, number][] = [[yesProb, dailyAbs], [1 - yesProb, -dailyAbs]];
-    for (const [prob, dayChg] of sides) {
+    for (const [prob] of sides) {
       const tier = tierFor(prob);
       if (!tier) continue;
 

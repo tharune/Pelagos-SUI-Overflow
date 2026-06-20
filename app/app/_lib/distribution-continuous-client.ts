@@ -5,7 +5,6 @@
  * collateral on-chain via the user's wallet (prepare -> sign -> confirm).
  */
 import { BACKEND_URL } from "./tokens";
-import type { WalletSigner } from "./wallet-bridge";
 
 export interface ContinuousMarket {
   id: string;
@@ -113,10 +112,6 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
   return payload as T;
 }
 
-export function fetchContinuousMarkets(): Promise<{ markets: ContinuousMarket[] }> {
-  return jsonGet("/api/distribution/continuous/markets");
-}
-
 /** Seed simulated AMM liquidity into a market's pool. */
 export function seedLiquidity(
   marketId: string,
@@ -126,14 +121,6 @@ export function seedLiquidity(
     market_id: marketId,
     amount_usdc: amountUsdc,
   });
-}
-
-/** Seed a random 5–6 figure position into EVERY market pool at once. */
-export function seedAllPools(): Promise<{
-  count: number;
-  seeded: Array<{ market_id: string; amount_usdc: number; pool_liquidity_usdc: number }>;
-}> {
-  return jsonPost("/api/distribution/continuous/seed-all", {});
 }
 
 export function quoteContinuous(args: {
@@ -152,45 +139,6 @@ export function quoteContinuous(args: {
 
 export function fetchContinuousPositions(owner: string): Promise<{ positions: ContinuousPosition[] }> {
   return jsonGet(`/api/distribution/continuous/positions/${encodeURIComponent(owner)}`);
-}
-
-/**
- * Open a continuous distribution position: the backend builds the collateral
- * deposit PTB, the wallet signs + submits it, then the backend verifies.
- */
-export async function openContinuousPosition(args: {
-  wallet: WalletSigner;
-  marketId: string;
-  targetMu: number;
-  targetSigma: number;
-  collateralUsdc: number;
-}): Promise<{ digest: string; position: ContinuousPosition }> {
-  const owner = args.wallet.address;
-  if (!args.wallet.connected || !owner) throw new Error("Connect a Sui wallet to open a position.");
-
-  const prep = await jsonPost<{ tx_bytes?: string }>("/api/distribution/continuous/open/prepare", {
-    wallet_address: owner,
-    market_id: args.marketId,
-    target_mu: args.targetMu,
-    target_sigma: args.targetSigma,
-    collateral_usdc: args.collateralUsdc,
-  });
-  if (!prep.tx_bytes) throw new Error("Backend did not return a signable transaction.");
-
-  const digest = await args.wallet.signAndExecute(prep.tx_bytes);
-
-  const conf = await jsonPost<{ confirmed: boolean; position: ContinuousPosition }>(
-    "/api/distribution/continuous/open/confirm",
-    {
-      wallet_address: owner,
-      market_id: args.marketId,
-      target_mu: args.targetMu,
-      target_sigma: args.targetSigma,
-      collateral_usdc: args.collateralUsdc,
-      signature: digest,
-    },
-  );
-  return { digest, position: conf.position };
 }
 
 /** Settle a position: the protocol pays the realized net on-chain. */

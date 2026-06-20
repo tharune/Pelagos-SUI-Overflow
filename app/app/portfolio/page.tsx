@@ -72,7 +72,6 @@ export default function PortfolioPage() {
     Object.keys(suiTokensByUuid).length > 0 ? suiTokensByUuid : pbuTokensByUuid;
   const liveUsdc = walletReady ? usdc.uiAmount : 0;
 
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [renderNow, setRenderNow] = useState<number>(() => Date.now());
   const [view, setView] = useState<View>("positions");
   const [distPositions, setDistPositions] = useState<ContinuousPosition[]>([]);

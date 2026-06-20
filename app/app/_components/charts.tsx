@@ -3,7 +3,6 @@
  * Shared chart + card primitives — orbital dark-space theme.
  */
 
-import React from "react";
 import { C, FM, FS, FD } from "../_lib/tokens";
 
 export function MetricTile({

@@ -132,14 +132,6 @@ async function readJson<T>(res: Response): Promise<T> {
   return payload as T;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return readJson<T>(res);
-}
 
 export async function fetchDistributionCandidates(args: {
   limit?: number;
@@ -158,22 +150,3 @@ export async function fetchDistributionCandidates(args: {
   return readJson(res);
 }
 
-export async function quoteDistribution(args: {
-  candidateId: string;
-  weights: number[];
-  collateralUsdc: number;
-}): Promise<DistributionQuote> {
-  const body = await postJson<{ quote: DistributionQuote }>("/api/distribution/quote", {
-    candidate_id: args.candidateId,
-    weights: args.weights,
-    collateral_usdc: args.collateralUsdc,
-  });
-  return body.quote;
-}
-
-export async function buildLaunchPlan(candidateId: string): Promise<DistributionLaunchPlan> {
-  const body = await postJson<{ plan: DistributionLaunchPlan }>("/api/distribution/launch-plan", {
-    candidate_id: candidateId,
-  });
-  return body.plan;
-}

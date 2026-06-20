@@ -207,7 +207,6 @@ export const ppnQuote = (b: { asset?: string; oracle_id?: string; budget_usd: nu
   post<PpnQuote>("/api/predict/ppn/quote", b);
 export const trancheQuote = (b: { asset?: string; oracle_id?: string; budget_usd: number; sigma_usd?: number; n?: number; sender?: string }) =>
   post<{ tranches: TrancheProfile[]; oracle_id: string; expiry: string; forward_usd: number }>("/api/predict/tranche/quote", b);
-export const listBaskets = () => get<BasketRecipe[]>("/api/predict/baskets");
 export const fetchBacktest = () => get<BacktestReport>("/api/predict/backtest");
 export const fetchVolSurface = (underlying = "BTC") =>
   get<VolSurface>(`/api/predict/vol-surface?underlying=${underlying}`);
@@ -215,14 +214,6 @@ export const fetchDensity = (oracleId?: string) =>
   get<ImpliedDensity>(`/api/predict/density${oracleId ? `?oracle_id=${oracleId}` : ""}`);
 export const fetchMarkets = (underlying = "BTC") =>
   get<MarketsDepth>(`/api/predict/markets?underlying=${underlying}`);
-
-/** Live forward tick (USD) — the soonest active oracle's latest forward/spot. */
-export interface ForwardTick { oracle_id: string; expiry: number; forward: number; spot: number; }
-export const fetchForward = (underlying = "BTC", signal?: AbortSignal) =>
-  get<ForwardTick>(`/api/predict/forward?underlying=${underlying}`, signal);
-
-export const basketQuote = (b: { basket_id: string; asset?: string; budget_usd: number; sender?: string }) =>
-  post<{ basket: BasketRecipe; strip: StripQuote; oracle_id: string; expiry: string; forward_usd: number }>("/api/predict/basket/quote", b);
 
 // ---- account ----
 export const fetchManagers = (owner: string) => get<Array<{ manager_id: string }>>(`/api/predict/managers?owner=${owner}`);
@@ -239,7 +230,6 @@ export const prepareRedeemStrip = (b: {
   owner: string; manager_id: string; oracle_id: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }>;
 }) => post<PreparedTx & { bucket_count: number }>("/api/predict/strip/redeem/prepare", b);
 export const prepareLpSupply = (b: { owner: string; amount_ui: number }) => post<PreparedTx>("/api/predict/lp/supply/prepare", b);
-export const prepareLpWithdraw = (b: { owner: string; plp_coin_id?: string; shares_raw?: string }) => post<PreparedTx>("/api/predict/lp/withdraw/prepare", b);
 export const preparePpnOpen = (b: {
   owner: string; manager_id: string; oracle_id: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }>; floor_amount_raw: string; upside_amount_raw: string;
 }) => post<PreparedTx & { floor_raw: string; upside_raw: string; bucket_count: number }>("/api/predict/ppn/open/prepare", b);
@@ -255,13 +245,6 @@ export interface TermBasketQuote {
   legs: TermBasketLeg[];
   total_cost_raw: string; total_best_raw: string; round_trip_spread_raw: string; forward_usd: number; dusdc_decimals: number;
 }
-export const listTermBaskets = () => get<Array<{ id: string; name: string; description: string }>>("/api/predict/termbaskets");
-export const termBasketQuote = (b: { asset?: string; basket_id: string; budget_usd: number; sender?: string }) =>
-  post<TermBasketQuote>("/api/predict/termbasket/quote", b);
-export const prepareTermBasketOpen = (b: {
-  owner: string; manager_id: string; legs: Array<{ oracleId: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>; deposit_amount_raw?: string;
-}) => post<PreparedTx & { bucket_count: number; leg_count: number }>("/api/predict/termbasket/open/prepare", b);
-
 // ---- volatility desk ----
 export interface VolGreeks { delta_btc: number; gamma: number; vega_usd: number; theta_usd_day: number; position_value_usd: number; }
 export interface BtcMark { mark: number; funding_rate: number; source: string; funding_source: string; symbol: string; venue: string; chain: "sui" | "cex" | "forward"; conf?: number; }
@@ -282,8 +265,6 @@ export const volQuote = (b: {
 }) => post<VolQuote>("/api/vol/quote", b);
 /** Fast live BTC mark for the real-time ticker/hedge (backend-cached ~1.5s). */
 export const fetchVolMark = (signal?: AbortSignal) => get<{ mark: BtcMark; ts: number }>("/api/vol/mark", signal);
-export const volHedge = (deltaBtc: number, oracleId?: string) =>
-  get<{ mark: BtcMark; hedge: HedgeQuote }>(`/api/vol/hedge?delta_btc=${deltaBtc}${oracleId ? `&oracle_id=${oracleId}` : ""}`);
 export const prepareVolOpen = (b: {
   owner: string; manager_id: string; oracle_id: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }>; deposit_amount_raw?: string;
 }) => post<PreparedTx & { bucket_count: number }>("/api/vol/open/prepare", b);

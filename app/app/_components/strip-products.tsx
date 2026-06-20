@@ -16,26 +16,21 @@
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { C, FD, FM, FS, EASE, trancheColor } from "../_lib/tokens";
+import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { useWalletSigner, useUsdcBalance, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DusdcFaucetButton } from "./DusdcFaucet";
 import {
   ppnQuote,
-  trancheQuote,
   stripPreview,
   ensureManager,
-  prepareOpenStrip,
   preparePpnOpen,
-  prepareLpSupply,
   confirmPredict,
   usd,
-  fmt,
   type StripQuote,
   type StripBucket,
   type PpnQuote,
-  type TrancheProfile,
 } from "../_lib/predict-strip-client";
 
 export type Wallet = ReturnType<typeof useWalletSigner>;
@@ -344,153 +339,6 @@ export function OpenButton({
 }
 
 // ===========================================================================
-// TRANCHES — the same strip at 1.8σ / 1.0σ / 0.5σ: senior widest (defensive,
-// steady multiple), junior tightest (lower hit-rate, biggest multiple).
-// ===========================================================================
-
-export function TranchesPanel({ wallet, oracleId, baseSigmaUsd }: { wallet: Wallet; oracleId?: string; baseSigmaUsd?: number }) {
-  const [budget, setBudget] = useState("100");
-  const [tranches, setTranches] = useState<TrancheProfile[]>([]);
-  const [forward, setForward] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [openBusy, setOpenBusy] = useState<string | null>(null);
-  const [stage, setStage] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, string>>({});
-  const [openErr, setOpenErr] = useState<string | null>(null);
-
-  const budgetNum = Number(budget);
-
-  const timer = useRef<number | null>(null);
-  useEffect(() => {
-    if (!Number.isFinite(budgetNum) || budgetNum <= 0) return;
-    if (timer.current) window.clearTimeout(timer.current);
-    setLoading(true);
-    timer.current = window.setTimeout(() => {
-      trancheQuote({ asset: "BTC", oracle_id: oracleId, budget_usd: budgetNum, sigma_usd: baseSigmaUsd, sender: wallet.address ?? undefined })
-        .then((r) => {
-          setTranches(r.tranches);
-          setForward(r.forward_usd);
-          setErr(null);
-        })
-        .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-        .finally(() => setLoading(false));
-    }, 250);
-    return () => {
-      if (timer.current) window.clearTimeout(timer.current);
-    };
-  }, [budgetNum, oracleId, baseSigmaUsd, wallet.address]);
-
-  async function openTranche(t: TrancheProfile) {
-    setOpenBusy(t.tranche);
-    setOpenErr(null);
-    try {
-      setStage("Preparing manager…");
-      const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
-      const buckets = openableBuckets(t.strip.buckets);
-      if (buckets.length === 0) throw new Error("No tradeable buckets in this tranche.");
-      setStage("Building tranche…");
-      const deposit = ((BigInt(t.strip.total_cost_raw) * 12n) / 10n).toString();
-      const prep = await prepareOpenStrip({
-        owner: wallet.address as string,
-        manager_id: mgr,
-        oracle_id: t.strip.oracle_id,
-        expiry: t.strip.expiry,
-        buckets,
-        deposit_amount_raw: deposit,
-      });
-      setStage("Sign in wallet…");
-      const digest = await wallet.signAndExecute(prep.tx_bytes);
-      setStage("Confirming…");
-      const c = await confirmPredict(digest);
-      setResults((p) => ({ ...p, [t.tranche]: c.digest }));
-    } catch (e) {
-      setOpenErr(friendlyWalletError(e));
-    } finally {
-      setOpenBusy(null);
-      setStage(null);
-    }
-  }
-
-  const order: TrancheProfile["tranche"][] = ["senior", "mezz", "junior"];
-  const colorFor = (k: TrancheProfile["tranche"]) =>
-    trancheColor(k === "mezz" ? "mezzanine" : k);
-  const sorted = order
-    .map((k) => tranches.find((t) => t.tranche === k))
-    .filter((t): t is TrancheProfile => Boolean(t));
-
-  return (
-    <div>
-      <div style={{ ...PANEL, marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 22, alignItems: "center" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <Cap style={{ marginBottom: 6 }}>Budget (dUSDC)</Cap>
-          <input className="mk-num" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} style={{ maxWidth: 200 }} />
-        </div>
-        <div style={{ display: "grid", gap: 3 }}>
-          <Cap>Forward</Cap>
-          <span style={{ fontFamily: FD, fontSize: 18, fontWeight: 600, color: C.tealLight }}>
-            {forward ? dollars(forward) : loading ? "…" : "—"}
-          </span>
-        </div>
-        <div style={{ flexBasis: "100%", fontFamily: FS, fontSize: 13, color: C.textSecondary, lineHeight: 1.55, maxWidth: 760 }}>
-          The same forward, sliced by conviction width. <strong style={{ color: C.textPrimary }}>Senior</strong> covers wide around
-          the forward — a defensive slice with a high hit-rate and a steady multiple. <strong style={{ color: C.textPrimary }}>Junior</strong> pins
-          the forward tight — a lower hit-rate, but the biggest multiple if it lands. Each card is a real strip you can open.
-        </div>
-      </div>
-
-      {err && <div style={{ ...PANEL, marginBottom: 16, fontFamily: FM, fontSize: 12, color: C.red }}>{err}</div>}
-
-      <div className="mk-cards">
-        {sorted.map((t) => {
-          const accent = colorFor(t.tranche);
-          const tradeable = t.strip.buckets.filter((b) => b.tradeable).length;
-          return (
-            <div key={t.tranche} style={{ ...PANEL, borderColor: `${accent}55`, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontFamily: FD, fontSize: 16, fontWeight: 600, color: accent, textTransform: "capitalize" }}>
-                  {t.tranche}
-                </span>
-                <span style={{ fontFamily: FM, fontSize: 10, color: C.textMuted }}>σ × {t.sigma_mult.toFixed(2)}</span>
-              </div>
-              <span style={{ fontFamily: FS, fontSize: 12.5, color: C.textSecondary, lineHeight: 1.5, minHeight: 36 }}>
-                {t.label}
-              </span>
-              <div style={{ display: "grid", gap: 9, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
-                <Row k="Ask (mint)" v={usd(t.strip.total_cost_raw)} />
-                <Row k="Best-case max payout" v={usd(t.strip.realized_max_payout_raw)} color={accent} />
-                <Row k="Round-trip spread" v={usd(t.strip.round_trip_spread_raw)} color={C.amber} />
-                <Row k="Buckets" v={`${tradeable} / ${t.strip.buckets.length} tradeable`} />
-              </div>
-              <div style={{ marginTop: "auto", paddingTop: 6 }}>
-                <OpenButton
-                  wallet={wallet}
-                  busy={openBusy === t.tranche}
-                  disabled={tradeable === 0}
-                  label="Open this tranche"
-                  busyLabel={stage ?? "Submitting…"}
-                  onOpen={() => openTranche(t)}
-                  needUsdc={Number(t.strip.total_cost_raw) / 1e6}
-                />
-                {results[t.tranche] && <ResultLine digest={results[t.tranche]} label={`${t.tranche} opened`} />}
-              </div>
-            </div>
-          );
-        })}
-        {sorted.length === 0 && (
-          <div style={{ ...PANEL, gridColumn: "1 / -1", fontFamily: FM, fontSize: 12.5, color: C.textMuted }}>
-            {loading ? "Pricing senior / mezz / junior strips…" : "Set a budget to price tranches."}
-          </div>
-        )}
-      </div>
-
-      {openErr && <div style={{ ...PANEL, marginTop: 16, fontFamily: FM, fontSize: 12, color: C.red }}>{openErr}</div>}
-    </div>
-  );
-}
-
-// ===========================================================================
 // PPN — floor → PLP supply + upside → range strip.
 // ===========================================================================
 
@@ -636,94 +484,6 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
           {openErr && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}
         </div>
       </main>
-    </div>
-  );
-}
-
-// ===========================================================================
-// LP WIDGET — "Be the house (PLP)".
-// ===========================================================================
-
-export function LpWidget({ wallet, usdc }: { wallet: Wallet; usdc: Usdc }) {
-  // The PLP pool settles in dUSDC (faucet-gated), not mUSDC — gate + display on
-  // the asset the supply actually moves so the balance reads true.
-  const dusdc = useDusdcBalance();
-  const [amount, setAmount] = useState("250");
-  const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const amt = Number(amount);
-  const valid = Number.isFinite(amt) && amt > 0;
-
-  async function supply() {
-    if (!valid) return;
-    setBusy(true);
-    setError(null);
-    setResult(null);
-    try {
-      setStage("Building supply…");
-      const prep = await prepareLpSupply({ owner: wallet.address as string, amount_ui: amt });
-      setStage("Sign in wallet…");
-      const digest = await wallet.signAndExecute(prep.tx_bytes);
-      setStage("Confirming…");
-      const c = await confirmPredict(digest);
-      setResult(c.digest);
-      usdc.refresh();
-      dusdc.refresh();
-    } catch (e) {
-      setError(friendlyWalletError(e));
-    } finally {
-      setBusy(false);
-      setStage(null);
-    }
-  }
-
-  return (
-    <div style={{ ...PANEL, marginTop: 24, background: C.panelGradient }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ maxWidth: 460 }}>
-          <Cap>Be the house · PLP</Cap>
-          <div style={{ fontFamily: FD, fontSize: 18, fontWeight: 600, color: C.textPrimary, marginTop: 6 }}>
-            Supply dUSDC to the Predict liquidity pool
-          </div>
-          <p style={{ fontFamily: FS, fontSize: 13, color: C.textSecondary, margin: "6px 0 0", lineHeight: 1.55 }}>
-            The PLP pool backs every strip&apos;s payout and earns the spread the taker pays — the edge measured above.
-            Supply dUSDC to take the other side of the book.
-          </p>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 240 }}>
-          <div>
-            <Cap style={{ marginBottom: 6 }}>Amount (dUSDC)</Cap>
-            <input className="mk-num" type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
-          </div>
-          {!wallet.connected ? (
-            <ConnectModal
-              trigger={
-                <button className="mk-open" style={{ cursor: "pointer" }}>
-                  Connect a wallet
-                </button>
-              }
-            />
-          ) : (
-            <button className="mk-open" disabled={busy || !valid} onClick={supply}>
-              {busy ? stage ?? "Supplying…" : `Supply ${valid ? fmt(Math.round(amt * 1e6)).toLocaleString() : ""} dUSDC`}
-            </button>
-          )}
-          {wallet.connected && (
-            <span style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
-              Balance {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC
-            </span>
-          )}
-          {wallet.connected && dusdc.uiAmount < amt && (
-            <DusdcFaucetButton address={wallet.address ?? null} onFunded={dusdc.refresh} compact />
-          )}
-        </div>
-      </div>
-      {result && <ResultLine digest={result} label="Supplied to PLP" />}
-      {error && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{error}</div>}
     </div>
   );
 }

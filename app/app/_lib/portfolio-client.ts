@@ -151,24 +151,6 @@ export interface TransactionRow {
   created_at: string;
 }
 
-/**
- * Fetch the server-side transaction history for a wallet. The backend reads
- * from Supabase; every row with `onchain_tx_signature` is a real on-chain
- * tx (the deposit flow always writes this for post-4df9b40 deposits).
- */
-export async function fetchTransactionHistory(
-  walletAddress: string,
-): Promise<TransactionRow[]> {
-  const res = await fetch(
-    `${BACKEND_URL}/api/deposit/transactions/${encodeURIComponent(walletAddress)}`,
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to fetch transaction history (HTTP ${res.status})`);
-  }
-  const data = (await res.json()) as { transactions?: TransactionRow[] } | TransactionRow[];
-  return Array.isArray(data) ? data : (data.transactions ?? []);
-}
-
 // ---------- Basket portfolio (backend hydrate) ----------
 
 /** Shape expected by demo-state's `basket/hydrate` action. */

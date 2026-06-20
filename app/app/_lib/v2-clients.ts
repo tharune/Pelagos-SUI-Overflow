@@ -72,9 +72,6 @@ export type CustomBasket = {
   mm: { entry_cost_per_token: number; protocol_bps: number; mm_spread_bps: number };
   sources: { universe: string; candidates_scanned: number; kept_after_filter: number; clob_priced_legs: number; price: string; correlation_model: string; at: number };
 };
-export function fetchCustomThemes(): Promise<{ count: number; themes: CustomTheme[] }> {
-  return getJson(`/api/custom-baskets/themes`);
-}
 export function buildCustomBasket(body: { query?: string; theme?: string; target_legs?: number; tier?: 90 | 50; max_per_category?: number }): Promise<CustomBasket> {
   return postJson<CustomBasket>(`/api/custom-baskets/build`, body);
 }
@@ -142,7 +139,4 @@ export function fetchBacktest(id: string, windowDays = 60): Promise<BacktestResu
 }
 export function fetchBacktestStrategies(): Promise<{ strategies: { id: string; name: string; kind: string; product?: string; description: string }[] }> {
   return getJson(`/api/backtest/strategies`);
-}
-export function fetchPriceSeries(product = "BTC-USD", days = 60): Promise<{ product: string; days: number; source: string; coverage_note: string; series: { t: number; close: number }[] }> {
-  return getJson(`/api/backtest/series?product=${encodeURIComponent(product)}&days=${days}`);
 }

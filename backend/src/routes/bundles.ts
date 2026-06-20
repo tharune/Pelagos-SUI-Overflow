@@ -23,7 +23,7 @@ import {
   FilterStage,
 } from '../services/market-filter';
 import { metrics } from '../services/metrics';
-import { Bundle, BundleWithLegs, PolymarketMarket } from '../types';
+import { BundleWithLegs, PolymarketMarket } from '../types';
 import { validate, createBundleSchema } from '../utils/validation';
 
 const router = Router();

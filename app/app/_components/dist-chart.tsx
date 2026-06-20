@@ -8,8 +8,7 @@
 // from the real strip quote alongside it.
 // ---------------------------------------------------------------------------
 
-import React from "react";
-import { C, FD, FM } from "../_lib/tokens";
+import { C, FM } from "../_lib/tokens";
 import { monotonePath } from "../_lib/curve";
 
 const price = (v: number) =>

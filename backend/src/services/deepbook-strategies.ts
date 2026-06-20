@@ -53,7 +53,7 @@ export interface StrategyDef {
  * pin↔barbell geometry already used by volatility.ts (center-heavy = short
  * gamma; wings-heavy = long gamma; plateau = ranged).
  */
-export const STRATEGY_DEFS: StrategyDef[] = [
+const STRATEGY_DEFS: StrategyDef[] = [
   {
     id: 'pin-short-gamma',
     name: 'Pin (Short Gamma)',
@@ -162,7 +162,7 @@ export function listStrategies(): StrategyListItem[] {
   }));
 }
 
-export function findStrategy(id: string): StrategyDef | undefined {
+function findStrategy(id: string): StrategyDef | undefined {
   return STRATEGY_DEFS.find((s) => s.id === id);
 }
 
@@ -319,7 +319,7 @@ export async function quoteStrategy(args: {
   const sigmaUsd = sigmaRaw / PRICE_SCALE;
   const tYears = (Number(o.expiry) - Date.now()) / YEAR_MS;
   const atmIv = sigmaUsd / (forwardUsd * Math.sqrt(Math.max(tYears, 1e-9)));
-  const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, atmIv, tYears);
+  const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, tYears);
 
   const tradeable = strip.buckets.some((b) => b.tradeable && Number(b.quantity) > 0);
   const maxLossUsd = Number(strip.total_cost_raw) / 10 ** DUSDC_DECIMALS;

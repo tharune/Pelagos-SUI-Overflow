@@ -92,26 +92,8 @@ export async function fetchLendingSnapshot(): Promise<LendingPoolSnapshot> {
   return (await res.json()) as LendingPoolSnapshot;
 }
 
-export function quoteLoan(args: {
-  kind: CollateralKind;
-  tier?: 90 | 70 | 50;
-  trancheKind?: TrancheKind;
-  collateralValueUsd: number;
-}): Promise<LendingQuote> {
-  return postJson<LendingQuote>("/api/lending/quote", {
-    kind: args.kind,
-    tier: args.tier,
-    trancheKind: args.trancheKind,
-    collateralValueUsd: args.collateralValueUsd,
-  });
-}
-
 export function lend(amountUsdc: number): Promise<LendingMutationResult> {
   return postJson<LendingMutationResult>("/api/lending/lend", { amount: amountUsdc });
-}
-
-export function withdrawLending(amountUsdc: number): Promise<LendingMutationResult> {
-  return postJson<LendingMutationResult>("/api/lending/withdraw", { amount: amountUsdc });
 }
 
 export function borrow(amountUsdc: number): Promise<LendingMutationResult> {

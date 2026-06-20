@@ -34,10 +34,6 @@ function relayTarget(url: string): string | null {
   return relay.includes('{url}') ? relay.replace('{url}', enc) : relay + enc;
 }
 
-export function relayConfigured(): boolean {
-  return Boolean(process.env.POLYMARKET_RELAY_URL?.trim());
-}
-
 type Transport = 'direct' | 'relay';
 // Adaptive preference: start direct-first; flip to whichever transport last
 // succeeded. A dead relay becomes non-fatal (direct serves), and a geo-blocked

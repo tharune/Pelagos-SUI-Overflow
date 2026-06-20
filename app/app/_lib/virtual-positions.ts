@@ -64,18 +64,6 @@ export function getVirtualPositions(wallet: string): VirtualPosition[] {
 }
 
 /**
- * Remove every virtual position for a (wallet, uuid) pair. Called after a
- * full redemption of the on-chain vault.
- */
-export function clearVirtualPositionsForUuid(
-  wallet: string,
-  uuid: string,
-): void {
-  const rows = loadAll().filter((p) => !(p.wallet === wallet && p.uuid === uuid));
-  saveAll(rows);
-}
-
-/**
  * Remove only the virtual positions for a specific (wallet, uuid, uiBundleId)
  * triple. Used for per-position partial redemptions so sibling positions
  * remain visible in the portfolio.
@@ -148,17 +136,3 @@ export function groupVirtualByUiBundle(wallet: string): GroupedVirtualPosition[]
   return Array.from(groups.values());
 }
 
-/**
- * Sibling groups share a uuid with the given group — they'll be wiped out
- * together on redeem. The portfolio uses this to warn the user before
- * redeeming.
- */
-export function siblingsForUuid(
-  wallet: string,
-  uuid: string,
-  excludeUiBundleId: string,
-): GroupedVirtualPosition[] {
-  return groupVirtualByUiBundle(wallet).filter(
-    (g) => g.uuid === uuid && g.uiBundleId !== excludeUiBundleId,
-  );
-}

@@ -364,19 +364,6 @@ export function filterMarkets(
 }
 
 /**
- * Convenience: run the filter against a single leg's market metadata.
- * Returns the bundle-gate relevant verdict and the reason stack for debugging.
- */
-export function filterSingleMarket(
-  market: PolymarketMarket,
-  partial: Partial<FilterConfig> = {},
-): { passed: boolean; record: FilteredMarket } {
-  const { kept, rejected } = filterMarkets([market], partial);
-  const record = kept[0] ?? rejected[0];
-  return { passed: record.droppedAt === null, record };
-}
-
-/**
  * Bundle-gate check for a single leg.
  *
  * Unlike `filterSingleMarket`, this does NOT short-circuit — every gate stage

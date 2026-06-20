@@ -10,7 +10,6 @@ import {
   vaultConfigured,
   shareType,
   readVaultState,
-  confirmDigest,
   adminWithdrawFees as vaultWithdrawFees,
 } from './vault';
 
@@ -67,43 +66,6 @@ export async function getProductState(bundleId: string): Promise<PelagosProductS
     total_assets_usdc: Number(state.total_assets_raw) / 10 ** VAULT.usdcDecimals,
     total_shares: Number(state.total_shares) / 10 ** VAULT.usdcDecimals,
   };
-}
-
-/** Verify a Sui digest actually landed on-chain (success). */
-export async function confirmSuiDigest(digestValue: string): Promise<boolean> {
-  if (!digestValue || !digestValue.trim()) return false;
-  const c = await confirmDigest(digestValue.trim());
-  return c.ok;
-}
-
-export function estimateDeposit(amountUsdc: number, issuePrice: number) {
-  const feeUsdc = amountUsdc * (VAULT_DEPOSIT_FEE_BPS / 10_000);
-  const netUsdc = amountUsdc - feeUsdc;
-  const expectedTokens = issuePrice > 0 ? netUsdc / issuePrice : netUsdc;
-  return { feeUsdc, netUsdc, expectedTokens };
-}
-
-export function estimateRedeem(tokens: number, issuePrice: number, active: boolean) {
-  const grossUsdc = tokens * issuePrice;
-  const exitFeeUsdc = active ? grossUsdc * (VAULT_REDEEM_FEE_BPS / 10_000) : 0;
-  return {
-    expectedUsdc: grossUsdc - exitFeeUsdc,
-    exitFeeUsdc,
-    redeemKind: active ? ('active_early' as const) : ('finalized' as const),
-  };
-}
-
-const VAULT_DEPOSIT_FEE_BPS = 50;
-const VAULT_REDEEM_FEE_BPS = 30;
-
-/** Real mUSDC delta credited to `owner` by a confirmed redeem digest. */
-export async function getUserUsdcDeltaFromDigest(
-  digestValue?: string,
-  owner?: string,
-): Promise<number | null> {
-  if (!digestValue) return null;
-  const c = await confirmDigest(digestValue.trim(), owner);
-  return c.usdc_delta ?? null;
 }
 
 /** Admin: withdraw accrued vault fees on-chain. Returns the real tx digest. */

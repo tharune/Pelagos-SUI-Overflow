@@ -1,4 +1,3 @@
-import React from "react";
 import { SandboxProvider } from "./_lib/demo-state";
 import { ModeProvider } from "./_lib/mode";
 

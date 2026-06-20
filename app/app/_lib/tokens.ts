@@ -103,17 +103,6 @@ export function lightenColor(hex: string, amount = 0.25): string {
   return `#${nr.toString(16).padStart(2, "0")}${ng.toString(16).padStart(2, "0")}${nb.toString(16).padStart(2, "0")}`;
 }
 
-export function darkenColor(hex: string, amount = 0.2): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.substring(0, 2), 16);
-  const g = parseInt(h.substring(2, 4), 16);
-  const b = parseInt(h.substring(4, 6), 16);
-  const nr = Math.max(0, Math.round(r * (1 - amount)));
-  const ng = Math.max(0, Math.round(g * (1 - amount)));
-  const nb = Math.max(0, Math.round(b * (1 - amount)));
-  return `#${nr.toString(16).padStart(2, "0")}${ng.toString(16).padStart(2, "0")}${nb.toString(16).padStart(2, "0")}`;
-}
-
 export function fmtUsd(n: number, digits = 0): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }

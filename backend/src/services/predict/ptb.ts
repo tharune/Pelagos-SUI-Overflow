@@ -32,7 +32,7 @@ const clock = (tx: Transaction) => tx.object(PREDICT.clockId);
 const predict = (tx: Transaction) => tx.object(PREDICT.predictObjectId);
 
 /** `market_key::up|down(oracle_id, expiry, strike) -> MarketKey` */
-export function buildMarketKey(tx: Transaction, p: MarketKeyParams): TransactionObjectArgument {
+function buildMarketKey(tx: Transaction, p: MarketKeyParams): TransactionObjectArgument {
   return tx.moveCall({
     target: predictTarget('market_key', p.isUp ? 'up' : 'down'),
     arguments: [tx.pure.id(p.oracleId), tx.pure.u64(p.expiry), tx.pure.u64(p.strike)],
@@ -40,7 +40,7 @@ export function buildMarketKey(tx: Transaction, p: MarketKeyParams): Transaction
 }
 
 /** `range_key::new(oracle_id, expiry, lower, higher) -> RangeKey` */
-export function buildRangeKey(tx: Transaction, p: RangeKeyParams): TransactionObjectArgument {
+function buildRangeKey(tx: Transaction, p: RangeKeyParams): TransactionObjectArgument {
   return tx.moveCall({
     target: predictTarget('range_key', 'new'),
     arguments: [

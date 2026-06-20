@@ -8,7 +8,7 @@
  * reload. Display-only — no writes.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { C, FS, FD, FM, EASE, BACKEND_URL, fmtUsd } from "../_lib/tokens";
 import { explorerTxUrl } from "../_lib/wallet-bridge";
 import {

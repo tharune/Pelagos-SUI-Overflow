@@ -211,12 +211,6 @@ function dynamicOrderCapUsdc(
 // Public API
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_TRANCHES: TrancheSpec[] = [
-  { kind: "senior", attach: 0.0, detach: 0.6 },
-  { kind: "mezzanine", attach: 0.6, detach: 0.85 },
-  { kind: "junior", attach: 0.85, detach: 1.0 },
-];
-
 export interface QuoteTranchesInputs {
   bundleNav: number;
   totalLegs: number;

@@ -479,7 +479,7 @@ export function listContinuousMarkets(): ContinuousMarket[] {
   return [...marketCache.values()].sort(bySourceThenVolume).slice(0, 10);
 }
 
-export function getContinuousMarket(id: string): ContinuousMarket | undefined {
+function getContinuousMarket(id: string): ContinuousMarket | undefined {
   return marketCache.get(id);
 }
 

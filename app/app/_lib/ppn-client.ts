@@ -415,39 +415,6 @@ export async function ppnRedeem(args: {
   return { signature, prepare, confirm };
 }
 
-export async function ppnDivest(args: {
-  wallet: WalletSigner;
-  vaultId: string;
-  confirmationTimeoutMs?: number;
-}): Promise<{
-  signature: string;
-  prepare: PpnDivestPrepareResponse;
-  confirm: PpnDivestConfirmResponse;
-}> {
-  const redeemed = await ppnRedeem({ wallet: args.wallet, vaultId: args.vaultId });
-  return {
-    signature: redeemed.signature,
-    prepare: {
-      kind: "prepared",
-      vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id ?? "",
-      wallet_address: redeemed.prepare.wallet_address ?? "",
-      strategy_fee_bps: 5,
-      estimated_strategy_fee_usdc: 0,
-      sui_market_id: redeemed.prepare.sui_market_id ?? "",
-      sui_position_id: redeemed.prepare.sui_position_id ?? "",
-      transaction_digest: redeemed.signature,
-    },
-    confirm: {
-      vault_id: args.vaultId,
-      bundle_id: redeemed.prepare.bundle_id ?? "",
-      wallet_address: redeemed.prepare.wallet_address ?? "",
-      signature: redeemed.signature,
-      status: "active",
-    },
-  };
-}
-
 export async function ppnCloseEarly(args: {
   wallet: WalletSigner;
   vaultId: string;

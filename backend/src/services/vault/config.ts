@@ -36,7 +36,3 @@ export function shareType(): string {
 export function explorerTx(digest: string): string {
   return `https://suiscan.xyz/${VAULT.network}/tx/${digest}`;
 }
-
-export function explorerObject(id: string): string {
-  return `https://suiscan.xyz/${VAULT.network}/object/${id}`;
-}

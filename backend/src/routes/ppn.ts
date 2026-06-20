@@ -17,7 +17,6 @@ import {
   readVaultState,
   listShares,
   vaultConfigured,
-  VAULT,
 } from '../services/vault';
 import { quoteTranches, basketSigmaFromLegs } from '../services/tranching';
 import { allocateNote } from '../services/ppn-allocator';

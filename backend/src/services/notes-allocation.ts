@@ -176,11 +176,6 @@ function liveYieldPools(): YieldPool[] {
   ];
 }
 
-/** Warm the live yield pools at boot so the first quote is already live. */
-export function warmNotePools(): Promise<void> {
-  return refreshPools();
-}
-
 // ---------------------------------------------------------------------------
 // Presets
 // ---------------------------------------------------------------------------
@@ -205,7 +200,7 @@ export interface NotePreset {
  * principal; they differ in how aggressively the yield is spent on convexity and
  * in the *shape* of that convexity (pinned vs ATM vs OTM tail).
  */
-export const NOTE_PRESETS: NotePreset[] = [
+const NOTE_PRESETS: NotePreset[] = [
   {
     id: 'capital-guard',
     name: 'Capital Guard',
@@ -444,7 +439,6 @@ export function listStrategies(): {
   apy_sources: string[];
 } {
   const pools = liveYieldPools();
-  const topApy = pools[0]?.apy ?? FALLBACK_APY;
   const apySource = pools[0]?.source ?? 'fallback';
   const SAMPLE = 10_000;
   const presets = NOTE_PRESETS.map((p) => {

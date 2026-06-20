@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { C, FM, EASE } from "../_lib/tokens";
 import { airdropDusdc } from "../_lib/wallet-bridge";
 import { suiExplorerTxUrl } from "../_lib/chain";

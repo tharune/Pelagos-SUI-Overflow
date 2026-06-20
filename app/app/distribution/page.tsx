@@ -6,7 +6,7 @@ import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { useMode } from "../_lib/mode";
-import { useWalletSigner, useDusdcBalance, airdropDusdc } from "../_lib/wallet-bridge";
+import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } from "../_components/dist-chart";
 import { Stat, openableBuckets } from "../_components/strip-products";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";

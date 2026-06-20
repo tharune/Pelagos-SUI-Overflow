@@ -291,12 +291,6 @@ export async function previewTrade(args: {
 // Pricing is sender-independent (devInspect is fund-free), so the cache key omits
 // the sender. Out-of-band rejections are cached negatively to avoid re-querying.
 // ---------------------------------------------------------------------------
-type RangePrice = { mint_cost: string; redeem_payout: string; sender: string };
-const RANGE_TTL_MS = 4000;
-// Cache POSITIVES only. Caching a failure risks poisoning: a throttle that
-// surfaces as status!=success would mark a genuinely tradeable band dead for the
-// whole TTL and cascade the strip to 0/N. Failures simply re-resolve next call.
-const RANGE_CACHE = new Map<string, { ok: true; v: RangePrice; exp: number }>();
 const RANGE_MAX_CONCURRENT = 8;
 let rangeInflight = 0;
 const rangeQueue: Array<() => void> = [];
@@ -309,47 +303,6 @@ async function rangeGate<T>(fn: () => Promise<T>): Promise<T> {
     rangeInflight--;
     rangeQueue.shift()?.();
   }
-}
-
-export async function previewRange(args: {
-  key: RangeKeyParams;
-  quantity: bigint;
-  sender?: string;
-}): Promise<RangePrice> {
-  const client = getSuiClient();
-  const sender = args.sender ?? signerAddress() ?? FALLBACK_SENDER;
-  const cacheKey = `${args.key.oracleId}|${args.key.expiry}|${args.key.lowerStrike}|${args.key.higherStrike}|${args.quantity}`;
-  const hit = RANGE_CACHE.get(cacheKey);
-  if (hit && hit.exp > Date.now()) return { ...hit.v, sender };
-
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let res;
-    try {
-      res = await rangeGate(() => {
-        const tx = new Transaction();
-        addGetRangeTradeAmounts(tx, { key: args.key, quantity: args.quantity });
-        return client.devInspectTransactionBlock({ sender, transactionBlock: tx });
-      });
-    } catch (e) {
-      lastErr = e;
-      await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
-      continue;
-    }
-    if (res.effects.status.status !== 'success') {
-      throw new Error(`previewRange devInspect failed: ${res.effects.status.error}`);
-    }
-    const values = lastReturnValues(res.results);
-    if (values.length < 2) throw new Error('previewRange: expected two u64 return values');
-    const v: RangePrice = {
-      mint_cost: bcs.u64().parse(Uint8Array.from(values[0])),
-      redeem_payout: bcs.u64().parse(Uint8Array.from(values[1])),
-      sender,
-    };
-    RANGE_CACHE.set(cacheKey, { ok: true, v, exp: Date.now() + RANGE_TTL_MS });
-    return v;
-  }
-  throw lastErr ?? new Error('previewRange: RPC unavailable');
 }
 
 /**

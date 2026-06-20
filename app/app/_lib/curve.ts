@@ -69,32 +69,3 @@ export function monotonePath(input: Pt[] | Array<[number, number]>): string {
   return d.join(" ");
 }
 
-/**
- * Trace the monotone curve into a canvas path. The caller owns beginPath() and
- * any fill/stroke; this issues a moveTo to the first point followed by the
- * bezier segments, ending exactly on the last point.
- */
-export function traceMonotone(ctx: CanvasRenderingContext2D, pts: Pt[]): void {
-  const n = pts.length;
-  if (n === 0) return;
-  ctx.moveTo(pts[0].x, pts[0].y);
-  if (n === 1) return;
-  if (n === 2) {
-    ctx.lineTo(pts[1].x, pts[1].y);
-    return;
-  }
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const m = monotoneTangents(xs, ys);
-  for (let i = 0; i < n - 1; i++) {
-    const h = xs[i + 1] - xs[i];
-    ctx.bezierCurveTo(
-      xs[i] + h / 3,
-      ys[i] + (m[i] * h) / 3,
-      xs[i + 1] - h / 3,
-      ys[i + 1] - (m[i + 1] * h) / 3,
-      xs[i + 1],
-      ys[i + 1],
-    );
-  }
-}

@@ -153,7 +153,7 @@ export interface VolGreeks {
  * q·(Φ(zb)−Φ(za)). Σ over bands gives value; Δ/Γ are its forward derivatives;
  * Vega/Θ come from re-evaluating at bumped σ (σ = forward·IV·√T).
  */
-export function computeVolGreeks(strip: StripQuote, forwardUsd: number, sigmaUsd: number, atmIv: number, tYears: number): VolGreeks {
+export function computeVolGreeks(strip: StripQuote, forwardUsd: number, sigmaUsd: number, tYears: number): VolGreeks {
   const bands = strip.buckets.filter((b) => b.tradeable && Number(b.quantity) > 0);
   const valueAt = (sig: number): number => {
     let v = 0;

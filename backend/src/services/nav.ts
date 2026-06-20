@@ -1,4 +1,4 @@
-import { Leg, Bundle, NAVResult, LegNAVContribution } from '../types';
+import { Leg, NAVResult, LegNAVContribution } from '../types';
 
 /**
  * Calculate a single leg's contribution to NAV.
@@ -65,28 +65,6 @@ export function calculateIssuePrice(legs: Leg[]): number {
 
   // Round to 2 decimal places (cents)
   return Math.floor(issuePrice * 100) / 100;
-}
-
-/**
- * Calculate USDC payout when all legs are resolved.
- * Payout = tokensHeld * finalNAV (where finalNAV at resolution = actual outcome).
- * Returns 0 if bundle is not fully resolved.
- */
-export function calculatePayout(bundle: Bundle, legs: Leg[], tokensHeld: number): number {
-  if (!isFullyResolved(legs)) return 0;
-
-  const navResult = calculateNAV(legs, bundle.id);
-  const payout = tokensHeld * navResult.nav;
-
-  // Round to 6 decimal places (USDC precision)
-  return Math.round(payout * 1_000_000) / 1_000_000;
-}
-
-/**
- * Format NAV as a dollar string "$0.XX"
- */
-export function formatNAVDisplay(nav: number): string {
-  return `$${nav.toFixed(2)}`;
 }
 
 /**

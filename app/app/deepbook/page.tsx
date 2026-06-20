@@ -53,6 +53,7 @@ import {
   type NoteQuote,
 } from "../_lib/v2-clients";
 import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
+import { simOpen, simConfirm } from "../_lib/sim-client";
 
 // ───────────────────────── formatters ─────────────────────────
 const money = (v: number, d = 0) =>
@@ -214,6 +215,24 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     if (!quote || busy) return;
     setBusy(true); setOpenErr(null); setResult(null);
     try {
+      // mUSDC = independent simulation rail: deposit the premium into our own
+      // Vault<MOCK_USDC> (real on-chain receipt), settle later by minting the payoff.
+      if (currency === "mUSDC") {
+        setStage("Opening simulation…");
+        const bands = tradeableBuckets.map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: ui(b.max_payout_raw) }));
+        if (bands.length === 0) throw new Error("No tradeable legs in this strategy right now.");
+        const prep = await simOpen({
+          owner: wallet.address as string, product: "strip", name: quote.name,
+          premium_usd: ui(quote.strip.total_cost_raw), max_payout_usd: ui(quote.strip.realized_max_payout_raw),
+          oracle_id: quote.oracle_id, forward_usd: quote.forward_usd, expiry_ms: Number(quote.expiry), bands,
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult(digest);
+        return;
+      }
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       const buckets = tradeableBuckets.map((b) => ({ lower: b.lower, higher: b.higher, quantity: b.quantity }));
@@ -571,14 +590,14 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
       {qErr && !quote && <div className="db-banner err">{qErr}</div>}
 
       {mode === "basic"
-        ? <NoteBasic quote={quote} pricing={pricing} principal={principalNum} wallet={wallet} strategy={sel?.strategy} />
-        : <NoteAdvanced quote={quote} pricing={pricing} wallet={wallet} strategy={sel?.strategy} />}
+        ? <NoteBasic quote={quote} pricing={pricing} principal={principalNum} wallet={wallet} strategy={sel?.strategy} currency={currency} />
+        : <NoteAdvanced quote={quote} pricing={pricing} wallet={wallet} strategy={sel?.strategy} currency={currency} />}
     </div>
   );
 }
 
 // ── BASIC: floor / expected / best + projected bar + deploy note
-function NoteBasic({ quote, pricing, principal, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; principal: number; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
+function NoteBasic({ quote, pricing, principal, wallet, strategy, currency }: { quote: NoteQuote | null; pricing: boolean; principal: number; wallet: ReturnType<typeof useWalletSigner>; strategy?: string; currency: Currency }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const { floor_usd, expected_usd, best_usd } = quote.projected;
   const gainExp = pctSigned(((expected_usd - principal) / principal) * 100);
@@ -620,7 +639,7 @@ function NoteBasic({ quote, pricing, principal, wallet, strategy }: { quote: Not
           </div>
         </div>
         <div className="db-card">
-          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label={`Deploy protected note · ${money(principal)}`} />
+          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label={`Deploy protected note · ${money(principal)}`} currency={currency} />
           <p className="db-note">Allocation routes principal to the yield sleeve and deploys the yield as a DeepBook strip. Pool APYs live from DeFiLlama.</p>
         </div>
       </div>
@@ -629,7 +648,7 @@ function NoteBasic({ quote, pricing, principal, wallet, strategy }: { quote: Not
 }
 
 // ── ADVANCED: full yield-sleeve breakdown + deployed strip detail
-function NoteAdvanced({ quote, pricing, wallet, strategy }: { quote: NoteQuote | null; pricing: boolean; wallet: ReturnType<typeof useWalletSigner>; strategy?: string }) {
+function NoteAdvanced({ quote, pricing, wallet, strategy, currency }: { quote: NoteQuote | null; pricing: boolean; wallet: ReturnType<typeof useWalletSigner>; strategy?: string; currency: Currency }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const sleeveTotal = quote.yield_sleeve.reduce((a, p) => a + p.allocation_usd, 0) || 1;
   return (
@@ -693,7 +712,7 @@ function NoteAdvanced({ quote, pricing, wallet, strategy }: { quote: NoteQuote |
           </div>
         </div>
         <div className="db-card">
-          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label="Deploy protected note" />
+          <NoteDeployButton quote={quote} wallet={wallet} strategy={strategy} label="Deploy protected note" currency={currency} />
           <p className="db-note">Floor allocated to the live yield sleeve; the yield funds a deployed DeepBook strip. Settles on Sui testnet.</p>
         </div>
       </div>
@@ -711,8 +730,8 @@ function asVolStrategy(s: string | undefined): VolStrategy {
   return (VOL_STRATEGIES as string[]).includes(k) ? (k as VolStrategy) : "straddle";
 }
 
-function NoteDeployButton({ quote, wallet, strategy, label }: {
-  quote: NoteQuote; wallet: ReturnType<typeof useWalletSigner>; strategy: string | undefined; label: string;
+function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
+  quote: NoteQuote; wallet: ReturnType<typeof useWalletSigner>; strategy: string | undefined; label: string; currency: Currency;
 }) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -728,6 +747,28 @@ function NoteDeployButton({ quote, wallet, strategy, label }: {
     try {
       setStage("Pricing upside strip…");
       const vq = await volQuote({ strategy: asVolStrategy(strategy), side: "long", notional_usd: quote.upside_budget_usd });
+      // mUSDC = independent simulation rail: deposit the principal, settle to
+      // principal + realized upside (principal-protected by the floor catch-all band).
+      if (currency === "mUSDC") {
+        const r = (x: string) => Number(x) / 1e6;
+        const principal = quote.principal_usd;
+        const upBands = vq.strip.buckets
+          .filter((b) => b.tradeable && Number(b.quantity) > 0)
+          .map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: principal + r(b.max_payout_raw) }));
+        const bands = [...upBands, { lower_usd: 0, higher_usd: 1e15, payout_usd: principal }];
+        setStage("Opening simulation…");
+        const prep = await simOpen({
+          owner: wallet.address as string, product: "vol", name: quote.preset_name,
+          premium_usd: principal, max_payout_usd: principal + r(vq.strip.realized_max_payout_raw),
+          oracle_id: vq.oracle_id, forward_usd: vq.forward_usd, expiry_ms: Number(vq.expiry), bands,
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult(digest);
+        return;
+      }
       const buckets = vq.strip.buckets
         .filter((b) => b.tradeable && Number(b.quantity) > 0)
         .map((b) => ({ lower: b.lower, higher: b.higher, quantity: b.quantity }));

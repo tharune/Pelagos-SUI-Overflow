@@ -11,6 +11,7 @@ import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } fro
 import { Stat, openableBuckets } from "../_components/strip-products";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";
 import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
+import { simOpen, simConfirm } from "../_lib/sim-client";
 import {
   stripPreview,
   ensureManager,
@@ -792,6 +793,25 @@ function AdvancedDistribution() {
     setError(null);
     setResult(null);
     try {
+      // mUSDC = independent simulation rail (our Vault<MOCK_USDC>, infinite supply).
+      if (currency === "mUSDC") {
+        setStage("Opening simulation…");
+        const r = (x: string) => Number(x) / 1e6;
+        const bands = quote.buckets.filter((b) => b.tradeable).map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: r(b.max_payout_raw) }));
+        if (bands.length === 0) throw new Error("No tradeable bands — widen σ or pick another expiry.");
+        const prep = await simOpen({
+          owner: wallet.address as string, product: "dist", name: `${market.tenor} distribution`,
+          premium_usd: r(quote.total_cost_raw), max_payout_usd: r(quote.realized_max_payout_raw),
+          oracle_id: quote.oracle_id, forward_usd: quote.forward_usd, expiry_ms: Number(quote.expiry), bands,
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult({ digest });
+        usdc.refresh();
+        return;
+      }
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       const buckets = openableBuckets(quote.buckets);

@@ -23,6 +23,7 @@ import { friendlyWalletError } from "../_lib/chain";
 import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";
 import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
+import { simOpen, simConfirm } from "../_lib/sim-client";
 import { useMode } from "../_lib/mode";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { ResultLine, Cap, StripStyles, openableBuckets, dollars } from "../_components/strip-products";
@@ -319,6 +320,24 @@ export default function VolatilityPage() {
     if (!q || busy) return;
     setBusy(true); setOpenErr(null); setResult(null);
     try {
+      // mUSDC = independent simulation rail (our Vault<MOCK_USDC>, infinite supply).
+      if (currency === "mUSDC") {
+        setStage("Opening simulation…");
+        const r = (x: string) => Number(x) / 1e6;
+        const bands = q.strip.buckets.filter((b) => b.tradeable).map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: r(b.max_payout_raw) }));
+        if (bands.length === 0) throw new Error("No tradeable legs in this structure right now.");
+        const prep = await simOpen({
+          owner: wallet.address as string, product: "vol", name: q.strategy_label,
+          premium_usd: r(q.strip.total_cost_raw), max_payout_usd: r(q.strip.realized_max_payout_raw),
+          oracle_id: q.oracle_id, forward_usd: q.forward_usd, expiry_ms: Number(q.expiry), bands,
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult(digest);
+        return;
+      }
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       const buckets = openableBuckets(q.strip.buckets);

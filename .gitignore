@@ -87,3 +87,4 @@ backend/.distribution-pools.json
 
 # backtest output artifact (generated)
 backend/.backtest-strip.json
+backend/.sim-positions.json

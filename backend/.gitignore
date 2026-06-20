@@ -12,3 +12,4 @@ src/@types/
 
 # Uploaded receipts / evidence (runtime data, not source)
 uploads/
+.sim-positions.json

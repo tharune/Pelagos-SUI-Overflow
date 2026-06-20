@@ -5,6 +5,14 @@ import { C, FM, EASE } from "../_lib/tokens";
 
 export type Currency = "dUSDC" | "mUSDC";
 
+// dUSDC and mUSDC are two INDEPENDENT settlement rails (not pegged, no swap):
+// dUSDC settles on the real DeepBook Predict order book (scarce, faucet-gated);
+// mUSDC is our own freely-mintable currency for simulating activity in perpetuity.
+const CURRENCY_NOTE: Record<Currency, string> = {
+  dUSDC: "Real DeepBook Predict settlement",
+  mUSDC: "Simulation · infinite test funds",
+};
+
 /**
  * Clean, custom collateral-currency dropdown (not a native <select>). Sits inside
  * a notional input as the unit suffix; click to switch between dUSDC and mUSDC.
@@ -74,7 +82,7 @@ export function CurrencySelect({
             top: "calc(100% + 5px)",
             right: 0,
             zIndex: 40,
-            minWidth: 96,
+            minWidth: 188,
             padding: 4,
             borderRadius: 9,
             border: `0.5px solid ${C.border}`,
@@ -113,7 +121,12 @@ export function CurrencySelect({
                 onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = C.surface; }}
                 onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                {o}
+                <span style={{ display: "block" }}>{o}</span>
+                {CURRENCY_NOTE[o] && (
+                  <span style={{ display: "block", marginTop: 2, fontSize: 9, fontWeight: 400, lineHeight: 1.35, color: C.textMuted, letterSpacing: "0.01em" }}>
+                    {CURRENCY_NOTE[o]}
+                  </span>
+                )}
               </button>
             );
           })}

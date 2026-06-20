@@ -306,8 +306,14 @@ async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
         delta: number,
         g: { gamma: number; vega: number; theta: number },
       ): OptionQuote => {
-        const ask = p && p.ok ? Number(p.mint_cost) / DUSDC_UNIT : 0;
-        const bid = p && p.ok ? Number(p.redeem_payout) / DUSDC_UNIT : 0;
+        // A $1 binary range premium is sound only in [0,1], and a redeem (bid)
+        // can never exceed the mint (ask). Clamp/order so the surfaced quote can
+        // never print a crossed (bid>ask) or >$1 market even if the MM returns
+        // a slippage-inflated leg.
+        const askRaw = p && p.ok ? Number(p.mint_cost) / DUSDC_UNIT : 0;
+        const bidRaw = p && p.ok ? Number(p.redeem_payout) / DUSDC_UNIT : 0;
+        const ask = Math.min(1, Math.max(0, askRaw));
+        const bid = Math.min(ask, Math.max(0, bidRaw));
         const mid = ask > 0 || bid > 0 ? (ask + bid) / 2 : 0;
         const tradeable = !!(p && p.ok) && ask >= MIN_MINTABLE && ask <= MAX_MINTABLE;
         return {
@@ -333,7 +339,13 @@ async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
           strike: d.strike,
           moneyness: d.moneyness,
           call: toQuote(callP, String(d.kRaw), String(farRaw), d.iv, gk.callDelta, gk),
-          put: toQuote(putP, String(floorRaw), String(d.kRaw), d.iv, gk.putDelta, gk),
+          // The put leg [floor,K] has value ≈ 1 − call, so its gamma/vega/theta
+          // are the negatives of the call leg's (delta already handled via putDelta).
+          put: toQuote(putP, String(floorRaw), String(d.kRaw), d.iv, gk.putDelta, {
+            gamma: -gk.gamma,
+            vega: -gk.vega,
+            theta: -gk.theta,
+          }),
         };
       });
 
@@ -406,6 +418,10 @@ export async function getOptionsChain(underlying = 'BTC'): Promise<OptionsChain>
 const DEPTH_LADDER = [1, 10, 50, 200, 800, 3200, 12800, 51200]; // contracts ($1 each)
 const SLIP_CAP = 0.15; // avg fill price ≤ marginal × 1.15 (≤15% market impact)
 const POOL_FRACTION = 0.02; // one order's max payout ≤ 2% of available pool liquidity
+// When the vault read is unavailable, fall back to a FINITE conservative cap —
+// never Infinity, which would silently disable the 2%-of-pool guard and green-
+// light an order the pool can't back.
+const POOL_CAP_FALLBACK_CONTRACTS = 5_000;
 const DEPTH_CACHE_TTL_MS = 4_000;
 
 export interface BandDepth {
@@ -420,14 +436,14 @@ export interface BandDepth {
   ladder: Array<{ contracts: number; avg_price: number; slippage_pct: number; ok: boolean }>;
 }
 
-let _vaultCap: { at: number; contracts: number } = { at: 0, contracts: Infinity };
+let _vaultCap: { at: number; contracts: number } = { at: 0, contracts: POOL_CAP_FALLBACK_CONTRACTS };
 async function poolCapacityContracts(): Promise<number> {
   if (Date.now() - _vaultCap.at < 30_000) return _vaultCap.contracts;
   try {
     const vs = (await predictServer.vaultSummary()) as Record<string, unknown>;
     const availRaw = Number(vs.available_liquidity ?? vs.vault_value ?? 0);
     const avail = Number.isFinite(availRaw) && availRaw > 0 ? availRaw / DUSDC_UNIT : 0; // $
-    const contracts = avail > 0 ? POOL_FRACTION * avail : Infinity; // 1 contract = $1 max payout
+    const contracts = avail > 0 ? POOL_FRACTION * avail : POOL_CAP_FALLBACK_CONTRACTS; // 1 contract = $1 max payout
     _vaultCap = { at: Date.now(), contracts };
     return contracts;
   } catch {

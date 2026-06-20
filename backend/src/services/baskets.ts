@@ -649,7 +649,9 @@ function finalizeBasket(
     : baseWeights;
 
   const weighted = legs.map((leg, i) => ({ ...leg, weight: Number(weights[i].toFixed(4)) }));
-  const nav = weighted.reduce((s, m) => s + m.weight * m.probability, 0);
+  // NAV is a probability-weighted blend of leg probabilities ⇒ must stay in [0,1];
+  // clamp defensively (matches nav.ts) so any degenerate leg p can't push it out.
+  const nav = Math.min(1, Math.max(0, weighted.reduce((s, m) => s + m.weight * m.probability, 0)));
   const rawChangePct = weighted.reduce((s, m) => s + m.weight * m.dailyChange, 0) * 100;
   const changePct = Number.isFinite(rawChangePct)
     ? Math.max(-BASKET_DAILY_CHANGE_CLAMP_PCT, Math.min(BASKET_DAILY_CHANGE_CLAMP_PCT, rawChangePct))

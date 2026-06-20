@@ -324,11 +324,26 @@ function BasicOptionsChain() {
             </div>
 
             {/* TICKET */}
-            <div className="oc-card oc-ticket">
+            <div className="oc-card oc-ticket" style={selStrike && selQuote && selExp ? { alignSelf: "start" } : undefined}>
               {!selStrike || !selQuote || !selExp ? (
                 <div className="oc-ticket-empty">
-                  <div className="oc-tkt-cap">Order ticket</div>
-                  <p>Click a <strong>call</strong> or <strong>put</strong> in the chain to load its Greeks and open a position.</p>
+                  <div>
+                    <div className="oc-tkt-cap">Order ticket</div>
+                    <p>Click a <strong>call</strong> or <strong>put</strong> in the chain to load its Greeks and open a position.</p>
+                  </div>
+                  <div className="oc-empty-steps">
+                    {[
+                      { n: "1", t: "Pick a strike", d: "A call pays $1 if BTC settles above it, a put $1 below — priced live off the DeepBook Predict book." },
+                      { n: "2", t: "Size the order", d: "Choose how many $1 contracts; the ticket shows cost, max gain and max loss before you sign." },
+                      { n: "3", t: "Sign & open", d: "Your wallet signs one transaction; the position mints on Sui and settles at expiry." },
+                    ].map((s) => (
+                      <div className="oc-step" key={s.n}>
+                        <span className="oc-step-n">{s.n}</span>
+                        <div><strong>{s.t}</strong><em>{s.d}</em></div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="oc-empty-note">Premiums are real range-option prices in dUSDC, quoted 0–1 per $1 contract.</p>
                 </div>
               ) : (
                 <>
@@ -511,7 +526,7 @@ const OC_CSS = `
   .oc-pill.skel { width: 52px; height: 30px; opacity: 0.5; animation: oc-sk 1.3s ${EASE} infinite; cursor: default; }
   @keyframes oc-sk { 0%,100% { opacity: 0.35; } 50% { opacity: 0.6; } }
 
-  .oc-grid { display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(320px, 0.86fr); gap: 14px; align-items: start; }
+  .oc-grid { display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(320px, 0.86fr); gap: 14px; align-items: stretch; }
   @media (max-width: 1080px) { .oc-grid { grid-template-columns: 1fr; } .oc-bar { grid-template-columns: repeat(2, 1fr); } }
   .oc-card { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 14px; min-width: 0; }
 
@@ -562,10 +577,19 @@ const OC_CSS = `
   .oc-chain-foot { padding: 9px 14px; border-top: 0.5px solid ${C.border}; font-family: ${FM}; font-size: 10px; line-height: 1.5; color: ${C.textMuted}; background: ${C.surface}; }
 
   /* ticket */
-  .oc-ticket { padding: 12px 16px 16px; display: grid; gap: 13px; align-content: start; }
+  .oc-ticket { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 13px; }
   .oc-tkt-cap { font-family: ${FM}; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: ${C.textMuted}; }
-  .oc-ticket-empty { display: grid; gap: 10px; padding: 0 0 8px; }
+  /* empty state fills the column so it lines up with the (tall) chain — no void */
+  .oc-ticket-empty { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; padding: 0 0 4px; }
+  .oc-ticket-empty > div:first-child { display: grid; gap: 10px; }
   .oc-ticket-empty p { margin: 0; font-family: ${FS}; font-size: 12.5px; line-height: 1.55; color: ${C.textSecondary}; }
+  .oc-empty-steps { display: grid; gap: 16px; }
+  .oc-step { display: flex; gap: 12px; align-items: flex-start; }
+  .oc-step-n { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; border: 0.5px solid ${C.border}; background: ${C.surface}; color: ${C.tealLight}; font-family: ${FM}; font-size: 11px; font-weight: 600; }
+  .oc-step div { display: grid; gap: 3px; min-width: 0; }
+  .oc-step strong { font-family: ${FD}; font-size: 12.5px; font-weight: 600; color: ${C.textPrimary}; }
+  .oc-step em { font-family: ${FS}; font-size: 11px; font-style: normal; line-height: 1.5; color: ${C.textMuted}; }
+  .oc-empty-note { margin: 0; font-family: ${FM}; font-size: 10px; line-height: 1.55; color: ${C.textMuted}; }
   .oc-tkt-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   .oc-tkt-title { margin-top: 6px; font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
   .oc-badge { font-family: ${FM}; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; padding: 3px 7px; border-radius: 5px; }

@@ -17,13 +17,14 @@
  * (`impliedSigmaRaw`, tenor-aware SVI), so bands stay inside the mintable window.
  */
 import * as structured from './predict/structured';
-import { impliedSigmaRaw } from './predict/products';
+import { impliedSigmaAndIv } from './predict/products';
 import { computeVolGreeks, type VolGreeks } from './predict/volatility';
 import { predictServer, findActiveOracle } from './predict/server';
 
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / forward
 const DUSDC_DECIMALS = 6;
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
+const MIN_TENOR_YEARS = (3 * 60_000) / YEAR_MS; // ≥3 min to expiry — below this, IV/theta degenerate
 
 export type TailRisk = 'low' | 'med' | 'high';
 export type Convexity = 'long' | 'short' | 'neutral';
@@ -317,8 +318,11 @@ export async function quoteStrategy(args: {
   const budgetRaw = BigInt(Math.round(notionalUsd * 10 ** DUSDC_DECIMALS));
 
   // σ = the oracle's live implied move (tenor-aware SVI), floored to the grid so
-  // every band sits inside the protocol's mintable window.
-  const sigmaRaw = await impliedSigmaRaw(
+  // every band sits inside the protocol's mintable window. `sviAtmIv` is the TRUE
+  // SVI ATM IV — used for the headline so it matches /surface and /density; the
+  // floored σ is only used to size bands (back-implying IV off it over-states IV
+  // by several vol points when the floor binds on short tenors).
+  const { sigmaRaw, atmIv: sviAtmIv } = await impliedSigmaAndIv(
     { oracle_id: o.oracle_id, expiry: o.expiry, min_strike: o.min_strike, tick_size: o.tick_size },
     o.forward_raw,
     Math.max(o.tick_size, Math.round(o.forward_raw * 0.005)),
@@ -338,7 +342,15 @@ export async function quoteStrategy(args: {
   const forwardUsd = o.forward_raw / PRICE_SCALE;
   const sigmaUsd = sigmaRaw / PRICE_SCALE;
   const tYears = (Number(o.expiry) - Date.now()) / YEAR_MS;
-  const atmIv = sigmaUsd / (forwardUsd * Math.sqrt(Math.max(tYears, 1e-9)));
+  // Reject essentially-expired oracles: at tYears→0 back-implied IV and per-day
+  // theta degenerate. resolveOracle already buffers the near/mid/far path; this
+  // also guards an explicitly-passed oracle_id that slipped inside the window.
+  if (!(tYears > MIN_TENOR_YEARS)) {
+    throw new Error('no active BTC oracle with enough time to expiry');
+  }
+  // Headline IV = true SVI ATM IV (matches /surface, /density); fall back to the
+  // back-implied value only when SVI is unavailable.
+  const atmIv = sviAtmIv ?? sigmaUsd / (forwardUsd * Math.sqrt(Math.max(tYears, 1e-9)));
   const greeks = computeVolGreeks(strip, forwardUsd, sigmaUsd, tYears);
 
   const tradeable = strip.buckets.some((b) => b.tradeable && Number(b.quantity) > 0);

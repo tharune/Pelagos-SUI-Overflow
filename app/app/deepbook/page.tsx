@@ -978,9 +978,11 @@ const DB_CSS = `
   /* chart-first layouts — payoff is the full-width hero, supporting cards below/beside */
   .db-basic, .db-adv { display: grid; gap: 14px; min-width: 0; }
   .db-quote-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 14px; align-items: stretch; }
-  .db-adv-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.95fr); gap: 14px; align-items: start; }
+  .db-adv-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.95fr); gap: 14px; align-items: stretch; }
   @media (max-width: 1000px) { .db-quote-row, .db-adv-top { grid-template-columns: 1fr; } }
-  .db-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
+  /* right column fills the chart's height: greeks card grows, deploy pins to the bottom so both columns' bottoms align */
+  .db-side { display: grid; grid-template-rows: 1fr auto; gap: 14px; min-width: 0; }
+  .db-side > .db-card:first-child { display: flex; flex-direction: column; }
   /* quote + deploy: two balanced cards whose inner lists flex-fill to equal height */
   .db-quote-card, .db-deploy-card { display: flex; flex-direction: column; gap: 12px; }
   .db-quote-card .db-metrics { flex: 1; }
@@ -1024,8 +1026,8 @@ const DB_CSS = `
   .db-rh span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; }
   .db-rh strong { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .db-greeks { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-  .db-greek { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 10px 12px; display: grid; gap: 5px; }
+  .db-greeks { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 9px; flex: 1; }
+  .db-greek { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 10px 12px; display: grid; gap: 5px; align-content: center; }
   .db-greek-k { font-family: ${FM}; font-size: 11px; color: ${C.textSecondary}; display: flex; align-items: baseline; gap: 5px; }
   .db-greek-k i { font-style: normal; font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.05em; color: ${C.textMuted}; }
   .db-greek strong { font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }

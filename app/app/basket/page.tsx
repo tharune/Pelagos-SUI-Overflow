@@ -225,6 +225,30 @@ function BasketSelector({
           />
         ))}
       </div>
+      <div className="bk-selector-foot">
+        <Caption>Risk slices</Caption>
+        <div className="bk-slice-bar" aria-hidden>
+          <span style={{ background: trancheColor("senior"), flex: 5 }} />
+          <span style={{ background: trancheColor("mezzanine"), flex: 3 }} />
+          <span style={{ background: trancheColor("junior"), flex: 2 }} />
+        </div>
+        <div className="bk-slice-legend">
+          {[
+            { kind: "senior" as const, name: "Senior", note: "Paid first · lowest risk" },
+            { kind: "mezzanine" as const, name: "Mezzanine", note: "Balanced priority and yield" },
+            { kind: "junior" as const, name: "Junior", note: "First loss · highest yield" },
+          ].map((s) => (
+            <div className="bk-slice-item" key={s.kind}>
+              <i style={{ background: trancheColor(s.kind) }} />
+              <div>
+                <strong>{s.name}</strong>
+                <em>{s.note}</em>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="bk-foot-note">Open a basket to trade the whole unit, or switch to Advanced to deploy a single slice.</p>
+      </div>
     </div>
   );
 }
@@ -610,18 +634,21 @@ const BASKET_CSS = `
   .bk-caption { display: block; color: ${C.textMuted}; font-family: ${FM}; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
 
 
-  .bk-split { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 16px; align-items: start; min-width: 0; }
+  /* left selector fills the detail column's height so the two sections' bottoms line up */
+  .bk-split { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 16px; align-items: stretch; min-width: 0; }
   .bk-col-left, .bk-col-right { min-width: 0; }
+  .bk-col-left { display: flex; flex-direction: column; }
 
   .bk-card { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; min-width: 0; }
 
   .bk-event-stack { display: grid; gap: 14px; }
-  .bk-selector { overflow: hidden; display: flex; flex-direction: column; }
+  .bk-selector { overflow: hidden; display: flex; flex-direction: column; flex: 1; }
   .bk-selector-head { display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 14px 16px 12px; border-bottom: 0.5px solid ${C.border}; }
   .bk-selector-head div { display: grid; gap: 6px; }
   .bk-selector-head strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; font-weight: 620; }
   .bk-selector-head em { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; white-space: nowrap; }
-  .bk-selector-table { display: flex; flex-direction: column; }
+  .bk-selector-table { display: flex; flex-direction: column; flex: 1; }
+  .bk-selector-table > button.bk-selector-row { flex: 1; min-height: 56px; }
   .bk-selector-row { width: 100%; display: grid; grid-template-columns: minmax(150px, 1.6fr) 64px 82px 64px; gap: 10px; align-items: center; border: 0; border-bottom: 0.5px solid ${C.border}; background: transparent; color: ${C.textSecondary}; padding: 11px 16px; text-align: left; font-family: ${FD}; cursor: pointer; transition: background 0.14s ${EASE}, color 0.14s ${EASE}; }
   .bk-selector-row:last-child { border-bottom: 0; }
   .bk-selector-row:hover, .bk-selector-row.is-active { background: ${C.surface}; color: ${C.textPrimary}; }
@@ -634,6 +661,18 @@ const BASKET_CSS = `
   .bk-row-name span { min-width: 0; display: grid; gap: 3px; }
   .bk-row-name strong { color: ${C.textPrimary}; font-size: 13px; font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bk-row-name em { color: ${C.textMuted}; font-family: ${FM}; font-size: 9.5px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* selector footer — risk-slice explainer that fills the column under the basket list */
+  .bk-selector-foot { border-top: 0.5px solid ${C.border}; padding: 15px 16px 16px; display: flex; flex-direction: column; gap: 13px; }
+  .bk-slice-bar { display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden; }
+  .bk-slice-bar span { display: block; height: 100%; }
+  .bk-slice-legend { display: grid; gap: 11px; }
+  .bk-slice-item { display: flex; align-items: center; gap: 11px; }
+  .bk-slice-item i { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+  .bk-slice-item div { display: grid; gap: 2px; min-width: 0; }
+  .bk-slice-item strong { color: ${C.textPrimary}; font-family: ${FD}; font-size: 12.5px; font-weight: 600; }
+  .bk-slice-item em { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; font-style: normal; }
+  .bk-foot-note { margin: 2px 0 0; font-family: ${FS}; font-size: 11px; line-height: 1.55; color: ${C.textMuted}; }
 
   .bk-detail { padding: 16px; display: grid; gap: 14px; }
   .bk-detail-head { display: flex; justify-content: space-between; align-items: start; gap: 18px; }

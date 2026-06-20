@@ -1,16 +1,24 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// Interactive 3D implied-vol surface (three.js). Client-only: mounts a
-// WebGLRenderer into a div via useEffect, builds a colour-mapped mesh over
-// (x = log-moneyness, y = tenor index, z = implied vol), wires OrbitControls,
-// and disposes everything on unmount (no GPU leaks).
+// Interactive 3D implied-vol surface (three.js), Bloomberg-OVDV style.
 //
-// Data is the LIVE SVI surface (VolDeskSurface.slices). Each slice is one tenor
-// row; each slice.points[] column is a strike / log-moneyness. We resample onto
-// a shared log-moneyness grid so every row has the same column count even if the
-// live points differ slightly, then triangulate. If too few live points exist we
-// still render a clean small mesh from whatever is present.
+//   x = log-moneyness (strike)   ·   z = tenor   ·   y = implied vol
+//
+// Built from the LIVE SVI surface (VolDeskSurface.slices). Two things make it
+// read as a real desk tool rather than a UI artifact:
+//
+//  1. Robust IV scaling. The front (minute-tenor) oracle's IV is microstructure
+//     noise that spikes to absurd levels; left raw it dominates the height AND
+//     the colour range, flattening everything else into one blue blob. We
+//     winsorize the IV grid to a robust [p5, p92] band for BOTH height and
+//     colour, so the spike clips to a plateau and the rest of the surface gets
+//     the full colour gradient — the smile and term structure become legible.
+//
+//  2. HTML-overlay axis labels projected from 3D anchors each frame, NOT 3D
+//     sprites. Sprites collided when projected (the overlapping "MONEYNESS/+7%"
+//     mess); projected HTML gives crisp, DPI-perfect, non-overlapping ticks that
+//     track the surface as you orbit.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef } from "react";
@@ -19,87 +27,89 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { VolDeskSurface } from "../../_lib/predict-strip-client";
 import { C } from "../../_lib/tokens";
 
-// Brand-tuned IV ramp: deep ocean (low IV) -> Sui blue -> aqua -> coral (high
-// IV). Mirrors the trading-desk heat convention while staying on-brand.
+// Sequential heat ramp (deep blue → cyan → green → amber → red). Maximises
+// level-to-level separation so you can read the IV gradient at a glance — the
+// thing a vol surface is for.
+const RAMP: Array<[number, [number, number, number]]> = [
+  [0.0, [0x10, 0x2a, 0x5e]],
+  [0.18, [0x1f, 0x5c, 0xc4]],
+  [0.38, [0x27, 0x9c, 0xd8]],
+  [0.55, [0x36, 0xc9, 0xb8]],
+  [0.7, [0x86, 0xd6, 0x6a]],
+  [0.84, [0xf2, 0xc1, 0x49]],
+  [0.93, [0xf2, 0x8c, 0x33]],
+  [1.0, [0xe5, 0x46, 0x2e]],
+];
 function ivColor(t: number): THREE.Color {
-  const stops: Array<[number, [number, number, number]]> = [
-    [0.0, [0x06 / 255, 0x24 / 255, 0x3f / 255]], // tealBg deep ocean
-    [0.35, [0x4d / 255, 0xa2 / 255, 0xff / 255]], // teal
-    [0.62, [0x7d / 255, 0xe7 / 255, 0xff / 255]], // tealLight aqua
-    [0.82, [0xd9 / 255, 0x77 / 255, 0x06 / 255]], // amber
-    [1.0, [0xea / 255, 0x58 / 255, 0x0c / 255]], // coral
-  ];
   const c = Math.max(0, Math.min(1, t));
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [a, ca] = stops[i];
-    const [b, cb] = stops[i + 1];
+  for (let i = 0; i < RAMP.length - 1; i++) {
+    const [a, ca] = RAMP[i];
+    const [b, cb] = RAMP[i + 1];
     if (c <= b) {
       const f = (c - a) / (b - a || 1);
       return new THREE.Color(
-        ca[0] + (cb[0] - ca[0]) * f,
-        ca[1] + (cb[1] - ca[1]) * f,
-        ca[2] + (cb[2] - ca[2]) * f,
+        (ca[0] + (cb[0] - ca[0]) * f) / 255,
+        (ca[1] + (cb[1] - ca[1]) * f) / 255,
+        (ca[2] + (cb[2] - ca[2]) * f) / 255,
       );
     }
   }
-  const last = stops[stops.length - 1][1];
-  return new THREE.Color(last[0], last[1], last[2]);
+  const l = RAMP[RAMP.length - 1][1];
+  return new THREE.Color(l[0] / 255, l[1] / 255, l[2] / 255);
+}
+function rampCss(t: number): string {
+  const c = ivColor(t);
+  return `rgb(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)})`;
+}
+
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
 export interface VolSurface3DProps {
   surface: VolDeskSurface;
-  /** Index of the tenor slice currently selected in the 2D smile panel. */
   selectedSlice?: number;
   height?: number;
 }
 
-export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 }: VolSurface3DProps) {
+type Lbl = { el: HTMLDivElement; anchor: THREE.Vector3 };
+
+export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 }: VolSurface3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  // Keep the highlight ribbon mutable so slice changes don't rebuild the scene.
+  const labelRef = useRef<HTMLDivElement | null>(null);
   const highlightRef = useRef<{ setSlice: (i: number) => void } | null>(null);
-  // WebGL can be unavailable (headless renderers, blocked GPU, software contexts).
-  // We must NEVER let that throw out of the effect and white-screen the desk —
-  // fall back to a clean message and let the 2D smile/term panels carry the view.
   const [failed, setFailed] = React.useState(false);
 
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount) return;
+    const labelLayer = labelRef.current;
+    if (!mount || !labelLayer) return;
 
-    const slices = surface.slices ?? [];
+    const slices = (surface.slices ?? []).filter((s) => s.points && s.points.length >= 2);
     if (slices.length === 0) return;
 
-    // ---- shared log-moneyness grid (columns) ------------------------------
-    // Resample every tenor onto ONE uniform column grid spanning the moneyness
-    // window where ALL tenors have real data (the intersection of their strike
-    // ranges). The old code took the UNION of every slice's distinct strikes —
-    // with 15 tenors whose ~17 strikes don't align that is ~250 columns, and
-    // each tenor only has data at its own ~17, so the other columns were
-    // edge-extrapolated into flat walls: that is what tore the mesh apart. A
-    // uniform intersection grid removes the extrapolation and keeps the
-    // triangulation even, so the surface reads clean.
+    // ---- shared log-moneyness grid (intersection range, uniform columns) ----
     let kLo = -Infinity, kHi = Infinity;
     for (const s of slices) {
-      if (s.points.length < 2) continue;
       kLo = Math.max(kLo, s.points[0].log_moneyness);
       kHi = Math.min(kHi, s.points[s.points.length - 1].log_moneyness);
     }
-    // Fall back to the union range if the intersection is empty/degenerate.
     if (!(kHi > kLo)) {
       kLo = Infinity; kHi = -Infinity;
       for (const s of slices) for (const p of s.points) { kLo = Math.min(kLo, p.log_moneyness); kHi = Math.max(kHi, p.log_moneyness); }
     }
     if (!(kHi > kLo)) return;
-    const NCOL = 28;
+    const NCOL = 44;
     const cols: number[] = [];
     for (let i = 0; i < NCOL; i++) cols.push(kLo + ((kHi - kLo) * i) / (NCOL - 1));
     const rows = slices.length;
-    if (cols.length < 2 || rows < 1) return;
 
-    // Resample each slice onto the shared grid (linear interp on log-moneyness).
     const sampleIv = (s: VolDeskSurface["slices"][number], k: number): number => {
       const pts = s.points;
-      if (pts.length === 0) return s.atm_iv;
       if (k <= pts[0].log_moneyness) return pts[0].iv;
       if (k >= pts[pts.length - 1].log_moneyness) return pts[pts.length - 1].iv;
       for (let i = 0; i < pts.length - 1; i++) {
@@ -112,116 +122,77 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
       return s.atm_iv;
     };
 
-    // Build the IV grid + find min/max for normalisation.
     const grid: number[][] = [];
-    let ivMin = Infinity, ivMax = -Infinity;
+    const all: number[] = [];
     for (let r = 0; r < rows; r++) {
       const row: number[] = [];
-      for (let cI = 0; cI < cols.length; cI++) {
-        const v = sampleIv(slices[r], cols[cI]);
-        row.push(v);
-        if (v < ivMin) ivMin = v;
-        if (v > ivMax) ivMax = v;
-      }
+      for (let cI = 0; cI < cols.length; cI++) { const v = sampleIv(slices[r], cols[cI]); row.push(v); all.push(v); }
       grid.push(row);
     }
-    if (!isFinite(ivMin) || !isFinite(ivMax) || ivMax <= ivMin) { ivMin = 0; ivMax = Math.max(1, ivMax); }
+    // Robust scale — winsorize so the minute-tenor spike can't blow out the range.
+    all.sort((a, b) => a - b);
+    let ivLo = quantile(all, 0.05);
+    let ivHi = quantile(all, 0.92);
+    if (!(ivHi > ivLo)) { ivLo = all[0]; ivHi = Math.max(all[all.length - 1], ivLo + 0.01); }
+    const norm = (v: number) => Math.max(0, Math.min(1, (v - ivLo) / (ivHi - ivLo)));
 
-    // ---- world-space layout ----------------------------------------------
-    // WIDE strike × moderate-depth tenor footprint (matches the wide analytics
-    // panel so the surface FILLS it) with real vertical relief — a Bloomberg-ish
-    // vol surface, not a small mesh adrift in dead space.
-    const SX = 7.0;  // log-moneyness axis half-width -> [-SX, +SX]  (x-extent 14)
-    const SY = 6.5;  // tenor axis depth
-    const SZ = 3.3;  // IV height
+    // ---- world layout ------------------------------------------------------
+    const SX = 7.4;   // moneyness half-width (wide — fills the wide analytics card)
+    const SY = 5.2;   // tenor depth
+    const SZ = 2.7;   // IV height
     const xAt = (cI: number) => -SX + (cI / (cols.length - 1)) * 2 * SX;
     const yAt = (r: number) => (rows === 1 ? 0 : -SY / 2 + (r / (rows - 1)) * SY);
-    const zAt = (v: number) => ((v - ivMin) / (ivMax - ivMin)) * SZ;
+    const zAt = (v: number) => norm(v) * SZ;
 
-    // ---- scene -----------------------------------------------------------
+    // ---- scene -------------------------------------------------------------
     const scene = new THREE.Scene();
-    const width = mount.clientWidth || 600;
-    const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
-    // Camera is auto-framed to the surface bounding box once the mesh is built.
+    const width = mount.clientWidth || 640;
+    const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
 
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    } catch {
-      // No WebGL context — degrade gracefully instead of throwing.
-      setFailed(true);
-      return;
-    }
+    } catch { setFailed(true); return; }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
-    renderer.setClearColor(0x000000, 0); // transparent -> shows card bg
+    renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.display = "block";
     renderer.domElement.style.cursor = "grab";
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    const key = new THREE.DirectionalLight(0xffffff, 0.7);
-    key.position.set(6, 12, 8);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.92));
+    const key = new THREE.DirectionalLight(0xffffff, 0.55);
+    key.position.set(-4, 10, 6);
     scene.add(key);
+    const fill = new THREE.DirectionalLight(0x88aaff, 0.25);
+    fill.position.set(6, 4, -6);
+    scene.add(fill);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.rotateSpeed = 0.7;
-    controls.maxPolarAngle = Math.PI * 0.49;
-    // distance bounds + target are set by the auto-frame block below.
+    controls.enablePan = false;
+    controls.minPolarAngle = Math.PI * 0.18;
+    controls.maxPolarAngle = Math.PI * 0.46;
 
-    // ---- surface mesh (vertex-coloured triangles) ------------------------
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const idx = (r: number, c: number) => r * cols.length + c;
+    // ---- surface mesh ------------------------------------------------------
     const vert: THREE.Vector3[] = [];
     const vcol: THREE.Color[] = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols.length; c++) {
-        vert.push(new THREE.Vector3(xAt(c), zAt(grid[r][c]), yAt(r)));
-        vcol.push(ivColor((grid[r][c] - ivMin) / (ivMax - ivMin)));
-      }
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols.length; c++) {
+      vert.push(new THREE.Vector3(xAt(c), zAt(grid[r][c]), yAt(r)));
+      vcol.push(ivColor(norm(grid[r][c])));
     }
+    const idx = (r: number, c: number) => r * cols.length + c;
     const indices: number[] = [];
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols.length - 1; c++) {
-        const a = idx(r, c), b = idx(r, c + 1), d = idx(r + 1, c), e = idx(r + 1, c + 1);
-        indices.push(a, d, b, b, d, e);
-      }
+    for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols.length - 1; c++) {
+      const a = idx(r, c), b = idx(r, c + 1), d = idx(r + 1, c), e = idx(r + 1, c + 1);
+      indices.push(a, d, b, b, d, e);
     }
+    const positions: number[] = [];
+    const colors: number[] = [];
     for (const v of vert) positions.push(v.x, v.y, v.z);
     for (const c of vcol) colors.push(c.r, c.g, c.b);
-
-    // ---- auto-frame: snug PROJECTED-bounds fit ---------------------------
-    // Fit the surface PLUS an axis-label gutter by projecting the bounding-box
-    // corners onto the camera's screen axes. The bounding SPHERE (used before)
-    // is far larger than the on-screen footprint for a wide, tilted, flat
-    // surface, so it left the mesh tiny in dead space. Projecting the actual
-    // corners sizes the surface to FILL the card while keeping the IV / TENOR /
-    // strike labels (which live just outside the mesh) in frame.
-    const bmin = new THREE.Vector3(-SX - 1.2, -0.35, -SY / 2 - 0.55);
-    const bmax = new THREE.Vector3(SX + 1.05, SZ + 0.6, SY / 2 + 0.85);
-    const center = bmin.clone().add(bmax).multiplyScalar(0.5);
-    const vFov = (camera.fov * Math.PI) / 180;
-    const aspect = width / height;
-    const vHalf = Math.tan(vFov / 2);
-    const hHalf = vHalf * aspect;
-    const dir = new THREE.Vector3(0.40, 0.50, 0.84).normalize(); // center → camera
-    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
-    const camUp = new THREE.Vector3().crossVectors(dir, right).normalize();
-    let dist = 0;
-    for (let xi = 0; xi < 2; xi++) for (let yi = 0; yi < 2; yi++) for (let zi = 0; zi < 2; zi++) {
-      const rel = new THREE.Vector3(xi ? bmax.x : bmin.x, yi ? bmax.y : bmin.y, zi ? bmax.z : bmin.z).sub(center);
-      const fwd = rel.dot(dir);
-      dist = Math.max(dist, fwd + Math.abs(rel.dot(right)) / hHalf, fwd + Math.abs(rel.dot(camUp)) / vHalf);
-    }
-    dist *= 1.0; // gutters already include label margin; fill the card
-    camera.position.copy(center.clone().add(dir.clone().multiplyScalar(dist)));
-    camera.lookAt(center);
-    controls.target.copy(center);
-    controls.minDistance = dist * 0.45;
-    controls.maxDistance = dist * 2.4;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -229,202 +200,200 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    const surfaceMesh = new THREE.Mesh(
-      geo,
-      new THREE.MeshStandardMaterial({
-        vertexColors: true,
-        side: THREE.DoubleSide,
-        roughness: 0.55,
-        metalness: 0.05,
-        flatShading: false,
-        transparent: true,
-        opacity: 0.96,
-      }),
-    );
+    const surfaceMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, side: THREE.DoubleSide, roughness: 0.62, metalness: 0.04, flatShading: false,
+    }));
     scene.add(surfaceMesh);
 
-    // Wireframe overlay for that "desk plot" precision.
+    // faint wireframe for desk-plot precision (kept very subtle so colour leads)
     const wire = new THREE.LineSegments(
       new THREE.WireframeGeometry(geo),
-      new THREE.LineBasicMaterial({ color: 0x0a1a2e, transparent: true, opacity: 0.22 }),
+      new THREE.LineBasicMaterial({ color: 0x0a1626, transparent: true, opacity: 0.14 }),
     );
     scene.add(wire);
 
-    // ---- selected-tenor highlight ribbon ---------------------------------
-    const ribbonMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0x7de7ff), linewidth: 2 });
+    // ---- ATM ridge (log-moneyness 0) + selected-tenor ribbon ---------------
+    let atmCol = 0, best = Infinity;
+    for (let c = 0; c < cols.length; c++) { const d = Math.abs(cols[c]); if (d < best) { best = d; atmCol = c; } }
+    const atmPts: THREE.Vector3[] = [];
+    for (let r = 0; r < rows; r++) atmPts.push(new THREE.Vector3(xAt(atmCol), zAt(grid[r][atmCol]) + 0.03, yAt(r)));
+    const atmLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(atmPts),
+      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.22, gapSize: 0.16, transparent: true, opacity: 0.45 }),
+    );
+    atmLine.computeLineDistances();
+    scene.add(atmLine);
+
+    const ribbonMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0xffffff) });
     let ribbon: THREE.Line | null = null;
     const buildRibbon = (r: number) => {
       if (ribbon) { scene.remove(ribbon); ribbon.geometry.dispose(); }
       const rr = Math.max(0, Math.min(rows - 1, r));
       const pts: THREE.Vector3[] = [];
-      for (let c = 0; c < cols.length; c++) pts.push(new THREE.Vector3(xAt(c), zAt(grid[rr][c]) + 0.04, yAt(rr)));
-      const rg = new THREE.BufferGeometry().setFromPoints(pts);
-      ribbon = new THREE.Line(rg, ribbonMat);
+      for (let c = 0; c < cols.length; c++) pts.push(new THREE.Vector3(xAt(c), zAt(grid[rr][c]) + 0.05, yAt(rr)));
+      ribbon = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ribbonMat);
       scene.add(ribbon);
     };
     buildRibbon(selectedSlice);
     highlightRef.current = { setSlice: buildRibbon };
 
-    // ---- ATM ridge (log-moneyness = 0) -----------------------------------
-    let atmCol = 0, best = Infinity;
-    for (let c = 0; c < cols.length; c++) { const d = Math.abs(cols[c]); if (d < best) { best = d; atmCol = c; } }
-    const atmPts: THREE.Vector3[] = [];
-    for (let r = 0; r < rows; r++) atmPts.push(new THREE.Vector3(xAt(atmCol), zAt(grid[r][atmCol]) + 0.04, yAt(r)));
-    const atmLine = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(atmPts),
-      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.25, gapSize: 0.18, transparent: true, opacity: 0.4 }),
-    );
-    atmLine.computeLineDistances();
-    scene.add(atmLine);
-
-    // ---- floor grid + axes -----------------------------------------------
+    // ---- floor grid --------------------------------------------------------
     const grp = new THREE.Group();
-    const gridMat = new THREE.LineBasicMaterial({ color: 0x1a2a3e, transparent: true, opacity: 0.5 });
-    for (let c = 0; c < cols.length; c += Math.max(1, Math.floor(cols.length / 8))) {
-      grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(xAt(c), 0, -SY / 2 - 0.4), new THREE.Vector3(xAt(c), 0, SY / 2 + 0.4),
-      ]), gridMat));
-    }
-    for (let r = 0; r <= rows; r++) {
-      const y = rows === 1 ? 0 : -SY / 2 + (r / Math.max(1, rows)) * SY;
-      grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-SX - 0.4, 0, y), new THREE.Vector3(SX + 0.4, 0, y),
-      ]), gridMat));
-    }
+    const gridMat = new THREE.LineBasicMaterial({ color: 0x16273c, transparent: true, opacity: 0.5 });
+    const cStep = Math.max(1, Math.floor(cols.length / 8));
+    for (let c = 0; c < cols.length; c += cStep) grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(xAt(c), 0, -SY / 2), new THREE.Vector3(xAt(c), 0, SY / 2),
+    ]), gridMat));
+    for (let r = 0; r < rows; r++) grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-SX, 0, yAt(r)), new THREE.Vector3(SX, 0, yAt(r)),
+    ]), gridMat));
     scene.add(grp);
 
-    // ---- axis titles + value ticks (crisp canvas billboards) -------------
-    // Hi-DPI, tightly-cropped canvas per label so text stays sharp (the old
-    // fixed 256×64 canvas blurred once the camera framed the surface large).
-    const sprites: THREE.Sprite[] = [];
-    const makeLabel = (text: string, opts?: { color?: string; px?: number; wWorld?: number; weight?: number }) => {
-      const color = opts?.color ?? "#8da0b4";
-      const px = opts?.px ?? 54;
-      const weight = opts?.weight ?? 600;
-      const dpr = 2, pad = 10;
-      const meas = document.createElement("canvas").getContext("2d")!;
-      meas.font = `${weight} ${px}px ui-monospace, monospace`;
-      const tw = Math.ceil(meas.measureText(text).width);
-      const cv = document.createElement("canvas");
-      cv.width = (tw + pad * 2) * dpr; cv.height = (px + pad * 2) * dpr;
-      const ctx = cv.getContext("2d")!;
-      ctx.scale(dpr, dpr);
-      ctx.font = `${weight} ${px}px ui-monospace, monospace`;
-      ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(text, (tw + pad * 2) / 2, (px + pad * 2) / 2);
-      const tex = new THREE.CanvasTexture(cv);
-      tex.anisotropy = 8; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
-      const wWorld = opts?.wWorld ?? 1.4;
-      sp.scale.set(wWorld, (wWorld * cv.height) / cv.width, 1);
-      sprites.push(sp);
-      return sp;
+    // ---- HTML-overlay labels (projected each frame; never overlap) ---------
+    labelLayer.replaceChildren();
+    const labels: Lbl[] = [];
+    const mkLabel = (text: string, anchor: THREE.Vector3, kind: "title" | "tick" | "iv", color?: string) => {
+      const el = document.createElement("div");
+      el.textContent = text;
+      el.style.position = "absolute";
+      el.style.left = "0";
+      el.style.top = "0";
+      el.style.whiteSpace = "nowrap";
+      el.style.pointerEvents = "none";
+      el.style.fontFamily = "ui-monospace, 'JetBrains Mono', monospace";
+      el.style.willChange = "transform";
+      if (kind === "title") {
+        el.style.fontSize = "10px";
+        el.style.fontWeight = "600";
+        el.style.letterSpacing = "0.16em";
+        el.style.color = color ?? "#7de7ff";
+        el.style.textShadow = "0 1px 6px rgba(0,0,0,0.85)";
+      } else {
+        el.style.fontSize = kind === "iv" ? "10.5px" : "11px";
+        el.style.fontWeight = "500";
+        el.style.color = color ?? "#9fb3c8";
+        el.style.textShadow = "0 1px 5px rgba(0,0,0,0.9)";
+      }
+      labelLayer.appendChild(el);
+      labels.push({ el, anchor });
     };
-    const TITLE = "#7de7ff", TICK = "#8da0b4";
-    const add = (s: THREE.Sprite, x: number, y: number, z: number) => { s.position.set(x, y, z); scene.add(s); };
 
-    // axis titles
-    add(makeLabel("MONEYNESS", { color: TITLE, px: 56, wWorld: 2.7 }), 0, -0.5, SY / 2 + 0.68);
-    add(makeLabel("TENOR", { color: TITLE, px: 56, wWorld: 1.6 }), SX + 0.85, -0.5, 0);
-    add(makeLabel("IV", { color: TITLE, px: 56, wWorld: 0.8 }), -SX - 0.95, SZ + 0.42, SY / 2);
-
-    // moneyness % ticks along the front edge: k → (eᵏ − 1)·100% (kLo/kHi are the
-    // uniform-grid bounds from the resample above = cols[0]/cols[last]).
+    const TITLE = "#7de7ff";
+    // moneyness ticks along the front edge + title
     const xForK = (k: number) => -SX + ((k - kLo) / (kHi - kLo || 1)) * 2 * SX;
     for (let i = 0; i <= 4; i++) {
       const k = kLo + (i / 4) * (kHi - kLo);
       const m = (Math.exp(k) - 1) * 100;
-      const lbl = Math.abs(m) < 0.6 ? "ATM" : `${m >= 0 ? "+" : ""}${m.toFixed(0)}%`;
-      add(makeLabel(lbl, { color: Math.abs(m) < 0.6 ? "#7de7ff" : TICK, px: 48, wWorld: 0.95 }), xForK(k), -0.08, SY / 2 + 0.3);
+      const atm = Math.abs(m) < 0.6;
+      mkLabel(atm ? "ATM" : `${m >= 0 ? "+" : ""}${m.toFixed(0)}%`, new THREE.Vector3(xForK(k), -0.04, SY / 2 + 0.5), "tick", atm ? "#cfe9ff" : "#8ea4ba");
     }
-    // tenor ticks along the right edge: front / mid / back
-    const tIdx = rows <= 1 ? [0] : [...new Set([0, Math.floor((rows - 1) / 2), rows - 1])];
-    for (const r of tIdx) add(makeLabel(slices[r]?.tenor_label ?? "", { color: TICK, px: 46, wWorld: 0.82 }), SX + 0.45, -0.08, yAt(r));
+    mkLabel("MONEYNESS", new THREE.Vector3(0, -0.02, SY / 2 + 1.3), "title", TITLE);
 
-    // IV % ticks up the front-left vertical edge (nice round steps)
-    const ivSpan = ivMax - ivMin;
-    const ivStep = ivSpan > 0.5 ? 0.25 : ivSpan > 0.2 ? 0.1 : 0.05;
-    for (let v = Math.ceil(ivMin / ivStep) * ivStep; v <= ivMax + 1e-9; v += ivStep) {
-      const hot = v >= (ivMin + ivMax) / 2;
-      add(makeLabel(`${(v * 100).toFixed(0)}%`, { color: hot ? "#e08a4a" : "#5aa0e8", px: 46, wWorld: 0.8 }), -SX - 0.55, zAt(v), SY / 2);
+    // tenor ticks along the right edge + title (front → back)
+    const tIdx = rows <= 1 ? [0] : [...new Set([0, Math.round((rows - 1) / 3), Math.round((2 * (rows - 1)) / 3), rows - 1])];
+    for (const r of tIdx) mkLabel(slices[r]?.tenor_label ?? "", new THREE.Vector3(SX + 0.75, -0.04, yAt(r)), "tick");
+    mkLabel("TENOR", new THREE.Vector3(SX + 1.75, -0.02, 0), "title", TITLE);
+
+    // IV ticks up the back-left vertical edge + title (coloured by the ramp)
+    // Pick the smallest "nice" step that yields ≤3 ticks so they never crowd the
+    // short vertical axis.
+    const ivSpan = ivHi - ivLo;
+    const ivStep = [0.05, 0.1, 0.15, 0.2, 0.25, 0.5, 1].find((s) => ivSpan / s <= 3.0) ?? 0.5;
+    const ivStart = Math.ceil((ivLo + ivStep * 0.25) / ivStep) * ivStep;
+    for (let v = ivStart; v <= ivHi - ivStep * 0.15; v += ivStep) {
+      mkLabel(`${(v * 100).toFixed(0)}%`, new THREE.Vector3(-SX - 0.75, zAt(v), -SY / 2), "iv", rampCss(norm(v)));
     }
+    mkLabel("IV", new THREE.Vector3(-SX - 0.75, SZ + 0.55, -SY / 2), "title", TITLE);
 
-    // ---- render loop -----------------------------------------------------
-    let raf = 0;
-    let disposed = false;
+    // ---- camera auto-frame (projected corners + label gutter) --------------
+    // Asymmetric gutter: just enough room for the labels on each side, tight on
+    // the empty top so the surface fills the card instead of floating low.
+    const bmin = new THREE.Vector3(-SX - 1.5, -0.5, -SY / 2 - 1.2);
+    const bmax = new THREE.Vector3(SX + 1.9, SZ + 0.15, SY / 2 + 1.45);
+    const center = new THREE.Vector3((bmin.x + bmax.x) / 2, (bmin.y + bmax.y) / 2, (bmin.z + bmax.z) / 2);
+    const vFov = (camera.fov * Math.PI) / 180;
+    const aspect = width / height;
+    const vHalf = Math.tan(vFov / 2);
+    const hHalf = vHalf * aspect;
+    const dir = new THREE.Vector3(0.34, 0.52, 0.78).normalize();
+    const rightV = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+    const upV = new THREE.Vector3().crossVectors(dir, rightV).normalize();
+    let dist = 0;
+    for (let xi = 0; xi < 2; xi++) for (let yi = 0; yi < 2; yi++) for (let zi = 0; zi < 2; zi++) {
+      const rel = new THREE.Vector3(xi ? bmax.x : bmin.x, yi ? bmax.y : bmin.y, zi ? bmax.z : bmin.z).sub(center);
+      const fwd = rel.dot(dir);
+      dist = Math.max(dist, fwd + Math.abs(rel.dot(rightV)) / hHalf, fwd + Math.abs(rel.dot(upV)) / vHalf);
+    }
+    camera.position.copy(center.clone().add(dir.clone().multiplyScalar(dist)));
+    camera.lookAt(center);
+    controls.target.copy(center);
+    controls.minDistance = dist * 0.5;
+    controls.maxDistance = dist * 2.2;
+
+    // ---- project labels to screen ------------------------------------------
+    const v3 = new THREE.Vector3();
+    const updateLabels = () => {
+      const w = mount.clientWidth || width;
+      for (const { el, anchor } of labels) {
+        v3.copy(anchor).project(camera);
+        const behind = v3.z > 1;
+        el.style.opacity = behind ? "0" : "1";
+        const sx = (v3.x * 0.5 + 0.5) * w;
+        const sy = (-v3.y * 0.5 + 0.5) * height;
+        el.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+      }
+    };
+
+    // ---- render loop -------------------------------------------------------
+    let raf = 0, disposed = false;
     const animate = () => {
       if (disposed) return;
       raf = requestAnimationFrame(animate);
       controls.update();
       renderer.render(scene, camera);
+      updateLabels();
     };
     animate();
 
-    // ---- resize ----------------------------------------------------------
     const onResize = () => {
       const w = mount.clientWidth || width;
       camera.aspect = w / height;
       camera.updateProjectionMatrix();
       renderer.setSize(w, height);
+      updateLabels();
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(mount);
 
-    // ---- teardown (no leaks) ---------------------------------------------
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
       highlightRef.current = null;
+      labelLayer.replaceChildren();
       scene.traverse((obj) => {
         const any = obj as unknown as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
         if (any.geometry) any.geometry.dispose();
-        if (any.material) {
-          const m = any.material;
-          if (Array.isArray(m)) m.forEach((mm) => mm.dispose());
-          else m.dispose();
-        }
-      });
-      sprites.forEach((sp) => {
-        const mat = sp.material as THREE.SpriteMaterial;
-        if (mat.map) mat.map.dispose();
-        mat.dispose();
+        if (any.material) { const m = any.material; Array.isArray(m) ? m.forEach((mm) => mm.dispose()) : m.dispose(); }
       });
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
-    // Rebuild only when the underlying surface identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surface, height]);
 
-  // Slice change => just move the ribbon, no scene rebuild.
   useEffect(() => {
     highlightRef.current?.setSlice(selectedSlice);
   }, [selectedSlice]);
 
   if (failed) {
     return (
-      <div
-        style={{
-          width: "100%",
-          height,
-          borderRadius: 12,
-          background: C.bg,
-          border: `0.5px solid ${C.border}`,
-          display: "grid",
-          placeItems: "center",
-          textAlign: "center",
-          padding: 24,
-        }}
-      >
+      <div style={{ width: "100%", height, borderRadius: 12, background: C.bg, border: `0.5px solid ${C.border}`, display: "grid", placeItems: "center", textAlign: "center", padding: 24 }}>
         <div>
-          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted }}>
-            3D surface needs WebGL
-          </div>
+          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted }}>3D surface needs WebGL</div>
           <div style={{ fontFamily: "system-ui, sans-serif", fontSize: 12.5, color: C.textSecondary, marginTop: 8, maxWidth: 320, lineHeight: 1.5 }}>
-            This browser/context can&apos;t open a WebGL canvas. The live smile and
-            term-structure panels below carry the same SVI surface.
+            This browser/context can&apos;t open a WebGL canvas. The live smile and term-structure panels below carry the same SVI surface.
           </div>
         </div>
       </div>
@@ -432,9 +401,9 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 360 
   }
 
   return (
-    <div
-      ref={mountRef}
-      style={{ width: "100%", height, borderRadius: 12, overflow: "hidden", background: C.bg }}
-    />
+    <div style={{ position: "relative", width: "100%", height, borderRadius: 12, overflow: "hidden", background: C.bg }}>
+      <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
+      <div ref={labelRef} style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }} />
+    </div>
   );
 }

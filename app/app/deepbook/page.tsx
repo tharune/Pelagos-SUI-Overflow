@@ -41,15 +41,18 @@ import {
 } from "../_lib/predict-strip-client";
 import {
   fetchDeepBookStrategies,
+  fetchDeepBookExpiries,
   quoteDeepBookStrategy,
   fetchNotePresets,
   quoteNote,
   type DeepBookStrategy,
+  type DeepBookExpiry,
   type DeepBookQuote,
   type DeepBookBucket,
   type NotePreset,
   type NoteQuote,
 } from "../_lib/v2-clients";
+import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 
 // ───────────────────────── formatters ─────────────────────────
 const money = (v: number, d = 0) =>
@@ -153,6 +156,9 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
   const [selected, setSelected] = useState<string | null>(null);
   const [notional, setNotional] = useState("25000");
   const [expiryPref, setExpiryPref] = useState<"near" | "mid" | "far">("mid");
+  const [oracleId, setOracleId] = useState<string | null>(null);   // advanced: a specific expiry
+  const [expiries, setExpiries] = useState<DeepBookExpiry[]>([]);
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
   const [quote, setQuote] = useState<DeepBookQuote | null>(null);
   const [qErr, setQErr] = useState<string | null>(null);
   const [pricing, setPricing] = useState(false);
@@ -171,6 +177,9 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     fetchDeepBookStrategies()
       .then((r) => { if (alive) { setStrategies(r.strategies); if (!selected && r.strategies[0]) setSelected(r.strategies[0].id); } })
       .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : String(e)); });
+    fetchDeepBookExpiries()
+      .then((r) => { if (alive) setExpiries(r.expiries); })
+      .catch(() => { /* expiry strip stays empty → falls back to near/mid/far */ });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -183,16 +192,16 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     setPricing(true);
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      quoteDeepBookStrategy({ strategy_id: selected, notional_usd: notionalNum, expiry_pref: expiryPref, sender: wallet.address ?? undefined })
+      quoteDeepBookStrategy({ strategy_id: selected, notional_usd: notionalNum, expiry_pref: expiryPref, oracle_id: mode === "advanced" && oracleId ? oracleId : undefined, sender: wallet.address ?? undefined })
         .then((q) => { if (alive) { setQuote(q); setQErr(null); } })
         .catch((e) => { if (alive) setQErr(e instanceof Error ? e.message : String(e)); })
         .finally(() => { if (alive) setPricing(false); });
     }, 220);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); };
-  }, [selected, notionalNum, valid, expiryPref, wallet.address]);
+  }, [selected, notionalNum, valid, expiryPref, oracleId, mode, wallet.address]);
 
   // reset deploy result when the structure changes
-  useEffect(() => { setResult(null); setOpenErr(null); }, [selected, notionalNum, expiryPref]);
+  useEffect(() => { setResult(null); setOpenErr(null); }, [selected, notionalNum, expiryPref, oracleId]);
 
   const sel = strategies?.find((s) => s.id === selected) ?? null;
   const accent = sel ? CONVEX_COLOR[sel.convexity] ?? C.tealLight : C.tealLight;
@@ -271,27 +280,41 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
         })}
       </div>
 
-      {/* controls */}
+      {/* controls — text left · expiry options middle · order box right */}
       <div className="db-card db-controls">
-        <div className="db-amount">
-          <span className="db-cap">Notional</span>
-          <div className="db-amount-in">
-            <input className="db-num" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-            <span>dUSDC</span>
-          </div>
-        </div>
-        <div className="db-expiry">
-          <span className="db-cap">Expiry</span>
-          <div className="db-seg">
-            {(["near", "mid", "far"] as const).map((p) => (
-              <button key={p} className={expiryPref === p ? "is-on" : ""} onClick={() => setExpiryPref(p)}>{p}</button>
-            ))}
-          </div>
-        </div>
         <div className="db-controls-meta">
           <span className="db-cap">Horizon</span>
           <strong>{quote ? quote.tenor_label : pricing ? "…" : "—"}</strong>
           <span className="db-controls-thesis">{sel?.thesis ?? "Select a strategy."}</span>
+        </div>
+        <div className="db-expiry">
+          <span className="db-cap">Expiry</span>
+          {mode === "advanced" && expiries.length > 0 ? (
+            <div className="db-strike-strip">
+              {expiries.map((e) => {
+                const on = oracleId ? e.oracle_id === oracleId : quote?.oracle_id === e.oracle_id;
+                return (
+                  <button key={e.oracle_id} type="button" className={`db-strike${on ? " is-on" : ""}`} onClick={() => setOracleId(e.oracle_id)}>
+                    {e.tenor_label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="db-seg">
+              {(["near", "mid", "far"] as const).map((p) => (
+                <button key={p} type="button" className={expiryPref === p ? "is-on" : ""} onClick={() => setExpiryPref(p)}>{p}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="db-amount">
+          <span className="db-cap">Notional</span>
+          <div className="db-amount-in">
+            <span className="db-amount-cur">$</span>
+            <input className="db-num" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+            <CurrencySelect value={currency} onChange={setCurrency} />
+          </div>
         </div>
       </div>
 
@@ -418,16 +441,6 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
             <span className="db-slip">{usd(quote.strip.round_trip_spread_raw)}</span>
           </div>
         </div>
-        <div className="db-routing">
-          <RouteHandle k="Oracle" v={quote.oracle_id} mono />
-          <RouteHandle k="Expiry" v={new Date(Number(quote.expiry)).toISOString().replace("T", " ").slice(0, 16) + "Z"} />
-          <RouteHandle k="Tenor" v={quote.tenor_label} />
-          <RouteHandle k="Forward" v={money2(quote.forward_usd)} />
-          <RouteHandle k="σ (usd)" v={money2(quote.sigma_usd)} />
-          <RouteHandle k="ATM IV" v={`${(quote.atm_iv * 100).toFixed(1)}%`} />
-          <RouteHandle k="Buckets" v={String(quote.strip.n)} />
-          <RouteHandle k="Source" v={quote.source} />
-        </div>
       </div>
     </div>
   );
@@ -442,6 +455,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [principal, setPrincipal] = useState("10000");
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
   const [tenor, setTenor] = useState<number | null>(null);
   const [quote, setQuote] = useState<NoteQuote | null>(null);
   const [qErr, setQErr] = useState<string | null>(null);
@@ -523,23 +537,24 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
         })}
       </div>
 
-      {/* controls */}
+      {/* controls — blended APY (left) · tenor slider (middle) · principal order box (right) */}
       <div className="db-card db-controls">
-        <div className="db-amount">
-          <span className="db-cap">Principal</span>
-          <div className="db-amount-in">
-            <input className="db-num" inputMode="decimal" value={principal} onChange={(e) => setPrincipal(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
-            <span>USDC</span>
-          </div>
+        <div className="db-controls-meta">
+          <span className="db-cap">Blended APY</span>
+          <strong style={{ color: C.green }}>{quote ? `${(quote.blended_apy * 100).toFixed(2)}%` : pricing ? "…" : "—"}</strong>
+          <span className="db-controls-thesis">{sel?.blurb ?? "Select a preset."}</span>
         </div>
         <div className="db-tenor">
           <span className="db-cap">Tenor · {effTenor}d</span>
           <input type="range" className="db-range" min={30} max={365} step={5} value={effTenor} onChange={(e) => setTenor(Number(e.target.value))} />
         </div>
-        <div className="db-controls-meta">
-          <span className="db-cap">Blended APY</span>
-          <strong style={{ color: C.green }}>{quote ? `${(quote.blended_apy * 100).toFixed(2)}%` : pricing ? "…" : "—"}</strong>
-          <span className="db-controls-thesis">{sel?.blurb ?? "Select a preset."}</span>
+        <div className="db-amount">
+          <span className="db-cap">Principal</span>
+          <div className="db-amount-in">
+            <span className="db-amount-cur">$</span>
+            <input className="db-num" inputMode="decimal" value={principal} onChange={(e) => setPrincipal(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+            <CurrencySelect value={currency} onChange={setCurrency} />
+          </div>
         </div>
       </div>
 
@@ -766,11 +781,11 @@ function Greek({ sym, name, val, unit, color }: { sym: string; name: string; val
     </div>
   );
 }
-function RouteHandle({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function RouteHandle({ k, v }: { k: string; v: string }) {
   return (
     <div className="db-rh">
       <span>{k}</span>
-      <strong className={mono ? "db-rh-mono" : undefined} title={v}>{mono ? `${v.slice(0, 10)}…${v.slice(-4)}` : v}</strong>
+      <strong title={v}>{v}</strong>
     </div>
   );
 }
@@ -888,7 +903,7 @@ const DB_CSS = `
   .db-tabs button:hover { color: ${C.textPrimary}; }
   .db-tabs button.is-on { background: ${C.card}; color: ${C.textPrimary}; box-shadow: 0 1px 0 ${C.border}; }
 
-  .db-surface { display: grid; gap: 14px; min-width: 0; }
+  .db-surface { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
   .db-card { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 14px; padding: 15px 16px; min-width: 0; }
   .db-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
   .db-cap { font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase; color: ${C.textMuted}; }
@@ -923,13 +938,21 @@ const DB_CSS = `
 
   /* controls — flexible columns aligned to a shared bottom baseline; the segmented
      Expiry control stretches to fill its column instead of floating/overflowing. */
-  .db-controls { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(200px, 1fr) 1.5fr; gap: 20px; align-items: end; }
-  @media (max-width: 900px) { .db-controls { grid-template-columns: 1fr; } }
-  .db-amount, .db-expiry, .db-tenor { display: grid; gap: 8px; }
-  .db-amount-in { display: flex; align-items: baseline; gap: 8px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 9px 12px; }
-  .db-num { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 21px; font-weight: 600; padding: 0; }
-  .db-amount-in > span { font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
+  /* controls: text (left) · expiry options (middle, widest) · order box (right) */
+  .db-controls { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(0, 1.9fr) minmax(238px, 268px); gap: 24px; align-items: start; min-width: 0; }
+  @media (max-width: 980px) { .db-controls { grid-template-columns: 1fr; } }
+  .db-amount, .db-expiry, .db-tenor { display: grid; gap: 8px; min-width: 0; }
+  .db-amount-in { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 8px 10px 8px 12px; }
+  .db-amount-cur { font-family: ${FD}; font-size: 18px; font-weight: 600; color: ${C.textMuted}; line-height: 1; }
+  .db-num { min-width: 0; width: 100%; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 21px; font-weight: 600; padding: 0; }
   .db-seg { display: flex; width: 100%; gap: 2px; padding: 3px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; }
+  /* individual-expiry strip (advanced): one compact chip per live oracle, horizontally scrollable so 19 tenors never overlap */
+  .db-strike-strip { display: flex; gap: 5px; min-width: 0; overflow-x: auto; overflow-y: hidden; padding-bottom: 5px; scrollbar-width: thin; }
+  .db-strike-strip::-webkit-scrollbar { height: 5px; }
+  .db-strike-strip::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 999px; }
+  .db-strike { flex: 0 0 auto; appearance: none; border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 8px; height: 32px; padding: 0 12px; color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; font-weight: 560; white-space: nowrap; cursor: pointer; transition: all 0.13s ${EASE}; }
+  .db-strike:hover { color: ${C.textSecondary}; border-color: ${C.borderHover}; }
+  .db-strike.is-on { background: ${C.tealBg}; border-color: ${C.tealLight}; color: ${C.tealLight}; }
   .db-seg button { flex: 1; appearance: none; border: 0; background: transparent; border-radius: 6px; padding: 8px 10px; color: ${C.textMuted}; font-family: ${FM}; font-size: 10.5px; cursor: pointer; transition: all 0.14s ${EASE}; text-transform: capitalize; }
   .db-seg button:hover { color: ${C.textSecondary}; }
   .db-seg button.is-on { background: ${C.card}; color: ${C.textPrimary}; }
@@ -979,12 +1002,9 @@ const DB_CSS = `
   .db-brow-tot .db-band { color: ${C.textPrimary}; }
   .db-slip { color: ${C.textMuted}; }
 
-  .db-routing { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; margin-top: 14px; }
-  @media (max-width: 700px) { .db-routing { grid-template-columns: repeat(2, 1fr); } }
   .db-rh { background: ${C.card}; padding: 9px 12px; display: grid; gap: 3px; }
   .db-rh span { font-family: ${FM}; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; }
   .db-rh strong { font-family: ${FD}; font-size: 12px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .db-rh-mono { font-family: ${FM} !important; font-size: 10.5px !important; }
 
   .db-greeks { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
   .db-greek { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 10px; padding: 10px 12px; display: grid; gap: 5px; }

@@ -101,7 +101,11 @@ export type DeepBookQuote = {
 export function fetchDeepBookStrategies(): Promise<{ strategies: DeepBookStrategy[] }> {
   return getJson(`/api/deepbook/strategies`);
 }
-export function quoteDeepBookStrategy(body: { strategy_id: string; notional_usd: number; expiry_pref?: "near" | "mid" | "far"; sender?: string }): Promise<DeepBookQuote> {
+export interface DeepBookExpiry { oracle_id: string; expiry: number; t_years: number; tenor_label: string }
+export function fetchDeepBookExpiries(): Promise<{ expiries: DeepBookExpiry[] }> {
+  return getJson(`/api/deepbook/expiries`);
+}
+export function quoteDeepBookStrategy(body: { strategy_id: string; notional_usd: number; expiry_pref?: "near" | "mid" | "far"; oracle_id?: string; sender?: string }): Promise<DeepBookQuote> {
   return postJson<DeepBookQuote>(`/api/deepbook/quote`, body);
 }
 

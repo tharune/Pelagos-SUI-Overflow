@@ -22,6 +22,7 @@ import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { friendlyWalletError } from "../_lib/chain";
 import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";
+import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 import { useMode } from "../_lib/mode";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { ResultLine, Cap, StripStyles, openableBuckets, dollars } from "../_components/strip-products";
@@ -152,6 +153,7 @@ export default function VolatilityPage() {
   // 0.0000 and the desk reads as dead. A $25k ticket makes the Greeks, the
   // payoff P&L axis, and the live delta-hedge all read meaningfully.
   const [notional, setNotional] = useState("25000");
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
   const [horizon, setHorizon] = useState<Horizon>("short");
   // Advanced bespoke-builder state: a sculpted per-band weight profile + strip
   // width + bucket count. Drives the Advanced quote (custom path); Basic keeps
@@ -344,7 +346,7 @@ export default function VolatilityPage() {
 
   // Shared bits passed down to both views.
   const deskState = {
-    strategy, setStrategy, notional, setNotional, horizon, setHorizon,
+    strategy, setStrategy, notional, setNotional, currency, setCurrency, horizon, setHorizon,
     surface, surfErr, q, err, accent, meta, tradeable, g,
     markPrice, movePct, runDelta, gammaPnl, hedgeSide, hedgeBtc, venue, onSui, fwd,
     liveMark, hedged, routeHedge, busy, stage, result, openErr, openPosition, wallet,
@@ -409,6 +411,7 @@ export default function VolatilityPage() {
 type DeskProps = {
   strategy: VolStrategy; setStrategy: (s: VolStrategy) => void;
   notional: string; setNotional: (s: string) => void;
+  currency: Currency; setCurrency: (c: Currency) => void;
   horizon: Horizon; setHorizon: (h: Horizon) => void;
   surface: VolDeskSurface | null; surfErr: string | null;
   q: VolQuote | null; err: string | null; accent: string; meta: StratMeta;
@@ -435,7 +438,7 @@ type DeskProps = {
 // BASIC — the guided 4-strategy desk + horizon selector.
 // ===========================================================================
 function BasicDesk(p: DeskProps) {
-  const { strategy, setStrategy, notional, setNotional, horizon, setHorizon, surface, q, accent, meta, tradeable, ivPct, rvPct, vrp, fwd, wallet, busy, markPrice, venue, onSui } = p;
+  const { strategy, setStrategy, notional, setNotional, currency, setCurrency, horizon, setHorizon, surface, q, accent, meta, tradeable, ivPct, rvPct, vrp, fwd, wallet, busy, markPrice, venue, onSui } = p;
   const horizonSlice = sliceForHorizon(surface, horizon);
   // The delta-neutral hedge is now an OPTIONAL step inside the execute modal,
   // surfaced when you click Open — not a permanent panel cluttering the desk.
@@ -510,9 +513,11 @@ function BasicDesk(p: DeskProps) {
         {/* controls — amount + horizon + plain description (stacked) */}
         <div className="vd-card vd-ctrls vd-ctrls-v">
           <div className="vd-amount">
-            <Cap>Amount · dUSDC</Cap>
+            <Cap>Amount</Cap>
             <div className="vd-amount-in">
+              <span className="vd-amount-cur">$</span>
               <input className="vd-num" inputMode="decimal" value={notional} onChange={(e) => setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+              <CurrencySelect value={currency} onChange={setCurrency} />
             </div>
           </div>
           <div className="vd-horizon">
@@ -818,8 +823,12 @@ function AdvancedDesk(p: DeskProps) {
             </div>
           </label>
           <label className="vd-field">
-            <span className="vd-build-lbl">Amount · dUSDC</span>
-            <input className="vd-num vd-num-sm" inputMode="decimal" value={p.notional} onChange={(e) => p.setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+            <span className="vd-build-lbl">Amount</span>
+            <div className="vd-field-row">
+              <span className="vd-amount-cur">$</span>
+              <input className="vd-num vd-num-sm" inputMode="decimal" value={p.notional} onChange={(e) => p.setNotional(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" />
+              <CurrencySelect value={p.currency} onChange={p.setCurrency} />
+            </div>
           </label>
         </div>
 
@@ -1332,10 +1341,13 @@ const VD_CSS = `
   .vd-strat em { font-family: ${FM}; font-size: 9.5px; font-style: normal; color: ${C.textMuted}; }
 
   .vd-amount { border: 0.5px solid ${C.border}; background: ${C.surface}; border-radius: 11px; padding: 10px 13px; display: grid; gap: 6px; }
-  .vd-amount-in { display: flex; align-items: baseline; gap: 8px; }
+  .vd-amount-in { display: flex; align-items: center; gap: 7px; }
   .vd-num { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: ${C.textPrimary}; font-family: ${FD}; font-size: 22px; font-weight: 600; padding: 0; }
   .vd-num-sm { font-size: 18px; }
   .vd-amount-in span { font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
+  .vd-amount-in .vd-amount-cur, .vd-field-row .vd-amount-cur { font-family: ${FD}; font-size: 18px; font-weight: 600; color: ${C.textMuted}; line-height: 1; }
+  .vd-field-row { display: flex; align-items: center; gap: 7px; }
+  .vd-field-row .vd-num-sm { width: auto; flex: 1; min-width: 0; }
   .vd-horizon { display: grid; gap: 6px; }
   .vd-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .vd-pill { display: grid; gap: 2px; justify-items: center; padding: 8px 6px; border-radius: 9px; border: 0.5px solid ${C.border}; background: ${C.surface}; cursor: pointer; transition: all 0.15s ${EASE}; }

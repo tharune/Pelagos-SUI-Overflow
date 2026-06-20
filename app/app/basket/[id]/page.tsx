@@ -7,6 +7,7 @@ import { Header, PageFrame } from "../../_components/Header";
 import { MetricTile } from "../../_components/charts";
 import { C, FS, FD, FM, EASE, tc } from "../../_lib/tokens";
 import { bundleById, type Bundle } from "../../_lib/bundles";
+import { CurrencySelect, type Currency } from "../../_components/CurrencySelect";
 import type { LiveBasket, LiveMarket, WindowKey } from "../../_lib/live-baskets";
 import { useLiveBaskets } from "../../_lib/use-live-baskets";
 import { useSandbox } from "../../_lib/demo-state";
@@ -1432,6 +1433,7 @@ function BuySection({
   topLegCount: number;
   hasAmount: boolean;
 }) {
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
   return (
     <>
       <div
@@ -1489,7 +1491,8 @@ function BuySection({
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: FD, fontSize: 19, fontWeight: 600, color: C.textMuted, lineHeight: 1 }}>$</span>
           <input
             inputMode="decimal"
             value={amount}
@@ -1509,17 +1512,7 @@ function BuySection({
               padding: 0,
             }}
           />
-          <span
-            style={{
-              fontFamily: FM,
-              fontSize: 11,
-              color: C.textSecondary,
-              letterSpacing: "0.06em",
-              fontWeight: 400,
-            }}
-          >
-            USDC
-          </span>
+          <CurrencySelect value={currency} onChange={setCurrency} />
         </div>
       </div>
 

@@ -10,6 +10,7 @@ import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
 import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } from "../_components/dist-chart";
 import { Stat, openableBuckets } from "../_components/strip-products";
 import { DusdcFaucetButton } from "../_components/DusdcFaucet";
+import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 import {
   stripPreview,
   ensureManager,
@@ -657,6 +658,7 @@ function AdvancedDistribution() {
   const [mu, setMu] = useState(0);
   const [sigma, setSigma] = useState(0);
   const [budget, setBudget] = useState("100");
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
 
   const [density, setDensity] = useState<ImpliedDensity | null>(null);
   const [quote, setQuote] = useState<StripQuote | null>(null);
@@ -862,8 +864,12 @@ function AdvancedDistribution() {
                   <Slider label="Mean (μ)" value={mu} min={muMin} max={muMax} step={step} fmt={(v) => `$${Math.round(v).toLocaleString()}`} onChange={setMu} />
                   <Slider label="Std dev (σ) · conviction" value={sigma} min={sigMin} max={sigMax} step={step} fmt={(v) => `±$${Math.round(v).toLocaleString()}`} onChange={setSigma} />
                   <div>
-                    <div className="dc-cap" style={{ marginBottom: 6 }}>Budget (dUSDC) · max loss</div>
-                    <input className="dc-num" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
+                    <div className="dc-cap" style={{ marginBottom: 6 }}>Budget · max loss</div>
+                    <div className="dc-amount-in">
+                      <span className="dc-amount-cur">$</span>
+                      <input className="dc-num dc-num-bare" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
+                      <CurrencySelect value={currency} onChange={setCurrency} />
+                    </div>
                   </div>
                   <button onClick={() => selectMarket(market)} className="dc-reset">Reset to live forward</button>
                 </div>
@@ -970,6 +976,11 @@ function AdvancedDistribution() {
         .dc-market:hover { border-color: ${C.borderHover}; }
         .dc-num { width: 100%; box-sizing: border-box; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 10px 12px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; outline: none; }
         .dc-num:focus { border-color: ${C.tealLight}; }
+        .dc-amount-in { display: flex; align-items: center; gap: 7px; background: ${C.surface}; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 6px 8px 6px 12px; }
+        .dc-amount-in:focus-within { border-color: ${C.tealLight}; }
+        .dc-amount-cur { font-family: ${FD}; font-size: 15px; font-weight: 600; color: ${C.textMuted}; line-height: 1; }
+        .dc-num-bare { flex: 1; min-width: 0; width: auto; background: transparent; border: none; border-radius: 0; padding: 4px 0; }
+        .dc-num-bare:focus { border: none; }
         .dc-reset { background: transparent; border: 0.5px solid ${C.border}; border-radius: 8px; padding: 8px; color: ${C.textSecondary}; font-family: ${FM}; font-size: 11px; cursor: pointer; }
         .dc-reset:hover { border-color: ${C.borderHover}; color: ${C.textPrimary}; }
         .dc-open { width: 100%; background: ${C.tealLight}; border: none; border-radius: 10px; padding: 14px; color: #06121a; font-family: ${FD}; font-size: 14px; font-weight: 600; }

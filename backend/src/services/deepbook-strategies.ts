@@ -193,14 +193,33 @@ function tenorLabel(ms: number): string {
  * first/middle/last of the active BTC oracles sorted near→far (mirrors the term
  * basket's `resolveTermOracles`). Falls back to the soonest active oracle.
  */
-async function resolveOracle(pref: ExpiryPref): Promise<ResolvedOracle> {
+/** All active BTC oracles as selectable expiries (advanced "pick a strike"). */
+export async function listExpiries(): Promise<
+  Array<{ oracle_id: string; expiry: number; t_years: number; tenor_label: string }>
+> {
+  const now = Date.now();
+  const oracles = await predictServer.predictOracles().catch(() => predictServer.oracles());
+  return oracles
+    .filter((o) => o.status === 'active' && o.expiry > now + 6 * 60_000 && o.underlying_asset?.toUpperCase() === 'BTC')
+    .sort((a, b) => a.expiry - b.expiry)
+    .map((o) => ({
+      oracle_id: o.oracle_id,
+      expiry: o.expiry,
+      t_years: (o.expiry - now) / (365.25 * 24 * 3600 * 1000),
+      tenor_label: tenorLabel(o.expiry - now),
+    }));
+}
+
+async function resolveOracle(pref: ExpiryPref, oracleId?: string): Promise<ResolvedOracle> {
   const now = Date.now();
   const oracles = await predictServer.predictOracles().catch(() => predictServer.oracles());
   const active = oracles
     .filter((o) => o.status === 'active' && o.expiry > now + 6 * 60_000 && o.underlying_asset?.toUpperCase() === 'BTC')
     .sort((a, b) => a.expiry - b.expiry);
-  let chosen = active[0];
-  if (active.length > 0) {
+  // An explicit oracle (advanced: a specific picked expiry) wins if still active;
+  // otherwise fall back to the near/mid/far preference.
+  let chosen = oracleId ? active.find((o) => o.oracle_id === oracleId) : undefined;
+  if (!chosen && active.length > 0) {
     if (pref === 'far') chosen = active[active.length - 1];
     else if (pref === 'mid') chosen = active[Math.floor((active.length - 1) / 2)];
     else chosen = active[0];
@@ -280,6 +299,7 @@ export async function quoteStrategy(args: {
   strategyId: string;
   notionalUsd: number;
   expiryPref?: ExpiryPref;
+  oracleId?: string;
   sender?: string;
 }): Promise<StrategyQuote> {
   const def = findStrategy(args.strategyId);
@@ -289,11 +309,11 @@ export async function quoteStrategy(args: {
   const pref: ExpiryPref = args.expiryPref ?? 'mid';
   const notionalUsd = Math.max(1, Number(args.notionalUsd) || 100);
 
-  const cacheKey = `${def.id}|${notionalUsd}|${pref}`;
+  const cacheKey = `${def.id}|${notionalUsd}|${pref}|${args.oracleId ?? ''}`;
   const hit = quoteCache.get(cacheKey);
   if (hit && Date.now() - hit.at < QUOTE_TTL_MS) return hit.quote;
 
-  const o = await resolveOracle(pref);
+  const o = await resolveOracle(pref, args.oracleId);
   const budgetRaw = BigInt(Math.round(notionalUsd * 10 ** DUSDC_DECIMALS));
 
   // σ = the oracle's live implied move (tenor-aware SVI), floored to the grid so

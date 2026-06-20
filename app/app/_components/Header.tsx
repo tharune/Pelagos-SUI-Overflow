@@ -19,6 +19,7 @@ const NAV_LEFT = [
   { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
   { id: "deepbook",     label: "DeepBook",            href: "/app/deepbook" },
   { id: "basket",       label: "Baskets",             href: "/app/basket", beta: true },
+  { id: "docs",         label: "About",               href: "/app/docs" },
 ];
 
 function PelagosMark() {

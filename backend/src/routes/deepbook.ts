@@ -16,6 +16,7 @@ import { Router, Request, Response } from 'express';
 import {
   listStrategies,
   quoteStrategy,
+  listExpiries,
   type ExpiryPref,
 } from '../services/deepbook-strategies';
 
@@ -36,6 +37,16 @@ router.get('/strategies', (_req: Request, res: Response) => {
   }
 });
 
+/** GET /api/deepbook/expiries — every active BTC oracle as a selectable expiry. */
+router.get('/expiries', async (_req: Request, res: Response) => {
+  try {
+    res.json({ expiries: await listExpiries() });
+  } catch (err) {
+    console.error('GET /api/deepbook/expiries error:', err);
+    res.status(500).json({ error: 'Failed to list expiries' });
+  }
+});
+
 /**
  * POST /api/deepbook/quote
  * body: { strategy_id, notional_usd, expiry_pref?: "near"|"mid"|"far" }
@@ -53,6 +64,7 @@ router.post('/quote', async (req: Request, res: Response) => {
       strategyId,
       notionalUsd,
       expiryPref: parseExpiryPref(body.expiry_pref),
+      oracleId: typeof body.oracle_id === 'string' ? body.oracle_id : undefined,
       sender: typeof body.sender === 'string' ? body.sender : undefined,
     });
     res.json({

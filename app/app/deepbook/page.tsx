@@ -64,6 +64,9 @@ const pctSigned = (v: number) => {
 };
 // raw (6-dp dUSDC) → ui number
 const ui = (raw: string) => Number(raw) / 1e6;
+// epoch-ms expiry → compact "Jun 24 · 14:30"
+const fmtExpiry = (expiry: string | number) =>
+  new Date(Number(expiry)).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 
 const RISK_COLOR: Record<string, string> = {
   low: C.green,
@@ -248,9 +251,9 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
 
   const deployBtn = (
     !wallet.connected ? (
-      <ConnectModal trigger={<button className="db-cta" style={{ background: accent }}>Connect a wallet</button>} />
+      <ConnectModal trigger={<button className="db-cta" style={{ background: C.tealLight }}>Connect a wallet</button>} />
     ) : (
-      <button className="db-cta" style={{ background: accent }} disabled={busy || !quote || tradeableBuckets.length === 0} onClick={deploy}>
+      <button className="db-cta" style={{ background: C.tealLight }} disabled={busy || !quote || tradeableBuckets.length === 0} onClick={deploy}>
         {busy ? (stage ?? "Submitting…") : `Deploy · ${quote ? usd(quote.strip.total_cost_raw) : "—"}`}
       </button>
     )
@@ -348,7 +351,7 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
       </div>
 
       <div className="db-quote-row">
-        <div className="db-card">
+        <div className="db-card db-quote-card">
           <div className="db-card-head"><span className="db-cap">Quote</span><span className="db-dim">{tradeable} legs · live</span></div>
           <div className="db-metrics">
             <Metric label="Cost to deploy" value={usd(quote.strip.total_cost_raw)} />
@@ -358,10 +361,18 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
           </div>
         </div>
         <div className="db-card db-deploy-card">
-          {deployBtn}
-          {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
-          {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
-          <p className="db-note">Strip minted on-chain on Sui via DeepBook Predict. Pricing live from the order book; settles on testnet.</p>
+          <div className="db-card-head"><span className="db-cap">Deploy</span><span className="db-dim">{quote.tenor_label}</span></div>
+          <div className="db-dsum">
+            <div><span className="db-dsum-k">Strategy</span><span className="db-dsum-v">{quote.name}</span></div>
+            <div><span className="db-dsum-k">Expiry</span><span className="db-dsum-v">{fmtExpiry(quote.expiry)}</span></div>
+            <div><span className="db-dsum-k">Settles</span><span className="db-dsum-v">Sui · DeepBook Predict</span></div>
+          </div>
+          <div className="db-deploy-act">
+            {deployBtn}
+            {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
+            {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+            <p className="db-note">Strip minted on-chain on Sui via DeepBook Predict. Pricing live from the order book; settles on testnet.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -970,7 +981,14 @@ const DB_CSS = `
   .db-adv-top { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.95fr); gap: 14px; align-items: start; }
   @media (max-width: 1000px) { .db-quote-row, .db-adv-top { grid-template-columns: 1fr; } }
   .db-side { display: grid; gap: 14px; min-width: 0; align-content: start; }
-  .db-deploy-card { display: grid; gap: 0; align-content: start; }
+  /* quote + deploy: two balanced cards whose inner lists flex-fill to equal height */
+  .db-quote-card, .db-deploy-card { display: flex; flex-direction: column; gap: 12px; }
+  .db-quote-card .db-metrics { flex: 1; }
+  .db-deploy-act { display: flex; flex-direction: column; }
+  .db-dsum { flex: 1; display: grid; grid-auto-rows: 1fr; gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
+  .db-dsum > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; background: ${C.card}; padding: 11px 13px; }
+  .db-dsum-k { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; white-space: nowrap; }
+  .db-dsum-v { font-family: ${FD}; font-size: 12.5px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .db-quote-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.95fr); gap: 14px; align-items: start; }
   .db-adv-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.92fr); gap: 14px; align-items: start; }
@@ -980,7 +998,7 @@ const DB_CSS = `
   .db-payoff-empty { display: grid; place-items: center; font-family: ${FM}; font-size: 11px; color: ${C.textMuted}; }
 
   .db-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: ${C.border}; border: 0.5px solid ${C.border}; border-radius: 10px; overflow: hidden; }
-  .db-metric { background: ${C.card}; padding: 11px 13px; display: grid; gap: 4px; }
+  .db-metric { background: ${C.card}; padding: 11px 13px; display: grid; gap: 4px; align-content: center; }
   .db-metric-k { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; display: flex; align-items: baseline; gap: 6px; }
   .db-metric-k i { font-style: normal; font-size: 8.5px; opacity: 0.7; }
   .db-metric strong { font-family: ${FD}; font-size: 16px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; }

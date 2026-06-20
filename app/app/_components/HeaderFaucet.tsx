@@ -8,8 +8,8 @@ import { suiExplorerTxUrl } from "../_lib/chain";
 
 // What a single Mint hands out. Kept in sync with the backend dispenseTestFunds.
 const GRANTS: Array<{ asset: string; amount: string; use: string; color: string }> = [
-  { asset: "dUSDC", amount: "25", use: "Predict quote — options, volatility, PPN, tranches", color: C.tealLight },
-  { asset: "mUSDC", amount: "10,000", use: "Vault collateral — baskets & risk slices", color: C.blue },
+  { asset: "dUSDC", amount: "25", use: "Native DeepBook Predict quote asset", color: C.tealLight },
+  { asset: "mUSDC", amount: "10,000", use: "Pelagos USDC — trade any product, 1:1 with dUSDC", color: C.blue },
   { asset: "SUI", amount: "0.05", use: "Gas, to sign your first transaction", color: C.violet },
 ];
 

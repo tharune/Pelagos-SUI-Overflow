@@ -32,6 +32,48 @@ type StrategyMeta = {
 const WINDOWS = [30, 60, 90, 180] as const;
 type WindowDays = (typeof WINDOWS)[number];
 
+const PORTFOLIO_ID = "__your_portfolio__";
+
+export type PortfolioMix = Array<{ id: string; weight: number; label: string }>;
+
+/** Blend several strategy-class backtests into one value-weighted equity curve
+ *  (each class curve starts at $1; weights normalize to 1), then recompute the
+ *  headline metrics from the blended curve. */
+function blendBacktests(parts: Array<{ r: BacktestResult; w: number }>, windowDays: number): BacktestResult {
+  const tot = parts.reduce((s, p) => s + p.w, 0) || 1;
+  const ws = parts.map((p) => p.w / tot);
+  const n = Math.min(...parts.map((p) => p.r.equity_curve.length));
+  const curve: { t: number; equity: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    let eq = 0;
+    parts.forEach((p, k) => { eq += ws[k] * p.r.equity_curve[i].equity; });
+    curve.push({ t: parts[0].r.equity_curve[i].t, equity: eq });
+  }
+  const rets: number[] = [];
+  for (let i = 1; i < curve.length; i++) rets.push(curve[i].equity / curve[i - 1].equity - 1);
+  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
+  const vol = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, rets.length - 1));
+  const ann = Math.sqrt(365);
+  let peak = curve[0]?.equity ?? 1;
+  let maxdd = 0;
+  for (const c of curve) { peak = Math.max(peak, c.equity); maxdd = Math.min(maxdd, c.equity / peak - 1); }
+  const wins = rets.filter((r) => r > 0).length;
+  return {
+    strategy_id: PORTFOLIO_ID,
+    window_days: windowDays,
+    source: "portfolio-blend",
+    coverage_note: "Value-weighted blend of your live holdings' strategy classes, replayed on real history.",
+    equity_curve: curve,
+    metrics: {
+      total_return_pct: ((curve[curve.length - 1]?.equity ?? 1) - 1) * 100,
+      sharpe: vol > 0 ? (mean / vol) * ann : 0,
+      max_drawdown_pct: maxdd * 100,
+      win_rate: rets.length ? wins / rets.length : 0,
+      ann_vol_pct: vol * ann * 100,
+    },
+  };
+}
+
 const card: React.CSSProperties = {
   background: C.card,
   border: `0.5px solid ${C.border}`,
@@ -256,7 +298,9 @@ function Metric({
 
 const fmtSigned = (x: number, d = 2) => `${x >= 0 ? "+" : ""}${x.toFixed(d)}%`;
 
-export function StrategyBacktestPanel() {
+export function StrategyBacktestPanel({ portfolioMix }: { portfolioMix?: PortfolioMix } = {}) {
+  const mix = useMemo(() => (portfolioMix ?? []).filter((m) => m.weight > 0), [portfolioMix]);
+  const hasPortfolio = mix.length > 0;
   const [strategies, setStrategies] = useState<StrategyMeta[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState<WindowDays>(60);
@@ -272,7 +316,6 @@ export function StrategyBacktestPanel() {
       .then((r) => {
         if (cancelled) return;
         setStrategies(r.strategies);
-        if (r.strategies.length > 0) setActiveId(r.strategies[0].id);
       })
       .catch((e) => {
         if (!cancelled) setListErr(e instanceof Error ? e.message : String(e));
@@ -282,13 +325,41 @@ export function StrategyBacktestPanel() {
     };
   }, []);
 
+  // The displayed catalog prepends a synthetic "Your Portfolio" entry built from
+  // the live holdings when there are any.
+  const displayStrategies = useMemo<StrategyMeta[] | null>(() => {
+    if (!strategies) return null;
+    if (!hasPortfolio) return strategies;
+    const portfolioMeta: StrategyMeta = {
+      id: PORTFOLIO_ID,
+      name: "Your Portfolio",
+      kind: "blend",
+      description: `A value-weighted blend of your live holdings — ${mix.map((m) => m.label).join(" · ")} — replayed on real history.`,
+    };
+    return [portfolioMeta, ...strategies.filter((s) => s.id !== PORTFOLIO_ID)];
+  }, [strategies, hasPortfolio, mix]);
+
+  // Default the selection: your portfolio first, else the first class.
+  useEffect(() => {
+    if (activeId || !displayStrategies || displayStrategies.length === 0) return;
+    setActiveId(hasPortfolio ? PORTFOLIO_ID : displayStrategies[0].id);
+  }, [activeId, displayStrategies, hasPortfolio]);
+
   // Run the backtest whenever the selection or window changes.
   useEffect(() => {
     if (!activeId) return;
     let cancelled = false;
     setLoading(true);
     setRunErr(null);
-    fetchBacktest(activeId, windowDays)
+    const run = activeId === PORTFOLIO_ID
+      ? Promise.all(mix.map((m) => fetchBacktest(m.id, windowDays).then((r) => ({ r, w: m.weight }))))
+          .then((parts) => {
+            const ok = parts.filter((p) => p.r.equity_curve.length > 1);
+            if (ok.length === 0) throw new Error("No backtestable holdings yet.");
+            return blendBacktests(ok, windowDays);
+          })
+      : fetchBacktest(activeId, windowDays);
+    run
       .then((r) => {
         if (!cancelled) setResult(r);
       })
@@ -304,11 +375,11 @@ export function StrategyBacktestPanel() {
     return () => {
       cancelled = true;
     };
-  }, [activeId, windowDays]);
+  }, [activeId, windowDays, mix]);
 
   const activeMeta = useMemo(
-    () => strategies?.find((s) => s.id === activeId) ?? null,
-    [strategies, activeId],
+    () => displayStrategies?.find((s) => s.id === activeId) ?? null,
+    [displayStrategies, activeId],
   );
 
   if (listErr) {
@@ -345,7 +416,7 @@ export function StrategyBacktestPanel() {
       <aside className="sbt-rail">
         <Cap>Strategy class</Cap>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-          {strategies.map((s) => {
+          {(displayStrategies ?? strategies).map((s) => {
             const on = s.id === activeId;
             return (
               <button

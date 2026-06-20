@@ -206,8 +206,9 @@ function HackathonNote() {
         a financial product, a securities offering, or investment advice,
         and no real capital is routed through any of its flows. There
         are no plans to deploy to mainnet, issue a token, or continue
-        maintenance after the event. All displayed prices, payoffs, and
-        yields are sandbox simulations.
+        maintenance after the event. Prices and payoffs are live off real
+        testnet DeepBook liquidity; all balances are testnet tokens with no
+        monetary value.
       </p>
     </aside>
   );
@@ -619,7 +620,7 @@ function Architecture() {
           <>
             <B>On-chain</B> — Sui Move packages under{" "}
             <Code>pelagos_sui/</Code> deployed to Sui testnet.
-            Local execution routes mint mock USDC, create prediction
+            Local execution routes mint Pelagos USDC, create prediction
             markets, buy position objects, resolve, and claim through
             the deployed package.
           </>,
@@ -926,7 +927,7 @@ function ConstTrade() {
           <>
             Open the basket detail page. The sell panel is active
             regardless of whether a position is held, allowing quotes
-            to be simulated.
+            to be previewed.
           </>,
           <>
             Select <B>Sell</B> and enter a token quantity, or use the
@@ -1459,7 +1460,7 @@ function PpnRouting() {
         The <B>Yield Routing</B> block on the PPN page reads from the
         backend aggregator <Code>GET /api/vaults/yields</Code>. The
         aggregator pulls a public yields dataset every five minutes,
-        filters to verified single-asset mock-USDC lending venues with TVL
+        filters to verified single-asset USDC lending venues with TVL
         above $100k, and returns the top five by APY. Each row
         carries a <Code>live / estimated</Code> freshness flag.
       </P>
@@ -1702,7 +1703,7 @@ npx tsc --noEmit`}
       <SubHeading>On-chain programs</SubHeading>
       <P>
         The Sui Move package under <Code>pelagos_sui/</Code> is
-        deployed to Sui testnet. It exposes mock-USDC minting plus
+        deployed to Sui testnet. It exposes Pelagos USDC minting plus
         prediction-market create, buy, resolve, and claim flows used by
         the local Sui execution harness.
       </P>
@@ -1813,7 +1814,7 @@ function FaqAll() {
     <>
       <Faq
         q="Is real capital used in the application?"
-        a="No. The application is deployed to Sui testnet only and all flows use mock assets. No real capital is routed through the protocol."
+        a="No. Pelagos runs on Sui testnet — every balance is a testnet token with no monetary value, including both dUSDC and Pelagos USDC (mUSDC). Pricing and payoffs are live off real DeepBook liquidity, but no real capital is routed through the protocol."
       />
       <Faq
         q="Will the protocol be deployed to mainnet?"

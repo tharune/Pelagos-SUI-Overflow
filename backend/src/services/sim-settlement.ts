@@ -181,8 +181,24 @@ export async function settleSim(simId: string): Promise<SimSettleResult> {
   await load();
   const pos = positions.get(simId);
   if (!pos) throw new Error(`unknown sim position ${simId}`);
+  // Idempotent: never re-mint an already-settled position (a double-settle would
+  // pay the holder twice). Replay the booked result instead.
+  if (pos.status === 'settled') {
+    return {
+      sim_id: simId,
+      settlement_forward_usd: pos.forward_usd,
+      payoff_usd: pos.payoff_usd ?? 0,
+      premium_usd: pos.premium_usd,
+      pnl_usd: (pos.payoff_usd ?? 0) - pos.premium_usd,
+      mint_digest: pos.settle_digest ?? null,
+      explorer_url: null,
+    };
+  }
   const fwd = await settlementForward(pos);
-  const payoff = Math.min(realizedPayoff(pos, fwd), pos.max_payout_usd);
+  // Cap at max payout, floor at 0, and never let a non-finite value reach the mint.
+  const cap = Number.isFinite(pos.max_payout_usd) ? pos.max_payout_usd : realizedPayoff(pos, fwd);
+  const payoff = Math.max(0, Math.min(realizedPayoff(pos, fwd), cap));
+  if (!Number.isFinite(payoff)) throw new Error(`settlement produced a non-finite payoff for ${simId}`);
   let mintDigest: string | null = null;
   let explorer: string | null = null;
   if (payoff > 0) {

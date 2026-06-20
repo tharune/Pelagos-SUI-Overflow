@@ -5,12 +5,11 @@ import { C, FM, EASE } from "../_lib/tokens";
 
 export type Currency = "dUSDC" | "mUSDC";
 
-// dUSDC and mUSDC are two INDEPENDENT settlement rails (not pegged, no swap):
-// dUSDC settles on the real DeepBook Predict order book (scarce, faucet-gated);
-// mUSDC is our own freely-mintable currency for simulating activity in perpetuity.
+// Two equal USD settlement currencies (both $1), priced off the same DeepBook
+// book. dUSDC is Predict's native quote asset; mUSDC is Pelagos-minted USDC.
 const CURRENCY_NOTE: Record<Currency, string> = {
-  dUSDC: "Real DeepBook Predict settlement",
-  mUSDC: "Simulation · infinite test funds",
+  dUSDC: "Native · DeepBook Predict",
+  mUSDC: "Pelagos USDC · same DeepBook",
 };
 
 /**

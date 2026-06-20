@@ -47,15 +47,19 @@ router.post('/open/prepare', async (req: Request, res: Response) => {
     if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('owner (0x...) is required');
     const product = (PRODUCTS.includes(b.product as SimProduct) ? b.product : 'strip') as SimProduct;
     const premiumUsd = Number(b.premium_usd ?? b.notional_usd ?? 0);
-    if (!(premiumUsd > 0)) throw new Error('premium_usd must be positive');
+    if (!(premiumUsd > 0) || !Number.isFinite(premiumUsd)) throw new Error('premium_usd must be a positive number');
+    const maxPayoutUsd = Number(b.max_payout_usd ?? premiumUsd);
+    if (!Number.isFinite(maxPayoutUsd) || maxPayoutUsd <= 0) throw new Error('max_payout_usd must be a positive number');
+    const forwardUsd = Number(b.forward_usd ?? 0);
+    if (!Number.isFinite(forwardUsd) || forwardUsd < 0) throw new Error('forward_usd must be a non-negative number');
     const out = await prepareSimOpen({
       owner,
       product,
       name: typeof b.name === 'string' ? b.name : product,
       premium_usd: premiumUsd,
-      max_payout_usd: Number(b.max_payout_usd ?? premiumUsd),
+      max_payout_usd: maxPayoutUsd,
       oracle_id: typeof b.oracle_id === 'string' ? b.oracle_id : null,
-      forward_usd: Number(b.forward_usd ?? 0),
+      forward_usd: forwardUsd,
       expiry_ms: b.expiry_ms != null ? Number(b.expiry_ms) : null,
       bands: parseBands(b.bands),
     });

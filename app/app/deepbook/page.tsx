@@ -215,10 +215,10 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     if (!quote || busy) return;
     setBusy(true); setOpenErr(null); setResult(null);
     try {
-      // mUSDC = independent simulation rail: deposit the premium into our own
+      // mUSDC = Pelagos USDC settlement (same DeepBook pricing): deposit the premium into our own
       // Vault<MOCK_USDC> (real on-chain receipt), settle later by minting the payoff.
       if (currency === "mUSDC") {
-        setStage("Opening simulation…");
+        setStage("Opening position…");
         const bands = tradeableBuckets.map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: ui(b.max_payout_raw) }));
         if (bands.length === 0) throw new Error("No tradeable legs in this strategy right now.");
         const prep = await simOpen({
@@ -747,7 +747,7 @@ function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
     try {
       setStage("Pricing upside strip…");
       const vq = await volQuote({ strategy: asVolStrategy(strategy), side: "long", notional_usd: quote.upside_budget_usd });
-      // mUSDC = independent simulation rail: deposit the principal, settle to
+      // mUSDC = Pelagos USDC settlement (principal-protected): deposit the principal, settle to
       // principal + realized upside (principal-protected by the floor catch-all band).
       if (currency === "mUSDC") {
         const r = (x: string) => Number(x) / 1e6;
@@ -756,7 +756,7 @@ function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
           .filter((b) => b.tradeable && Number(b.quantity) > 0)
           .map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: principal + r(b.max_payout_raw) }));
         const bands = [...upBands, { lower_usd: 0, higher_usd: 1e15, payout_usd: principal }];
-        setStage("Opening simulation…");
+        setStage("Opening position…");
         const prep = await simOpen({
           owner: wallet.address as string, product: "vol", name: quote.preset_name,
           premium_usd: principal, max_payout_usd: principal + r(vq.strip.realized_max_payout_raw),

@@ -363,7 +363,7 @@ const HOW_IT_WORKS: Array<{ num: string; title: string; body: string }> = [
     title: "Settlement",
     body:
       IS_SUI
-        ? `Buy creates a Sui testnet market through the Pelagos Move package, mints mock USDC, and stores the resulting Sui position object against this local basket.`
+        ? `Buy creates a Sui testnet market through the Pelagos Move package, mints Pelagos USDC, and stores the resulting Sui position object against this local basket.`
         : "Buy signs a wallet transaction, transfers USDC into the basket vault, takes the protocol fee, and mints PBU units back to your wallet atomically.",
   },
   {

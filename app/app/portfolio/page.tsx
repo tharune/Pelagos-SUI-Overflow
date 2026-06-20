@@ -8,7 +8,7 @@ import { useMode } from "../_lib/mode";
 import { useLiveBaskets } from "../_lib/use-live-baskets";
 import { bundleById } from "../_lib/bundles";
 import { useSandbox, type BasketPosition } from "../_lib/demo-state";
-import { useActiveWalletAddress, useUsdcBalance, useWalletSigner } from "../_lib/wallet-bridge";
+import { useActiveWalletAddress, useUsdcBalance, useDusdcBalance, useWalletSigner } from "../_lib/wallet-bridge";
 import { fetchBasketPortfolio, usePbuBalances } from "../_lib/portfolio-client";
 import { fetchPpnPortfolio, ppnRedeem, PpnError } from "../_lib/ppn-client";
 import { mergePpnVaults, mergeTranches } from "../_lib/ppn-hydrate";
@@ -18,13 +18,14 @@ import {
   clearVirtualPositionsByUiBundleId,
   type GroupedVirtualPosition,
 } from "../_lib/virtual-positions";
-import { StrategyBacktestPanel } from "../_components/strategy-backtest-panel";
+import { StrategyBacktestPanel, type PortfolioMix } from "../_components/strategy-backtest-panel";
 import { History } from "./_history";
 import {
   fetchContinuousPositions,
   type ContinuousPosition,
 } from "../_lib/distribution-continuous-client";
 import { useLendingSnapshot } from "../_lib/lending-client";
+import { fetchSimPositions, simSettle, type SimPosition } from "../_lib/sim-client";
 
 type View = "positions" | "backtest" | "history";
 
@@ -32,10 +33,12 @@ export default function PortfolioPage() {
   const { mode } = useMode();
   const { state, totals, dispatch } = useSandbox();
   const appWalletAddress = useActiveWalletAddress();
-  const usdc = useUsdcBalance();
+  const usdc = useUsdcBalance();   // mUSDC (Pelagos USDC)
+  const dusdc = useDusdcBalance(); // dUSDC (DeepBook Predict quote asset)
   const walletSigner = useWalletSigner();
   const [redeemBusy, setRedeemBusy] = useState<string | null>(null);
   const [redeemError, setRedeemError] = useState<Record<string, string>>({});
+  const [simBusy, setSimBusy] = useState<string | null>(null);
   const basketState = useLiveBaskets();
 
   // Live Sui USDC lending market (DeFiLlama-sourced supply APY + utilization).
@@ -70,11 +73,16 @@ export default function PortfolioPage() {
   );
   const onchainTokensByUuid =
     Object.keys(suiTokensByUuid).length > 0 ? suiTokensByUuid : pbuTokensByUuid;
-  const liveUsdc = walletReady ? usdc.uiAmount : 0;
+  // Cash = mUSDC + dUSDC, both $1 (1:1 USD). They're two settlement currencies on
+  // the same platform, so the portfolio sums them as one USD cash balance.
+  const liveMusdc = walletReady ? usdc.uiAmount : 0;
+  const liveDusdc = walletReady ? dusdc.uiAmount : 0;
+  const liveUsdc = liveMusdc + liveDusdc;
 
   const [renderNow, setRenderNow] = useState<number>(() => Date.now());
   const [view, setView] = useState<View>("positions");
   const [distPositions, setDistPositions] = useState<ContinuousPosition[]>([]);
+  const [simPositions, setSimPositions] = useState<SimPosition[]>([]);
   useEffect(() => {
     const t = setInterval(() => setRenderNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -119,6 +127,14 @@ export default function PortfolioPage() {
     0,
   );
 
+  // Open mUSDC structured positions (DeepBook strips / options / vol / notes settled
+  // in Pelagos USDC): the premium is escrowed in the vault until settle.
+  const openSimPositions = walletReady ? simPositions.filter((p) => p.status !== "settled") : [];
+  const simValue = openSimPositions.reduce(
+    (sum, p) => sum + (Number.isFinite(p.premium_usd) ? p.premium_usd : 0),
+    0,
+  );
+
   // Basket value at the wallet's cost basis (issue price ≈ deposited USDC). We
   // intentionally don't mark baskets to NAV pre-resolution (exit_active pays the
   // pool ratio, not qty×NAV), so basket unrealized P&L stays 0 until redeem.
@@ -126,6 +142,21 @@ export default function PortfolioPage() {
     ? virtualGroupsForWallet.reduce((sum, g) => sum + g.depositedUsdc, 0)
     : 0;
   const onchainBasketPnl = 0;
+
+  // Map live holdings onto backtestable strategy classes (value-weighted) so the
+  // Backtests tab can replay "your portfolio" on real history.
+  const portfolioMix: PortfolioMix = React.useMemo(() => {
+    const simLongVol = openSimPositions.filter((p) => p.product !== "option").reduce((s, p) => s + p.premium_usd, 0);
+    const simDirectional = openSimPositions.filter((p) => p.product === "option").reduce((s, p) => s + p.premium_usd, 0);
+    return [
+      // Convex / long-gamma sleeve: vol strips, principal-protected notes, μ/σ distributions.
+      { id: "long-vol-straddle", weight: simLongVol + effectivePpnValue + distValue, label: "vol strips, notes & distributions" },
+      // Carry / range sleeve: risk slices earn a spread and are mostly range-bound.
+      { id: "short-vol-condor", weight: effectiveTrancheValue, label: "risk slices · carry" },
+      { id: "btc-momentum", weight: simDirectional, label: "directional options" },
+      { id: "event-basket", weight: onchainBasketValue, label: "event baskets" },
+    ].filter((m) => m.weight > 0);
+  }, [openSimPositions, effectivePpnValue, effectiveTrancheValue, distValue, onchainBasketValue]);
 
   // Top-line value + P&L. Every term is already 0 when disconnected (walletReady
   // gating), so the headline collapses to 0 without a separate guard.
@@ -137,6 +168,7 @@ export default function PortfolioPage() {
       ppnAccruedYield +
       trancheAccruedYield +
       distValue +
+      simValue +
       totals.lendValue -
       totals.loanDebt
     : 0;
@@ -159,8 +191,23 @@ export default function PortfolioPage() {
       fetchContinuousPositions(wallet).then((r) =>
         setDistPositions(Array.isArray(r?.positions) ? r.positions : []),
       ),
+      fetchSimPositions(wallet).then((ps) => setSimPositions(Array.isArray(ps) ? ps : [])),
     ]);
   }, [appWalletAddress, dispatch]);
+
+  // Settle an open mUSDC position: the protocol computes the payoff and mints it.
+  const settleSimPosition = React.useCallback(async (simId: string) => {
+    setSimBusy(simId);
+    try {
+      await simSettle(simId);
+      await hydratePortfolio();
+      void usdc.refresh(); void dusdc.refresh();
+    } catch {
+      /* surfaced on next hydrate */
+    } finally {
+      setSimBusy(null);
+    }
+  }, [hydratePortfolio, usdc, dusdc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +232,7 @@ export default function PortfolioPage() {
       await redeemFromBundle({ wallet: walletSigner, bundleId, amountTokens: tokens });
       clearVirtualPositionsByUiBundleId(appWalletAddress, bundleId, uiBundleId);
       await hydratePortfolio();
-      void usdc.refresh();
+      void usdc.refresh(); void dusdc.refresh();
     } catch (err) {
       const msg =
         err instanceof DepositError
@@ -198,7 +245,7 @@ export default function PortfolioPage() {
       if (/no vault position/i.test(msg) && appWalletAddress) {
         clearVirtualPositionsByUiBundleId(appWalletAddress, bundleId, uiBundleId);
         await hydratePortfolio();
-        void usdc.refresh();
+        void usdc.refresh(); void dusdc.refresh();
       } else {
         setRedeemError((prev) => ({ ...prev, [bundleId]: msg }));
       }
@@ -224,7 +271,7 @@ export default function PortfolioPage() {
         await ppnRedeem({ wallet: walletSigner, bundleId: opts.bundleId });
       }
       await hydratePortfolio();
-      void usdc.refresh();
+      void usdc.refresh(); void dusdc.refresh();
     } catch (err) {
       const msg =
         err instanceof PpnError
@@ -273,11 +320,14 @@ export default function PortfolioPage() {
     /** When set, the row's right-hand percentage cell shows this instead of the allocation share. */
     metaOverride?: string;
   }> = [
-    { id: "cash", label: "Cash", description: "Sui testnet mUSDC available", value: liveUsdc, color: C.textMuted },
+    { id: "cash", label: "Cash", description: `${fmtUsd(liveMusdc, 0)} mUSDC + ${fmtUsd(liveDusdc, 0)} dUSDC · 1:1 USD`, value: liveUsdc, color: C.textMuted },
     { id: "baskets", label: "Market Baskets", description: "Basket units held directly", value: onchainBasketValue, color: C.tealLight, href: "/app/basket" },
     { id: "tranches", label: "Risk Slices", description: "Senior / mezzanine / junior", value: effectiveTrancheValue + trancheAccruedYield, color: C.amber, href: "/app/tranche" },
     { id: "ppn", label: "Protected Notes", description: "Principal-protected notes", value: effectivePpnValue + ppnAccruedYield, color: C.violet, href: "/app/ppn" },
     { id: "distribution", label: "Distribution Markets", description: "Continuous μ/σ · collateral at risk", value: distValue, color: C.coral, href: "/app/distribution" },
+    ...(simValue > 0
+      ? [{ id: "structured", label: "Structured Positions", description: "Strips, options & vol · Pelagos USDC", value: simValue, color: C.green }]
+      : []),
     { id: "lending", label: "Lending", description: "Sui USDC market rate", value: walletReady ? totals.lendValue : 0, color: C.blue, metaOverride: lendingApyLabel },
   ];
   const productTotal = productRows.reduce((sum, row) => sum + row.value, 0);
@@ -380,7 +430,7 @@ export default function PortfolioPage() {
         </div>
 
         {view === "backtest" ? (
-          <StrategyBacktestPanel />
+          <StrategyBacktestPanel portfolioMix={portfolioMix} />
         ) : view === "history" ? (
           <History walletAddress={appWalletAddress} connected={walletReady} />
         ) : (
@@ -864,6 +914,37 @@ export default function PortfolioPage() {
                 });
               });
 
+              openSimPositions.forEach((p) => {
+                const rowKey = `sim-${p.sim_id}`;
+                const prodLabel = ({ strip: "DEEPBOOK STRIP", option: "OPTION", vol: "VOLATILITY", dist: "DISTRIBUTION" } as Record<string, string>)[p.product] ?? "POSITION";
+                rows.push({
+                  key: rowKey,
+                  value: p.premium_usd,
+                  el: (
+                    <div key={rowKey} style={{ background: C.card, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
+                      <div style={{ fontSize: 9.5, color: C.blue, fontFamily: FM, letterSpacing: "0.12em", marginBottom: 12 }}>{prodLabel} · mUSDC</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                          <div style={{ width: 4, height: 24, borderRadius: 2, background: C.blue, flexShrink: 0 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>premium {fmtUsd(p.premium_usd, 2)} · max {fmtUsd(p.max_payout_usd, 2)} mUSDC</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(p.premium_usd, 2)}</div>
+                          <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, marginTop: 2 }}>at risk</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
+                        <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · PELAGOS USDC</div>
+                        <button onClick={() => settleSimPosition(p.sim_id)} disabled={simBusy === p.sim_id} style={{ padding: "7px 16px", fontSize: 12, fontFamily: FD, fontWeight: 500, letterSpacing: "0.02em", borderRadius: 8, border: `0.5px solid ${C.blue}`, background: `${C.blue}24`, color: C.blue, cursor: simBusy === p.sim_id ? "default" : "pointer", opacity: simBusy === p.sim_id ? 0.6 : 1 }}>{simBusy === p.sim_id ? "Settling…" : "Settle →"}</button>
+                      </div>
+                    </div>
+                  ),
+                });
+              });
+
               if (liveUsdc > 0) {
                 rows.push({
                   key: "usdc",
@@ -876,7 +957,7 @@ export default function PortfolioPage() {
                           <div style={{ width: 4, height: 24, borderRadius: 2, background: "#4a5a6a" }} />
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, fontFamily: FD }}>USDC</div>
-                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2 }}>Sui testnet mUSDC</div>
+                            <div style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FM, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(liveMusdc, 2)} mUSDC + {fmtUsd(liveDusdc, 2)} dUSDC · 1:1 USD</div>
                           </div>
                         </div>
                         <div style={{ fontSize: 14, color: C.textPrimary, fontFamily: FD, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtUsd(liveUsdc, 2)}</div>

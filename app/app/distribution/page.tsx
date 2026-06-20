@@ -6,10 +6,9 @@ import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { useMode } from "../_lib/mode";
-import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
+import { useWalletSigner, useDusdcBalance, useUsdcBalance } from "../_lib/wallet-bridge";
 import { DistChart, buildChartFrame, buildFrameFromDensity, type ChartData } from "../_components/dist-chart";
 import { Stat, openableBuckets } from "../_components/strip-products";
-import { DusdcFaucetButton } from "../_components/DusdcFaucet";
 import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 import { simOpen, simConfirm } from "../_lib/sim-client";
 import {
@@ -71,12 +70,14 @@ interface Sel { expiryIdx: number; strikeIdx: number; side: Side }
 function BasicOptionsChain() {
   const wallet = useWalletSigner();
   const usdc = useDusdcBalance();
+  const musdc = useUsdcBalance();
 
   const [chain, setChain] = useState<OptionsChain | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [expIdx, setExpIdx] = useState(0);
   const [sel, setSel] = useState<Sel | null>(null);
   const [contracts, setContracts] = useState("1");
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
 
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -180,7 +181,8 @@ function BasicOptionsChain() {
   // Liquidity-depth / risk cap: the pool can't safely back more than this in one
   // order (≤15% market impact AND ≤2% of available pool liquidity).
   const maxContracts = depth?.max_contracts ?? null;
-  const overCap = maxContracts != null && nContracts > maxContracts;
+  // Pool depth only binds dUSDC (Predict-pool liability); mUSDC settles on our Vault.
+  const overCap = currency === "dUSDC" && maxContracts != null && nContracts > maxContracts;
   // ITM / OTM / ATM for the selected leg. For a $1 binary the mid IS ~P(pays), so
   // mid>0.5 ⟺ in-the-money (high probability, high cost, low convexity).
   const moneyState: "ITM" | "OTM" | "ATM" =
@@ -192,12 +194,31 @@ function BasicOptionsChain() {
   async function openStrike() {
     if (!selExp || !selQuote || !selStrike || !openable || busy) return;
     if (nContracts < 1) { setOpenErr("Enter a whole number of contracts (minimum 1)."); return; }
-    if (maxContracts != null && nContracts > maxContracts) {
+    // Pool depth is a DeepBook Predict (dUSDC) constraint; mUSDC settles on our
+    // own vault and isn't bounded by the Predict pool.
+    if (currency === "dUSDC" && maxContracts != null && nContracts > maxContracts) {
       setOpenErr(`Order exceeds pool depth — max ${maxContracts.toLocaleString()} contracts for this strike.`);
       return;
     }
     setBusy(true); setOpenErr(null); setResult(null);
     try {
+      // mUSDC = Pelagos USDC settlement (same DeepBook pricing): one binary band
+      // paying $1 × n if BTC settles inside it.
+      if (currency === "mUSDC") {
+        setStage("Opening position…");
+        const prep = await simOpen({
+          owner: wallet.address as string, product: "option", name: `BTC ${strikeFmt(selStrike.strike)} ${sel!.side}`,
+          premium_usd: selQuote.ask * nContracts, max_payout_usd: nContracts,
+          oracle_id: selExp.oracle_id, forward_usd: selExp.forward, expiry_ms: Number(selExp.expiry),
+          bands: [{ lower_usd: Number(selQuote.lower_strike) / 1e9, higher_usd: Number(selQuote.higher_strike) / 1e9, payout_usd: nContracts }],
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult({ digest });
+        return;
+      }
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       setStage("Building position…");
@@ -344,7 +365,7 @@ function BasicOptionsChain() {
                       </div>
                     ))}
                   </div>
-                  <p className="oc-empty-note">Premiums are real range-option prices in dUSDC, quoted 0–1 per $1 contract.</p>
+                  <p className="oc-empty-note">Premiums are real range-option prices, quoted 0–1 per $1 contract — settle in dUSDC or mUSDC.</p>
                 </div>
               ) : (
                 <>
@@ -384,7 +405,11 @@ function BasicOptionsChain() {
                     <Info k="Underlying" v={`BTC · ${spot$(spot)}`} />
                     <Info k="Forward" v={spot$(selExp.forward)} />
                     <Info k="Expiry" v={new Date(selExp.expiry).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} />
-                    {wallet.connected && <Info k="Balance" v={`${usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC`} />}
+                    {wallet.connected && <Info k="Balance" v={`${(currency === "mUSDC" ? musdc.uiAmount : usdc.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency}`} />}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 8 }}>
+                      <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>Settle in</span>
+                      <CurrencySelect value={currency} onChange={setCurrency} />
+                    </div>
                   </div>
 
                   {openable ? (
@@ -392,7 +417,7 @@ function BasicOptionsChain() {
                       <div className="oc-budget">
                         <div className="oc-budget-cap">
                           <span className="oc-tkt-cap">Contracts · whole only</span>
-                          {maxContracts != null && (
+                          {currency === "dUSDC" && maxContracts != null && (
                             <span className={`oc-depth${overCap ? " over" : ""}`}>max {maxContracts.toLocaleString()} · pool depth</span>
                           )}
                         </div>
@@ -402,9 +427,9 @@ function BasicOptionsChain() {
                         </div>
                       </div>
                       <div className="oc-rows-info">
-                        <Info k="Cost · ask × qty" v={`$${orderCost.toFixed(2)} dUSDC`} />
-                        <Info k="Max gain" v={`$${maxGain.toFixed(2)} dUSDC`} />
-                        <Info k="Max loss" v={`$${orderCost.toFixed(2)} dUSDC`} />
+                        <Info k="Cost · ask × qty" v={`$${orderCost.toFixed(2)} ${currency}`} />
+                        <Info k="Max gain" v={`$${maxGain.toFixed(2)} ${currency}`} />
+                        <Info k="Max loss" v={`$${orderCost.toFixed(2)} ${currency}`} />
                       </div>
                       {!wallet.connected ? (
                         <ConnectModal trigger={<button className="oc-open">Connect a wallet to trade</button>} />
@@ -412,11 +437,6 @@ function BasicOptionsChain() {
                         <button className="oc-open" disabled={busy || nContracts < 1 || overCap} onClick={openStrike} style={{ opacity: busy || nContracts < 1 || overCap ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
                           {busy ? (stage ?? "Submitting…") : overCap ? `Exceeds pool depth · max ${maxContracts!.toLocaleString()}` : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
-                      )}
-                      {wallet.connected && usdc.uiAmount < orderCost && (
-                        <div style={{ marginTop: 10 }}>
-                          <DusdcFaucetButton address={wallet.address ?? null} onFunded={usdc.refresh} compact />
-                        </div>
                       )}
                       <p className="oc-note">Buys {nContracts} whole {sel!.side} {nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.</p>
                     </>
@@ -779,7 +799,9 @@ function AdvancedDistribution() {
   // Pool-depth / risk cap (same as Basic): the strip's total max payout — the
   // pool's liability if it lands worst-case — must stay ≤ 2% of available liquidity.
   const stripMaxPayout = quote ? r6(quote.total_max_payout_raw) : 0;
-  const overPoolCap = poolCapUsd != null && stripMaxPayout > poolCapUsd;
+  // The pool-depth cap is a Predict-pool liability — it only binds the dUSDC rail.
+  // mUSDC settles on our own Vault<MOCK_USDC> (we control the mint), so no cap.
+  const overPoolCap = currency === "dUSDC" && poolCapUsd != null && stripMaxPayout > poolCapUsd;
   const canOpen = wallet.connected && !!quote && !flat && !busy && !overPoolCap;
 
   const lock = quote ? r6(quote.total_cost_raw) : 0;
@@ -793,9 +815,9 @@ function AdvancedDistribution() {
     setError(null);
     setResult(null);
     try {
-      // mUSDC = independent simulation rail (our Vault<MOCK_USDC>, infinite supply).
+      // mUSDC = Pelagos USDC settlement (our Vault<MOCK_USDC>, same DeepBook pricing).
       if (currency === "mUSDC") {
-        setStage("Opening simulation…");
+        setStage("Opening position…");
         const r = (x: string) => Number(x) / 1e6;
         const bands = quote.buckets.filter((b) => b.tradeable).map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: r(b.max_payout_raw) }));
         if (bands.length === 0) throw new Error("No tradeable bands — widen σ or pick another expiry.");
@@ -985,13 +1007,8 @@ function AdvancedDistribution() {
               )}
 
               {wallet.connected && (
-                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>
-                    Opening needs dUSDC (Predict&apos;s faucet-gated quote asset). Balance {usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC.
-                  </div>
-                  {usdc.uiAmount < 25 && (
-                    <DusdcFaucetButton address={wallet.address ?? null} onFunded={usdc.refresh} compact />
-                  )}
+                <div style={{ marginTop: 12, fontFamily: FM, fontSize: 11, color: C.textMuted }}>
+                  Settles in {currency}. Top up either balance from <strong style={{ color: C.textSecondary }}>Test funds</strong> in the header.
                 </div>
               )}
 

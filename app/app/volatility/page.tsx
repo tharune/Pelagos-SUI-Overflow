@@ -20,8 +20,7 @@ import dynamic from "next/dynamic";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { friendlyWalletError } from "../_lib/chain";
-import { useWalletSigner, useDusdcBalance } from "../_lib/wallet-bridge";
-import { DusdcFaucetButton } from "../_components/DusdcFaucet";
+import { useWalletSigner, useDusdcBalance, useUsdcBalance } from "../_lib/wallet-bridge";
 import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 import { simOpen, simConfirm } from "../_lib/sim-client";
 import { useMode } from "../_lib/mode";
@@ -320,9 +319,9 @@ export default function VolatilityPage() {
     if (!q || busy) return;
     setBusy(true); setOpenErr(null); setResult(null);
     try {
-      // mUSDC = independent simulation rail (our Vault<MOCK_USDC>, infinite supply).
+      // mUSDC = Pelagos USDC settlement (our Vault<MOCK_USDC>, same DeepBook pricing).
       if (currency === "mUSDC") {
-        setStage("Opening simulation…");
+        setStage("Opening position…");
         const r = (x: string) => Number(x) / 1e6;
         const bands = q.strip.buckets.filter((b) => b.tradeable).map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: r(b.max_payout_raw) }));
         if (bands.length === 0) throw new Error("No tradeable legs in this structure right now.");
@@ -356,7 +355,7 @@ export default function VolatilityPage() {
 
   function routeHedge() {
     if (!q || hedgeSide === "flat") return;
-    setHedged(`${hedgeSide.toUpperCase()} ${hedgeBtc.toFixed(4)} BTC-PERP @ ${dollars(markPrice)} · simulated fill`);
+    setHedged(`${hedgeSide.toUpperCase()} ${hedgeBtc.toFixed(4)} BTC-PERP @ ${dollars(markPrice)} · sized at live mark`);
   }
 
   const ivPct = q ? (q.atm_iv * 100).toFixed(1) : surface ? ((surface.term_structure[0]?.atm_iv ?? 0) * 100).toFixed(1) : "—";
@@ -620,9 +619,13 @@ function BasicDesk(p: DeskProps) {
 function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedgeOn: boolean; setHedgeOn: (v: boolean) => void; onClose: () => void }) {
   const { q, meta, accent, busy, stage, result, openErr, openPosition, runDelta, hedgeSide, hedgeBtc, markPrice, gammaPnl, routeHedge, hedged, wallet } = p;
   const hasDelta = hedgeSide !== "flat" && Math.abs(runDelta) > 1e-3;
+  // Both rails are first-class — read whichever the trade settles in.
   const dusdc = useDusdcBalance();
+  const musdc = useUsdcBalance();
+  const ccy = p.currency;
+  const bal = ccy === "mUSDC" ? musdc : dusdc;
   const costUsd = q ? Number(q.strip.total_cost_raw) / 1e6 : 0;
-  const shortDusdc = wallet.connected && !result && dusdc.uiAmount + 1e-9 < costUsd;
+  const shortBal = wallet.connected && !result && bal.uiAmount + 1e-9 < costUsd;
   const confirm = () => {
     if (hedgeOn && hasDelta && !hedged) routeHedge();
     openPosition();
@@ -654,7 +657,7 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
             <p>
               This {meta.label.toLowerCase()} carries {runDelta >= 0 ? "+" : ""}{runDelta.toFixed(3)} BTC of delta.
               Hedging {hedgeBtc.toFixed(3)} BTC on a perp keeps you direction-neutral — pure volatility exposure.
-              <i> Perp routing is simulated on testnet.</i>
+              <i> Hedge is sized against live BTC‑PERP marks (analytics, not a live perp order).</i>
             </p>
             {hedgeOn && (
               <div className="vd-hedge-rows">
@@ -668,27 +671,24 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
 
         {wallet.connected && !result && (
           <div className="vd-hedge-rows" style={{ marginTop: 12 }}>
-            <Row k="Your dUSDC" v={`${dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC`} color={shortDusdc ? C.amber : undefined} />
+            <Row k={`Your ${ccy}`} v={`${bal.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${ccy}`} color={shortBal ? C.amber : undefined} />
           </div>
         )}
-        {shortDusdc && (
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-            <p style={{ fontFamily: FM, fontSize: 11, color: C.textMuted, lineHeight: 1.5, margin: 0 }}>
-              Opening settles in dUSDC — Predict&apos;s faucet-gated quote asset. Grab a test grant, or lower the amount.
-            </p>
-            <DusdcFaucetButton address={wallet.address ?? null} amount={25} onFunded={dusdc.refresh} compact />
-          </div>
+        {shortBal && (
+          <p style={{ marginTop: 8, fontFamily: FM, fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+            Not enough {ccy} — {ccy === "mUSDC" ? "mint more" : "switch to mUSDC, or top up"} from <strong style={{ color: C.textSecondary }}>Test funds</strong> in the header.
+          </p>
         )}
 
         {result ? (
           <ResultLine digest={result} label={`${meta.label} opened${hedgeOn && hasDelta ? " + hedged" : ""}`} />
         ) : (
-          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q || shortDusdc} onClick={confirm}>
-            {busy ? (stage ?? "Submitting…") : shortDusdc ? "Need more dUSDC to open" : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
+          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q || shortBal} onClick={confirm}>
+            {busy ? (stage ?? "Submitting…") : shortBal ? `Need more ${ccy} to open` : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
           </button>
         )}
         {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}
-        <p className="vd-note">Structure minted on-chain on Sui (wallet-signed).{hedgeOn && hasDelta ? " Delta hedge simulated on testnet." : ""}</p>
+        <p className="vd-note">Structure minted on-chain on Sui (wallet-signed).{hedgeOn && hasDelta ? " Delta hedge sized against live BTC‑PERP marks." : ""}</p>
       </div>
     </div>
   );
@@ -988,7 +988,7 @@ function HedgePanel(p: DeskProps) {
         {hedged ? "✓ Hedge routed" : hedgeSide === "flat" ? "Delta-neutral" : `Route ${hedgeSide} ${hedgeBtc.toFixed(4)} BTC`}
       </button>
       {hedged && <div className="vd-sim">✓ {hedged}</div>}
-      <p className="vd-note">Structure minted on‑chain on Sui. Delta hedge routed to Bluefin BTC‑PERP (the Sui perp) — live mark from {venue}, funding {fundingLabel === "est." ? "estimated" : `live · ${fundingLabel}`}; order submission simulated on testnet.</p>
+      <p className="vd-note">Structure minted on‑chain on Sui. Delta hedge routed to Bluefin BTC‑PERP (the Sui perp) — live mark from {venue}, funding {fundingLabel === "est." ? "estimated" : `live · ${fundingLabel}`}; hedge sizing is analytics, not a live perp order.</p>
     </div>
   );
 }

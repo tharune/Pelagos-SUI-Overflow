@@ -20,7 +20,6 @@ import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { suiExplorerTxUrl, friendlyWalletError } from "../_lib/chain";
 import { ConnectModal } from "@mysten/dapp-kit";
 import { useWalletSigner, useUsdcBalance, useDusdcBalance } from "../_lib/wallet-bridge";
-import { DusdcFaucetButton } from "./DusdcFaucet";
 import {
   ppnQuote,
   stripPreview,
@@ -327,12 +326,9 @@ export function OpenButton({
         {busy ? busyLabel : label}
       </button>
       {short && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ fontFamily: FM, fontSize: 10.5, color: C.amber }}>
-            Needs {needUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC · you hold {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          </span>
-          <DusdcFaucetButton address={wallet.address ?? null} onFunded={dusdc.refresh} compact />
-        </div>
+        <span style={{ fontFamily: FM, fontSize: 10.5, color: C.amber }}>
+          Needs {needUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC · you hold {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} — switch to mUSDC or top up via Test funds
+        </span>
       )}
     </div>
   );

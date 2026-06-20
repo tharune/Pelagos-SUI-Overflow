@@ -314,6 +314,7 @@ export default function BasketDetail() {
             bundle={bundle}
             accent={color}
             markets={liveMarkets}
+            vaultPrice={detailVaultPrice}
           />
         </div>
         <style>{BASKET_DETAIL_CSS}</style>
@@ -662,10 +663,12 @@ function BasketBuyPanel({
   bundle,
   accent,
   markets,
+  vaultPrice,
 }: {
   bundle: Bundle;
   accent: string;
   markets: LiveMarket[];
+  vaultPrice: number | null;
 }) {
   const { state, dispatch } = useSandbox();
   const wallet = useWalletSigner();
@@ -764,16 +767,27 @@ function BasketBuyPanel({
     () => quoteFeesBpsFromBooks(usdcAmount, topLegs, books),
     [usdcAmount, topLegs, books],
   );
-  // `fees.totalBps` rolls protocol + MM + slippage estimates for the
-  // breakdown UI, but only the vault's on-chain fee is actually taken
-  // by `deposit` — MM / slippage fees are display-only liquidity
-  // proxies. Use the real on-chain fee to compute `tokensOut` so the
-  // "You receive" line matches what the chain mints down to the token.
+  // Only the vault's on-chain fee is actually taken by `deposit` — the MM
+  // spread and slippage in `fees` are display-only liquidity estimates, NOT
+  // deducted on testnet. So the deducted fee is the vault fee (≈ the protocol
+  // fee); fall back to the protocol fee, NOT fees.totalBps, so "You receive"
+  // reconciles with what the chain mints and stays consistent pre/post-connect.
   const chainFeeBps =
     vaultFeeBps !== null && vaultFeeBps >= 0
       ? vaultFeeBps
-      : fees.totalBps;
+      : PROTOCOL_FEE_BPS;
   const netUsdc = usdcAmount * (1 - chainFeeBps / 10_000);
+  // Per-token mint price = the vault ISSUE price (what `deposit` charges), not
+  // the live NAV. Use the resolved on-chain issue price, then the cached vault
+  // summary, then the bundle's issue, only falling back to NAV as a last resort.
+  const entryPrice =
+    vaultIssuePrice && vaultIssuePrice > 0
+      ? vaultIssuePrice
+      : vaultPrice && vaultPrice > 0
+        ? vaultPrice
+        : bundle.issue && bundle.issue > 0
+          ? bundle.issue
+          : navPrice;
   // Token quote uses the product's **on-chain issue price** so the number
   // matches what the Sui write returns. Falls
   // back to live NAV until `vaultIssuePrice` resolves; tightens once
@@ -782,8 +796,7 @@ function BasketBuyPanel({
   // issue price -- the chain returned more units than the modal promised
   // and the surplus surfaced as stale "unrealized P&L" on the
   // portfolio.
-  const tokensOut =
-    netUsdc / (vaultIssuePrice && vaultIssuePrice > 0 ? vaultIssuePrice : navPrice);
+  const tokensOut = netUsdc / entryPrice;
 
   const hasAmount = usdcAmount > 0;
   const overCap = hasAmount && usdcAmount > MAX_ORDER_USDC;
@@ -1147,6 +1160,9 @@ function BasketBuyPanel({
             stateUsdc={liveUsdc}
             fees={fees}
             tokensOut={tokensOut}
+            netUsdc={netUsdc}
+            entryPrice={entryPrice}
+            chainFeeBps={chainFeeBps}
             confirmedTokensOut={confirmedTokensOut}
             vaultIssuePrice={vaultIssuePrice}
             vaultFeeBps={vaultFeeBps}
@@ -1407,6 +1423,9 @@ function BuySection({
   stateUsdc,
   fees,
   tokensOut,
+  netUsdc,
+  entryPrice,
+  chainFeeBps,
   accent,
   bookStatus,
   topLegCount,
@@ -1425,6 +1444,9 @@ function BuySection({
     hasLiveBooks: boolean;
   };
   tokensOut: number;
+  netUsdc: number;
+  entryPrice: number;
+  chainFeeBps: number;
   confirmedTokensOut: number | null;
   vaultIssuePrice: number | null;
   vaultFeeBps: number | null;
@@ -1528,40 +1550,71 @@ function BuySection({
             border: `0.5px solid ${C.border}`,
           }}
         >
+          {/* Only the protocol fee is taken on-chain — show it as the one
+              deducted cost so "You receive" reconciles exactly. */}
           <FeeRow
             label="Protocol fee"
-            bps={fees.protocolBps}
-            usd={(usdcAmount * fees.protocolBps) / 10_000}
+            bps={chainFeeBps}
+            usd={(usdcAmount * chainFeeBps) / 10_000}
           />
-          <FeeRow
-            label="Market-maker fees"
-            bps={fees.mmSpreadBps}
-            usd={(usdcAmount * fees.mmSpreadBps) / 10_000}
-          />
-          <FeeRow
-            label="Slippage"
-            bps={fees.slippageBps}
-            usd={(usdcAmount * fees.slippageBps) / 10_000}
-            hint="scales with order size"
-          />
+          {/* You receive — reconciles: (amount − protocol fee) ÷ issue price. */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 3,
+              borderTop: `0.5px solid ${C.border}`,
+              paddingTop: 8,
+              marginTop: 2,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontFamily: FM,
+                fontSize: 11,
+                color: C.textSecondary,
+                fontWeight: 500,
+                letterSpacing: "0.02em",
+              }}
+            >
+              <span>You receive</span>
+              <span style={{ color: accent, fontWeight: 600 }}>
+                {tokensOut.toFixed(2)} {unitLabel}
+              </span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontFamily: FM,
+                fontSize: 10,
+                color: C.textMuted,
+                letterSpacing: "0.02em",
+              }}
+            >
+              <span>${entryPrice.toFixed(3)} issue price</span>
+              <span>${netUsdc.toFixed(2)} net of fee</span>
+            </div>
+          </div>
+          {/* Live market impact — INDICATIVE only; the testnet vault mints at
+              the issue price and does not charge MM spread / slippage. */}
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
               fontFamily: FM,
-              fontSize: 11,
-              color: C.textSecondary,
-              fontWeight: 500,
+              fontSize: 10.5,
+              color: C.textMuted,
+              letterSpacing: "0.02em",
               borderTop: `0.5px solid ${C.border}`,
               paddingTop: 8,
               marginTop: 2,
-              letterSpacing: "0.02em",
             }}
           >
-            <span>You receive</span>
-            <span style={{ color: accent, fontWeight: 600 }}>
-              {tokensOut.toFixed(2)} {unitLabel}
-            </span>
+            <span>Market impact · indicative</span>
+            <span>~{((fees.mmSpreadBps + fees.slippageBps) / 100).toFixed(2)}%</span>
           </div>
           <div
             style={{
@@ -1570,16 +1623,11 @@ function BuySection({
               color: C.textMuted,
               letterSpacing: "0.02em",
               fontWeight: 300,
-              marginTop: 2,
             }}
           >
             {bookStatus === "loading"
-              ? "Quoting slippage from live Polymarket books…"
-              : fees.hasLiveBooks
-                ? `Slippage quoted live from Polymarket CLOB (${topLegCount} legs sampled).`
-                : bookStatus === "error"
-                  ? "CLOB feed unavailable. Slippage estimated from leg volume."
-                  : "Slippage estimated from leg volume. Live book kicks in once a wallet connects."}
+              ? "Quoting market impact from live Polymarket books…"
+              : `MM spread + slippage${fees.hasLiveBooks ? ` from live Polymarket CLOB (${topLegCount} legs)` : ", estimated from leg volume"} — what assembling the legs would cost. On-chain, the testnet vault mints at the issue price and takes only the protocol fee.`}
           </div>
         </div>
       )}

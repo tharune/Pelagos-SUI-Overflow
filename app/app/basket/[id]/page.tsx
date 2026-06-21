@@ -357,7 +357,7 @@ const HOW_IT_WORKS: Array<{ num: string; title: string; body: string }> = [
     num: "01",
     title: "Quote assembly",
     body:
-      "Your quote is the basket NAV (weighted sum of each leg’s Polymarket price) plus the protocol fee, market-maker fees, and live slippage pulled from the CLOB book. Sells also pay an adverse-selection premium because the desk has to dynamically hedge redemptions in the underlying legs.",
+      "Your quote is the basket NAV (weighted sum of each leg’s live market price) plus the protocol fee, market-maker fees, and live slippage pulled from the order book. Sells also pay an adverse-selection premium because the desk has to dynamically hedge redemptions in the underlying legs.",
   },
   {
     num: "02",
@@ -1635,8 +1635,8 @@ function BuySection({
             }}
           >
             {bookStatus === "loading"
-              ? "Quoting market impact from live Polymarket books…"
-              : `MM spread + slippage${fees.hasLiveBooks ? ` from live Polymarket CLOB (${topLegCount} legs)` : ", estimated from leg volume"} — what assembling the legs would cost. On-chain, the testnet vault mints at the issue price and takes only the protocol fee.`}
+              ? "Quoting market impact from the live order book…"
+              : `MM spread + slippage${fees.hasLiveBooks ? ` from the live order book (${topLegCount} legs)` : ", estimated from leg volume"} — what assembling the legs would cost. On-chain, the testnet vault mints at the issue price and takes only the protocol fee.`}
           </div>
         </div>
       )}
@@ -1860,7 +1860,7 @@ function SellSection({
             label="Slippage (bid side)"
             bps={sellFees.slippageBps}
             usd={(sellUsdcNotional * sellFees.slippageBps) / 10_000}
-            hint="live CLOB walk"
+            hint="live order-book walk"
           />
           <div
             style={{
@@ -1894,10 +1894,10 @@ function SellSection({
             {vaultState === "active"
               ? "Early exit settles on-chain as your pro-rata share of the vault USDC pool (plus a 0.30% combined exit fee). The “You receive” line is a NAV-based retail estimate; the signed transaction uses the pool ratio."
               : bookStatus === "loading"
-                ? "Quoting redemption impact from live Polymarket books…"
+                ? "Quoting redemption impact from the live order book…"
                 : sellFees.hasLiveBooks
-                  ? `Redemption slippage quoted live from ${topLegCount} CLOB legs. Desk & flow scales with size vs. basket volume.`
-                  : "CLOB feed unavailable. Slippage estimated from leg volume."}
+                  ? `Redemption slippage quoted live from ${topLegCount} order-book legs. Desk & flow scales with size vs. basket volume.`
+                  : "Live order book unavailable. Slippage estimated from leg volume."}
           </div>
         </div>
       )}

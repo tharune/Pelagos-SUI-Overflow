@@ -153,7 +153,7 @@ export default function VolatilityPage() {
   // 0.0000 and the desk reads as dead. A $25k ticket makes the Greeks, the
   // payoff P&L axis, and the live delta-hedge all read meaningfully.
   const [notional, setNotional] = useState("25000");
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const [horizon, setHorizon] = useState<Horizon>("short");
   // Advanced bespoke-builder state: a sculpted per-band weight profile + strip
   // width + bucket count. Drives the Advanced quote (custom path); Basic keeps

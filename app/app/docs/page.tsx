@@ -587,8 +587,8 @@ function ProductSuite() {
           ],
           [
             "Baskets",
-            "Curated DeepBook recipes plus diversified Polymarket event baskets, de-correlated by an NLP layer.",
-            "Named μ/σ presets over the live oracle (Predict) and CLOB-priced event legs on Pelagos&apos;s own vault (Pelagos USDC).",
+            "Curated DeepBook recipes plus diversified prediction-market event baskets, de-correlated by an NLP layer.",
+            "Named μ/σ presets over the live oracle (Predict) and order-book-priced event legs on Pelagos&apos;s own vault (Pelagos USDC).",
           ],
         ]}
       />
@@ -617,7 +617,7 @@ function ProductSuite() {
           </>,
           <>
             <DocLink href="/app/basket">Baskets</DocLink> — DeepBook recipes
-            and Polymarket event baskets, with the Risk Slices tranching
+            and prediction-market event baskets, with the Risk Slices tranching
             engine in Advanced.
           </>,
         ]}
@@ -643,7 +643,7 @@ function Architecture() {
       ▼
 Express API       :13101   builds UNSIGNED tx_bytes; non-custodial
       ├── DeepBook Predict   range pricing · SVI surface · settlement
-      ├── Polymarket CLOB    event-basket markets + midpoint pricing
+      ├── Event markets      basket legs + midpoint order-book pricing
       ├── DeFiLlama          live Sui USDC lending APY (note floors)
       ├── Coinbase           BTC candles (backtests)
       └── Sui RPC            pelagos_sui / _vault / _strategies moveCalls
@@ -667,7 +667,7 @@ Express API       :13101   builds UNSIGNED tx_bytes; non-custodial
             <B>volatility</B> — prebuilt vol structures and greeks.
           </>,
           <>
-            <B>baskets / market-filter / nlp</B> — Polymarket discovery
+            <B>baskets / market-filter / nlp</B> — event-market discovery
             through a 5-stage NLP quality filter, correlation-decorrelated
             weighting, and tranching.
           </>,
@@ -1170,8 +1170,8 @@ function PBaskets() {
     <>
       <P>
         Baskets come in two flavours: curated DeepBook range recipes and
-        diversified Polymarket event baskets. They share the basket terminal
-        but sit on different settlement rails.
+        diversified prediction-market event baskets. They share the basket
+        terminal but sit on different settlement rails.
       </P>
       <SubHeading>DeepBook baskets</SubHeading>
       <P>
@@ -1182,10 +1182,10 @@ function PBaskets() {
         <Code>POST /api/predict/basket/quote</Code> and settle in dUSDC on
         DeepBook Predict.
       </P>
-      <SubHeading>Polymarket event baskets</SubHeading>
+      <SubHeading>Prediction-market event baskets</SubHeading>
       <P>
-        Diversified baskets of Polymarket events, priced off the live CLOB
-        midpoint. An NLP layer (TF-IDF cosine plus theme clustering)
+        Diversified baskets of live prediction-market events, priced off the
+        order-book midpoint. An NLP layer (TF-IDF cosine plus theme clustering)
         de-correlates the legs so a basket is genuinely uncorrelated rather
         than thirty variants of one bet. These settle on Pelagos&apos;s own
         generic <Code>Vault&lt;T&gt;</Code> in Pelagos USDC, kept distinct

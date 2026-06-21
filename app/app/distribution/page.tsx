@@ -83,7 +83,7 @@ function BasicOptionsChain() {
   const [expIdx, setExpIdx] = useState(0);
   const [sel, setSel] = useState<Sel | null>(null);
   const [contracts, setContracts] = useState("1");
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
 
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -710,7 +710,7 @@ function AdvancedDistribution() {
   const [mu, setMu] = useState(0);
   const [sigma, setSigma] = useState(0);
   const [budget, setBudget] = useState("100");
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
 
   const [density, setDensity] = useState<ImpliedDensity | null>(null);
   const [quote, setQuote] = useState<StripQuote | null>(null);

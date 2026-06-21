@@ -162,7 +162,7 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
   const [expiryPref, setExpiryPref] = useState<"near" | "mid" | "far">("mid");
   const [oracleId, setOracleId] = useState<string | null>(null);   // advanced: a specific expiry
   const [expiries, setExpiries] = useState<DeepBookExpiry[]>([]);
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const [quote, setQuote] = useState<DeepBookQuote | null>(null);
   const [qErr, setQErr] = useState<string | null>(null);
   const [pricing, setPricing] = useState(false);
@@ -207,9 +207,21 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
   // reset deploy result when the structure changes
   useEffect(() => { setResult(null); setOpenErr(null); }, [selected, notionalNum, expiryPref, oracleId]);
 
+  // Basic shows a curated 3 strategies; Advanced shows the full set. If the active
+  // pick falls outside the basic list (e.g. after toggling Advanced→Basic), snap
+  // back to the first visible strategy so the quote/payoff always has a selection.
+  useEffect(() => {
+    if (!strategies) return;
+    const visible = mode === "advanced" ? strategies : strategies.slice(0, 3);
+    if (selected && visible.some((s) => s.id === selected)) return;
+    if (visible[0]) setSelected(visible[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, strategies]);
+
   const sel = strategies?.find((s) => s.id === selected) ?? null;
   const accent = sel ? CONVEX_COLOR[sel.convexity] ?? C.tealLight : C.tealLight;
   const tradeableBuckets = quote ? quote.strip.buckets.filter((b) => b.tradeable && Number(b.quantity) > 0) : [];
+  const visibleStrategies = !strategies ? [] : mode === "advanced" ? strategies : strategies.slice(0, 3);
 
   async function deploy() {
     if (!quote || busy) return;
@@ -263,7 +275,7 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
   if (!strategies) {
     return (
       <div className="db-strat-grid">
-        {Array.from({ length: 7 }).map((_, i) => <div key={i} className="db-card db-skel" style={{ height: 132 }} />)}
+        {Array.from({ length: mode === "basic" ? 3 : 7 }).map((_, i) => <div key={i} className="db-card db-skel" style={{ height: 132 }} />)}
       </div>
     );
   }
@@ -281,8 +293,8 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
   return (
     <div className="db-surface">
       {/* strategy cards */}
-      <div className="db-strat-grid">
-        {strategies.map((s) => {
+      <div className={`db-strat-grid${mode === "basic" ? " is-basic" : ""}`}>
+        {visibleStrategies.map((s) => {
           const on = s.id === selected;
           const rc = RISK_COLOR[s.tail_risk] ?? C.textMuted;
           const cc = CONVEX_COLOR[s.convexity] ?? C.textSecondary;
@@ -484,7 +496,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [principal, setPrincipal] = useState("10000");
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const [tenor, setTenor] = useState<number | null>(null);
   const [quote, setQuote] = useState<NoteQuote | null>(null);
   const [qErr, setQErr] = useState<string | null>(null);
@@ -507,6 +519,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
 
   const sel = presets?.find((p) => p.id === selected) ?? null;
   const effTenor = tenor ?? sel?.default_tenor_days ?? 180;
+  const visiblePresets = !presets ? [] : mode === "advanced" ? presets : presets.slice(0, 3);
 
   const timer = useRef<number | null>(null);
   useEffect(() => {
@@ -523,9 +536,19 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); };
   }, [selected, principalNum, valid, effTenor]);
 
+  // Basic shows a curated 3 notes; Advanced shows all. Keep the selection valid
+  // when toggling between modes.
+  useEffect(() => {
+    if (!presets) return;
+    const visible = mode === "advanced" ? presets : presets.slice(0, 3);
+    if (selected && visible.some((p) => p.id === selected)) return;
+    if (visible[0]) { setSelected(visible[0].id); setTenor(visible[0].default_tenor_days); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, presets]);
+
   if (loadErr && !presets) return <div className="db-banner err">Couldn’t load note presets — {loadErr}</div>;
   if (!presets) {
-    return <div className="db-note-grid">{Array.from({ length: 7 }).map((_, i) => <div key={i} className="db-card db-strat db-skel" style={{ height: 150 }} />)}</div>;
+    return <div className="db-note-grid">{Array.from({ length: mode === "basic" ? 3 : 7 }).map((_, i) => <div key={i} className="db-card db-strat db-skel" style={{ height: 150 }} />)}</div>;
   }
 
   return (
@@ -545,8 +568,8 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
       </div>
 
       {/* preset cards */}
-      <div className="db-note-grid">
-        {presets.map((p) => {
+      <div className={`db-note-grid${mode === "basic" ? " is-basic" : ""}`}>
+        {visiblePresets.map((p) => {
           const on = p.id === selected;
           const rc = RISK_COLOR[p.tail_risk] ?? C.textMuted;
           return (
@@ -973,6 +996,10 @@ const DB_CSS = `
   @media (max-width: 1340px) { .db-note-grid > .db-strat { max-width: calc((100% - 33px) / 4); } }
   @media (max-width: 860px) { .db-note-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
   @media (max-width: 560px) { .db-note-grid > .db-strat { max-width: 100%; } }
+  /* Basic mode shows a curated 3 — widen the cards so the trio fills the row. */
+  .db-strat-grid.is-basic > .db-strat, .db-note-grid.is-basic > .db-strat { max-width: calc((100% - 22px) / 3); }
+  @media (max-width: 820px) { .db-strat-grid.is-basic > .db-strat, .db-note-grid.is-basic > .db-strat { max-width: calc((100% - 11px) / 2); } }
+  @media (max-width: 560px) { .db-strat-grid.is-basic > .db-strat, .db-note-grid.is-basic > .db-strat { max-width: 100%; } }
   .db-strat { text-align: left; display: grid; gap: 7px; align-content: start; cursor: pointer; transition: all 0.15s ${EASE}; }
   .db-strat:hover { border-color: ${C.borderHover}; transform: translateY(-1px); }
   .db-strat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

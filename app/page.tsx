@@ -790,11 +790,31 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
   );
 }
 
-const PIPE: Array<{ name: string; sub: string; Icon: (p: IconProps) => React.ReactElement }> = [
-  { name: "Live pricing", sub: "DeepBook Predict order book", Icon: IconSignal },
-  { name: "Quote engine", sub: "Depth-weighted bands", Icon: IconBasket },
-  { name: "USDC collateral", sub: "Net of quote fees", Icon: IconCoin },
-  { name: "Sui settlement", sub: "Pelagos USDC package", Icon: IconCube },
+const PIPE: Array<{ name: string; sub: string; desc: string; Icon: (p: IconProps) => React.ReactElement }> = [
+  {
+    name: "Live pricing",
+    sub: "DeepBook Predict order book",
+    desc: "Every product is quoted straight off the live DeepBook Predict order book, so the price reflects real market probability — not a model's guess.",
+    Icon: IconSignal,
+  },
+  {
+    name: "Quote engine",
+    sub: "Depth-weighted bands",
+    desc: "We slice the payoff into bands and weight each leg by real book depth, so the number you see is what assembling the position actually costs.",
+    Icon: IconBasket,
+  },
+  {
+    name: "USDC collateral",
+    sub: "Net of quote fees",
+    desc: "Post USDC as collateral, net of a small quote fee — no bridging, no wrapped assets, no idle margin parked off-chain.",
+    Icon: IconCoin,
+  },
+  {
+    name: "Sui settlement",
+    sub: "Pelagos USDC package",
+    desc: "The position mints and settles on-chain through the Pelagos USDC package — custody-free, and final the moment your wallet signs.",
+    Icon: IconCube,
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -1066,23 +1086,28 @@ export default function HomePage() {
           .feat-link .lp-ar { transition: transform 0.18s ${EASE}; }
           .feat-link:hover .lp-ar { transform: translateX(4px); }
 
-          /* ---- flow stages — vertical, each slides in from alternating sides ---- */
-          .lp-flow { display: grid; gap: 13px; margin-top: 44px; max-width: 660px; }
-          .flow-stage { display: flex; align-items: center; gap: 20px; padding: 19px 24px; border: 0.5px solid ${C.border}; border-radius: 14px; background: ${C.panelGradient}; transition: transform 0.12s linear; will-change: transform; }
-          .flow-stage.from-left { transform: translateX(calc((1 - var(--reveal, 1)) * -64px)); }
-          .flow-stage.from-right { transform: translateX(calc((1 - var(--reveal, 1)) * 64px)); }
-          .flow-node { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; border: 0.5px solid ${C.tealLight}40; background: ${C.surface}; color: ${C.tealLight}; flex: none; box-shadow: 0 6px 18px ${C.tealLight}14; }
-          .flow-text { min-width: 0; }
-          .flow-name { display: flex; align-items: baseline; gap: 13px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; }
-          .flow-idx { color: ${C.tealLight}; opacity: 0.8; font-family: ${FM}; font-size: 12px; letter-spacing: 0.2em; }
-          .flow-sub { color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.04em; margin-top: 6px; }
+          /* ---- flow stages — full-width horizontal pipeline (4-up) ---- */
+          .lp-flow { display: flex; align-items: stretch; gap: 6px; margin-top: 52px; }
+          .flow-stage { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 28px 26px 30px; border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.panelGradient}; transition: transform 0.16s ${EASE}, border-color 0.16s ${EASE}, box-shadow 0.16s ${EASE}; will-change: transform; }
+          .flow-stage:hover { transform: translateY(-4px); border-color: ${C.tealLight}40; box-shadow: 0 18px 44px rgba(0,0,0,0.32); }
+          .flow-node { width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center; border: 0.5px solid ${C.tealLight}40; background: ${C.surface}; color: ${C.tealLight}; flex: none; box-shadow: 0 6px 18px ${C.tealLight}14; margin-bottom: 22px; }
+          .flow-name { display: flex; align-items: baseline; gap: 11px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+          .flow-idx { color: ${C.tealLight}; opacity: 0.85; font-family: ${FM}; font-size: 11.5px; letter-spacing: 0.18em; }
+          .flow-sub { color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.04em; margin-top: 9px; }
+          .flow-desc { color: ${C.textSubtle}; font-family: ${FS}; font-size: 13px; line-height: 1.62; margin: 16px 0 0; }
+          .flow-arrow { flex: none; align-self: center; display: grid; place-items: center; color: ${C.textDim}; opacity: 0.4; }
 
-          /* ---- closing CTA (clean, centered) ---- */
+          /* ---- closing CTA (large bordered panel, fills the width) ---- */
           .lp-cta { text-align: center; }
-          .lp-cta-inner { max-width: 580px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
-          .lp-cta-inner h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 38px; line-height: 1.08; letter-spacing: -0.035em; font-weight: 600; font-feature-settings: "ss01"; text-wrap: balance; }
-          .lp-cta-inner p { margin: 16px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 480px; text-wrap: pretty; }
-          .lp-cta-actions { justify-content: center; margin-top: 34px; }
+          .lp-cta-panel { border: 0.5px solid ${C.border}; border-radius: 24px; background: radial-gradient(130% 150% at 50% 0%, ${C.tealLight}10, transparent 58%), ${C.panelGradient}; padding: 92px 64px 96px; position: relative; overflow: hidden; box-shadow: 0 34px 90px rgba(0,0,0,0.32); }
+          .lp-cta-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+          .lp-cta-inner h2 { margin: 16px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 54px; line-height: 1.04; letter-spacing: -0.038em; font-weight: 600; font-feature-settings: "ss01"; text-wrap: balance; }
+          .lp-cta-inner p { margin: 22px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 16.5px; line-height: 1.6; max-width: 560px; text-wrap: pretty; }
+          .lp-cta-actions { justify-content: center; margin-top: 40px; }
+          .lp-cta-actions .lp-btn { height: 54px; padding: 0 30px; font-size: 15px; border-radius: 11px; }
+          .lp-cta-trust { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; margin-top: 44px; color: ${C.textDim}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.06em; }
+          .lp-cta-trust span { padding: 0 18px; border-left: 0.5px solid ${C.border}; }
+          .lp-cta-trust span:first-child { padding-left: 0; border-left: 0; }
 
           /* ---- footer ---- */
           .lp-footer { border-top: 0.5px solid ${C.border}; padding: 64px 0 0; }
@@ -1118,6 +1143,14 @@ export default function HomePage() {
             .feat-row.is-rev .feat-panel { order: 1; }
             .feat-row.is-rev .feat-text { order: 2; }
             .lp-foot-main { grid-template-columns: 1fr; gap: 32px; }
+            .lp-flow { flex-wrap: wrap; gap: 12px; }
+            .flow-stage { flex: 1 1 calc(50% - 6px); }
+            .flow-arrow { display: none; }
+            .lp-cta-panel { padding: 64px 28px 68px; }
+            .lp-cta-inner h2 { font-size: 38px; }
+          }
+          @media (max-width: 560px) {
+            .flow-stage { flex-basis: 100%; }
           }
           @media (max-width: 620px) {
             .lp-readout { grid-template-columns: repeat(2, 1fr); gap: 16px 0; }
@@ -1171,32 +1204,42 @@ export default function HomePage() {
             <div className="lp-head">
               <div className="lp-eyebrow">How Pelagos works</div>
               <h2>Market pricing in, an on-chain position out</h2>
-              <p>Four stages take a live quote to a settled Sui position.</p>
+              <p>Four stages turn a live DeepBook quote into a settled, USDC-collateralized position on Sui — no bridges, no custodians, no manual leg assembly.</p>
             </div>
             <div className="lp-flow">
               {PIPE.map((p, i) => (
-                <div className={`flow-stage scroll-fade${i % 2 ? " from-right" : " from-left"}`} key={p.name}>
-                  <div className="flow-node"><p.Icon size={20} /></div>
-                  <div className="flow-text">
+                <React.Fragment key={p.name}>
+                  <div className="flow-stage scroll-fade">
+                    <div className="flow-node"><p.Icon size={22} /></div>
                     <div className="flow-name"><span className="flow-idx">0{i + 1}</span>{p.name}</div>
                     <div className="flow-sub">{p.sub}</div>
+                    <p className="flow-desc">{p.desc}</p>
                   </div>
-                </div>
+                  {i < PIPE.length - 1 && <div className="flow-arrow" aria-hidden><IconArrow /></div>}
+                </React.Fragment>
               ))}
             </div>
           </section>
 
           {/* ---------------- CLOSING CTA ---------------- */}
           <section className="lp-section lp-cta scroll-fade">
-            <div className="lp-cta-inner">
-              <div className="lp-eyebrow">Get started</div>
-              <h2>Structured products, one signature away</h2>
-              <p>Live DeepBook pricing, USDC collateral, settled on Sui. Connect a wallet and trade — no setup, no bridge.</p>
-              <div className="lp-actions lp-cta-actions">
-                <Link className="lp-btn lp-btn-primary" href="/app">
-                  Enter app <span className="lp-ar"><IconArrow /></span>
-                </Link>
-                <a className="lp-btn lp-btn-ghost" href="#products">Explore the products</a>
+            <div className="lp-cta-panel">
+              <div className="lp-cta-inner">
+                <div className="lp-eyebrow">Get started</div>
+                <h2>Structured products, one signature away</h2>
+                <p>Live DeepBook pricing, USDC collateral, settled on Sui. Connect a wallet and trade — no setup, no bridge, no wrapped assets.</p>
+                <div className="lp-actions lp-cta-actions">
+                  <Link className="lp-btn lp-btn-primary" href="/app/portfolio">
+                    Enter app <span className="lp-ar"><IconArrow /></span>
+                  </Link>
+                  <a className="lp-btn lp-btn-ghost" href="#products">Explore the products</a>
+                </div>
+                <div className="lp-cta-trust">
+                  <span>Live DeepBook pricing</span>
+                  <span>USDC collateral</span>
+                  <span>Settled on Sui</span>
+                  <span>Non-custodial</span>
+                </div>
               </div>
             </div>
           </section>

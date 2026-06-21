@@ -348,7 +348,7 @@ export function OpenButton({
 export function PpnPanel({ wallet }: { wallet: Wallet }) {
   const [budget, setBudget] = useState("100");
   const [floorPct, setFloorPct] = useState(0.8);
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const [quote, setQuote] = useState<PpnQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);

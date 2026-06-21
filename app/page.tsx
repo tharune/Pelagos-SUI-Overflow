@@ -687,12 +687,12 @@ const SURFACES: Array<{
   href: string;
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
-  { id: "deepbook", eyebrow: "Built on DeepBook", title: "Range Strips", body: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
-  { id: "vol", eyebrow: "Implied vs realized", title: "Volatility", body: "Trade the implied-vol smile against realized — straddles, strangles, condors — built from real DeepBook range strips, with a delta-neutral hedge.", href: "/app/volatility", Icon: IconVol },
   { id: "distribution", eyebrow: "Options & curves", title: "Distribution Markets", body: "A live BTC options chain of $1 strikes — or set μ and σ to trade your whole distribution view. Priced live off DeepBook, settled on Sui.", href: "/app/distribution", Icon: IconCurve },
-  { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple.", href: "/app/tranche", Icon: IconSlices },
+  { id: "vol", eyebrow: "Implied vs realized", title: "Volatility", body: "Trade the implied-vol smile against realized — straddles, strangles, butterflies, condors — built from real DeepBook range strips, with a delta-neutral hedge.", href: "/app/volatility", Icon: IconVol },
+  { id: "deepbook", eyebrow: "Built on DeepBook", title: "Range Strips", body: "Mint a strip of real DeepBook Predict range options — pin, range plateau, breakout and more — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
   { id: "ppn", eyebrow: "Principal protected", title: "Protected Notes", body: "The floor earns itself back in the PLP house pool, the remainder buys an upside range strip — both in one transaction.", href: "/app/ppn", Icon: IconShield },
   { id: "basket", eyebrow: "Diversified events", title: "Baskets", body: "Curated baskets of uncorrelated event markets, pooled so the basket resolves with far less variance than any single leg.", href: "/app/basket", Icon: IconBasket },
+  { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "An event basket sliced into senior, mezzanine, and junior — senior is paid first, junior takes first loss for the biggest multiple.", href: "/app/tranche", Icon: IconSlices },
 ];
 
 type Showcase = {
@@ -709,28 +709,6 @@ type Showcase = {
 
 const SHOWCASE: Showcase[] = [
   {
-    id: "deepbook",
-    eyebrow: "Built on DeepBook",
-    title: "Range Strips",
-    href: "/app/deepbook",
-    Icon: IconCube,
-    lead: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.",
-    specs: ["Priced live off the DeepBook book", "Pin, Spread, Wide conviction widths", "Every rolling BTC expiry, sub-hour to weeks"],
-    caption: "A range strip minted off the live DeepBook Predict book",
-    legend: [{ name: "Book depth", op: 0.5 }, { name: "Minted strip" }],
-  },
-  {
-    id: "vol",
-    eyebrow: "Implied vs realized",
-    title: "Volatility",
-    href: "/app/volatility",
-    Icon: IconVol,
-    lead: "Trade the implied-vol smile against realized — straddles, strangles, and condors built from real DeepBook range strips, with a delta-neutral hedge.",
-    specs: ["Implied-vol smile across every strike", "Straddle, strangle, condor structures", "Optional delta-neutral perp hedge"],
-    caption: "Implied-vol smile traded against realized vol",
-    legend: [{ name: "Implied vol" }, { name: "Realized", dashed: true, op: 0.55 }],
-  },
-  {
     id: "distribution",
     eyebrow: "Options & curves",
     title: "Distribution Markets",
@@ -742,15 +720,26 @@ const SHOWCASE: Showcase[] = [
     legend: [{ name: "Strikes", op: 0.5 }, { name: "Your view" }, { name: "Market", op: 0.3 }],
   },
   {
-    id: "risk",
-    eyebrow: "Waterfall",
-    title: "Risk Slices",
-    href: "/app/tranche",
-    Icon: IconSlices,
-    lead: "Slice one strip into senior, mezzanine, and junior by conviction width — each absorbs losses in order.",
-    specs: ["Senior covers wide, defensive and steady", "Junior pins the forward for the biggest multiple", "Plus a cross-venue hybrid: BTC core + event tail"],
-    caption: "Capital stack and loss waterfall",
-    legend: [{ name: "Senior", op: 0.9 }, { name: "Mezzanine", op: 0.6 }, { name: "Junior", op: 0.36 }],
+    id: "vol",
+    eyebrow: "Implied vs realized",
+    title: "Volatility",
+    href: "/app/volatility",
+    Icon: IconVol,
+    lead: "Trade the implied-vol smile against realized — straddles, strangles, butterflies, and condors built from real DeepBook range strips, with a delta-neutral hedge.",
+    specs: ["Implied-vol smile across every strike", "Straddle, strangle, butterfly, condor structures", "Optional delta-neutral perp hedge"],
+    caption: "Implied-vol smile traded against realized vol",
+    legend: [{ name: "Implied vol" }, { name: "Realized", dashed: true, op: 0.55 }],
+  },
+  {
+    id: "deepbook",
+    eyebrow: "Built on DeepBook",
+    title: "Range Strips",
+    href: "/app/deepbook",
+    Icon: IconCube,
+    lead: "Mint a strip of real DeepBook Predict range options — pin, range plateau, breakout and more — priced live off the on-chain order book, in one signature.",
+    specs: ["Priced live off the DeepBook book", "Pin, Range Plateau, Breakout and more", "Every rolling BTC expiry, sub-hour to weeks"],
+    caption: "A range strip minted off the live DeepBook Predict book",
+    legend: [{ name: "Book depth", op: 0.5 }, { name: "Minted strip" }],
   },
   {
     id: "ppn",
@@ -762,6 +751,17 @@ const SHOWCASE: Showcase[] = [
     specs: ["USDC principal sleeve", "Downside floored at your chosen level", "Full upside above the floor"],
     caption: "Note held at its floor while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor", dashed: true, op: 0.75 }],
+  },
+  {
+    id: "risk",
+    eyebrow: "Waterfall",
+    title: "Risk Slices",
+    href: "/app/tranche",
+    Icon: IconSlices,
+    lead: "Slice an event basket into senior, mezzanine, and junior — senior is paid first, junior takes first loss.",
+    specs: ["Senior: defensive, paid first", "Junior: first loss, biggest multiple", "Built on Polymarket event baskets, settles on Sui"],
+    caption: "Capital stack and loss waterfall",
+    legend: [{ name: "Senior", op: 0.9 }, { name: "Mezzanine", op: 0.6 }, { name: "Junior", op: 0.36 }],
   },
 ];
 

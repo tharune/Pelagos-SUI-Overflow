@@ -1,17 +1,22 @@
 "use client";
 
 /**
- * Docs page, styled after aave.com/docs:
- *   • Left sidebar with collapsible top-level sections, each holding a
- *     list of sub-pages. Active item highlighted. Click a sub-page to
- *     swap the main content.
+ * About & docs surface, styled after aave.com/docs:
+ *   • Left sidebar with top-level sections, each holding a list of
+ *     sub-pages. Active item highlighted. Click a sub-page to swap the
+ *     main content.
  *   • Single centred content column with plain prose, minimal colour,
- *     one brand accent. Tables and code blocks are flat and quiet.
- *   • A short, human-voiced hackathon note at the very top of every
- *     view — one paragraph, no bullets, no corporate safety theatre.
+ *     one brand accent (Sui Ocean). Tables and code blocks are flat
+ *     and quiet.
+ *   • A short, honest testnet note at the very top of every view.
+ *
+ * Content is kept factually in sync with README.md, ARCHITECTURE.md,
+ * README_DEEPBOOK.md, and DEPLOYMENT.md. Nothing on the pricing/settlement
+ * path is invented: every claim maps to a real route, package, or flow.
  */
 
 import React, { useMemo, useState } from "react";
+import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE } from "../_lib/tokens";
 
@@ -38,45 +43,45 @@ const SECTIONS: DocSection[] = [
       { id: "what-is-pelagos", label: "What is Pelagos",   render: () => <WhatIsPelagos /> },
       { id: "product-suite",   label: "Product suite",     render: () => <ProductSuite /> },
       { id: "architecture",    label: "Architecture",      render: () => <Architecture /> },
+      { id: "non-custodial",   label: "Non-custodial flow", render: () => <NonCustodial /> },
     ],
   },
   {
-    id: "market baskets",
-    label: "Market Baskets",
+    id: "deepbook-predict",
+    label: "DeepBook Predict",
     pages: [
-      { id: "const-concept",   label: "Concept",           render: () => <ConstConcept /> },
-      { id: "const-build",     label: "How baskets build", render: () => <ConstBuild /> },
-      { id: "const-tiers",     label: "Risk tiers",        render: () => <ConstTiers /> },
-      { id: "const-pricing",   label: "NAV and pricing",   render: () => <ConstPricing /> },
-      { id: "const-trade",     label: "Buy and sell",      render: () => <ConstTrade /> },
+      { id: "dbp-primitives",  label: "Binary & range",    render: () => <DbpPrimitives /> },
+      { id: "dbp-pricing",     label: "Live MM pricing",   render: () => <DbpPricing /> },
+      { id: "dbp-oracle",      label: "SVI oracle & expiries", render: () => <DbpOracle /> },
+      { id: "dbp-strip",       label: "The range strip",   render: () => <DbpStrip /> },
     ],
   },
   {
-    id: "tranches",
-    label: "Risk Slices",
+    id: "products",
+    label: "Products",
     pages: [
-      { id: "tr-concept",      label: "Concept",           render: () => <TrConcept /> },
-      { id: "tr-waterfall",    label: "Waterfall",         render: () => <TrWaterfall /> },
-      { id: "tr-pricing",      label: "Pricing",           render: () => <TrPricing /> },
-      { id: "tr-risk",         label: "Risk engine",       render: () => <TrRisk /> },
-      { id: "tr-caps",         label: "Capacity caps",     render: () => <TrCaps /> },
+      { id: "p-distributed",   label: "Distributed Options", render: () => <PDistributed /> },
+      { id: "p-volatility",    label: "Volatility",        render: () => <PVolatility /> },
+      { id: "p-distribution",  label: "Distribution Markets", render: () => <PDistribution /> },
+      { id: "p-slices",        label: "Risk Slices",       render: () => <PSlices /> },
+      { id: "p-notes",         label: "Protected Notes",   render: () => <PNotes /> },
+      { id: "p-baskets",       label: "Baskets",           render: () => <PBaskets /> },
     ],
   },
   {
-    id: "ppn",
-    label: "Principal-Protected Notes",
+    id: "rails",
+    label: "Settlement rails",
     pages: [
-      { id: "ppn-concept",     label: "Concept",           render: () => <PpnConcept /> },
-      { id: "ppn-split",       label: "Dynamic split",     render: () => <PpnSplit /> },
-      { id: "ppn-payoff",      label: "Payoff",            render: () => <PpnPayoff /> },
-      { id: "ppn-routing",     label: "Yield routing",     render: () => <PpnRouting /> },
+      { id: "rails-overview",  label: "dUSDC & Pelagos USDC", render: () => <RailsOverview /> },
+      { id: "rails-lifecycle", label: "Quote to position", render: () => <RailsLifecycle /> },
     ],
   },
   {
-    id: "distribution",
-    label: "Distribution Markets",
+    id: "onchain",
+    label: "On-chain",
     pages: [
-      { id: "dist-concept",    label: "Concept",           render: () => <DistributionConcept /> },
+      { id: "chain-packages",  label: "Move packages",     render: () => <ChainPackages /> },
+      { id: "chain-deploy",    label: "Live deployment",   render: () => <ChainDeploy /> },
     ],
   },
   {
@@ -148,6 +153,7 @@ export default function DocsPage() {
             <HackathonNote />
             <PageTitle page={activePage} />
             {activePage.render()}
+            <PageNav activeId={activeId} onSelect={setActiveId} />
           </article>
         </div>
       </PageFrame>
@@ -156,13 +162,13 @@ export default function DocsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Hackathon note
+// Testnet note
 // ---------------------------------------------------------------------------
 
 /**
- * Disclaimer banner shown at the top of every documentation page.
+ * Honest disclaimer shown at the top of every documentation page.
  * Standard warning-box styling (amber left border, muted background,
- * bold label). Covers the hackathon scope: devnet/testnet only, no mainnet,
+ * bold label). Covers the hackathon scope: testnet only, no mainnet,
  * no real capital, not investment advice.
  */
 function HackathonNote() {
@@ -189,7 +195,7 @@ function HackathonNote() {
           marginBottom: 14,
         }}
       >
-        Disclaimer
+        Testnet — no real value
       </div>
       <p
         style={{
@@ -201,14 +207,15 @@ function HackathonNote() {
           maxWidth: 640,
         }}
       >
-        Pelagos is a hackathon project built for the Sui ecosystem. The
-        application is deployed to Sui testnet only. It is not
-        a financial product, a securities offering, or investment advice,
-        and no real capital is routed through any of its flows. There
-        are no plans to deploy to mainnet, issue a token, or continue
-        maintenance after the event. Prices and payoffs are live off real
-        testnet DeepBook liquidity; all balances are testnet tokens with no
-        monetary value.
+        Pelagos is a hackathon project for the DeepBook Predict track,
+        deployed to Sui testnet only (chain <code style={{ fontFamily: FM, fontSize: "0.86em" }}>4c78adac</code>).
+        It is not a financial product, a securities offering, or
+        investment advice, and no real capital is routed through any of
+        its flows. Prices and settlement are live off real DeepBook
+        Predict liquidity, but every balance — both dUSDC and Pelagos
+        USDC — is a testnet token with no monetary value. There are no
+        plans to deploy to mainnet, issue a token, or continue
+        maintenance after the event.
       </p>
     </aside>
   );
@@ -249,7 +256,7 @@ function Sidebar({
           marginBottom: 18,
         }}
       >
-        DOCUMENTATION
+        ABOUT &amp; DOCS
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
         {SECTIONS.map((section) => (
@@ -383,70 +390,158 @@ function PageTitle({ page }: { page: DocPage }) {
 }
 
 // ---------------------------------------------------------------------------
-// Pages
+// Prev / next footer nav (keeps the doc set fully traversable in order)
+// ---------------------------------------------------------------------------
+
+function PageNav({
+  activeId,
+  onSelect,
+}: {
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
+  const idx = ALL_PAGES.findIndex((p) => p.id === activeId);
+  const prev = idx > 0 ? ALL_PAGES[idx - 1] : null;
+  const next = idx < ALL_PAGES.length - 1 ? ALL_PAGES[idx + 1] : null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 12,
+        marginTop: 44,
+        paddingTop: 22,
+        borderTop: `0.5px solid ${C.border}`,
+      }}
+    >
+      <PageNavButton page={prev} dir="prev" onSelect={onSelect} />
+      <PageNavButton page={next} dir="next" onSelect={onSelect} />
+    </div>
+  );
+}
+
+function PageNavButton({
+  page,
+  dir,
+  onSelect,
+}: {
+  page: DocPage | null;
+  dir: "prev" | "next";
+  onSelect: (id: string) => void;
+}) {
+  if (!page) return <span style={{ flex: 1 }} />;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(page.id)}
+      style={{
+        flex: 1,
+        textAlign: dir === "next" ? "right" : "left",
+        background: "transparent",
+        border: `0.5px solid ${C.border}`,
+        borderRadius: 8,
+        padding: "12px 16px",
+        cursor: "pointer",
+        transition: `border-color 0.15s ${EASE}`,
+      }}
+      onMouseEnter={(e) =>
+        ((e.currentTarget as HTMLElement).style.borderColor = `${C.teal}66`)
+      }
+      onMouseLeave={(e) =>
+        ((e.currentTarget as HTMLElement).style.borderColor = C.border)
+      }
+    >
+      <div
+        style={{
+          fontFamily: FM,
+          fontSize: 10,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+          color: C.textMuted,
+          marginBottom: 4,
+        }}
+      >
+        {dir === "prev" ? "Previous" : "Next"}
+      </div>
+      <div style={{ fontFamily: FD, fontSize: 14, fontWeight: 500, color: C.tealLight }}>
+        {page.label}
+      </div>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pages — Overview
 // ---------------------------------------------------------------------------
 
 function WhatIsPelagos() {
   return (
     <>
       <P>
-        Pelagos is a structured-products protocol built on public
-        prediction markets. Upstream venues expose a flat universe of
-        single-question YES/NO markets; Pelagos composes that universe
-        into four primitives: <B>Market Baskets</B>{" "}
-        (weighted baskets of legs), <B>Risk Slices</B>{" "}
-        (senior, mezzanine, and junior claims on a basket&apos;s terminal
-        payout), <B>Principal-Protected Notes</B>{" "}
-        (a basket position paired with a yield sleeve sized toward
-        principal return at maturity), and <B>Distribution Markets</B>{" "}
-        (bucketed probability curves for outcomes that are not
-        naturally binary).
+        Pelagos turns prediction-market outcomes into clean, tradeable{" "}
+        <B>structured products</B> on Sui, priced and settled on{" "}
+        <B>DeepBook Predict</B>. The flagship is a continuous view of where
+        an asset lands — drag a mean and a width, and Pelagos mints exactly
+        the basket of real on-chain range-options that expresses it, in one
+        wallet signature.
       </P>
       <P>
-        The product surfaces share a single canonical basket grid:
-        two risk tiers (High / Low) crossed with three
-        resolution windows (Short / Med / Long). Each basket is
-        addressable by a stable id and is referenced directly by
-        tranche, PPN, and portfolio surfaces. The portfolio view
-        aggregates positions across every product into a single
-        list.
+        Everything on the pricing and settlement path is real. Each contract
+        is a DeepBook Predict range with a $1 binary payout, priced live off
+        the protocol&apos;s own bid/ask via{" "}
+        <Code>get_range_trade_amounts</Code> and settled natively on chain.
+        No number on the pricing path is invented or linearly interpolated.
       </P>
-      <SubHeading>Motivation</SubHeading>
+      <SubHeading>One engine, five shapes</SubHeading>
       <P>
-        A single prediction market pays out a binary outcome: the
-        buyer receives face value if the event resolves YES and loses
-        the premium otherwise. That shape is poorly suited to thematic
-        exposure, diversified allocation, or defined risk/return
-        trading. Pelagos addresses this gap by introducing three
-        derived shapes on top of the underlying market:
+        Under the hood every Pelagos product is the <B>same range-strip
+        engine</B> with a different parameterisation. A strip is a set of
+        adjacent Predict ranges, weighted by a Normal(μ, σ) mass, that
+        reproduces a distributional view as a payoff. Change what μ and σ
+        mean and you get a different product:
       </P>
       <UL
         items={[
           <>
-            <B>Diversified exposure.</B> A market basket holds 20–40
-            weighted legs in a common theme, reducing idiosyncratic
-            variance relative to a single-market position.
+            <B>Distributed Options</B> — a live BTC options chain, every
+            strike a Predict range priced off real liquidity.
           </>,
           <>
-            <B>Shaped payoff.</B> Risk Slices partition the basket&apos;s
-            terminal NAV distribution into three non-overlapping
-            claims with distinct attach and detach points.
+            <B>Volatility</B> — prebuilt vol structures (straddle, strangle,
+            butterfly, iron condor) with a live payoff diagram, greeks, and a
+            delta-hedge sleeve.
           </>,
           <>
-            <B>Downside target.</B> A PPN sizes a USDC yield sleeve
-            so projected compounding can return the deposit at
-            maturity; only the residual basket slice is exposed to
-            market risk.
+            <B>Distribution Markets</B> — the raw range ladder: a μ/σ view
+            minted as N weighted buckets.
+          </>,
+          <>
+            <B>Risk Slices</B> — the same strip taken at senior / mezzanine /
+            junior widths (0.5σ / 1.0σ / 2.0σ).
+          </>,
+          <>
+            <B>Protected Notes</B> — a principal floor supplied to the PLP
+            vault, paired with a range-strip upside sleeve.
           </>,
         ]}
       />
-      <SubHeading>Intended users</SubHeading>
+      <SubHeading>Two interfaces</SubHeading>
       <P>
-        Pelagos targets three user profiles: allocators seeking
-        thematic exposure across many markets (Market Baskets),
-        traders expressing a defined risk/return view on a basket
-        (Risk Slices), and principal-sensitive depositors who require
-        downside bounding (PPNs).
+        A global <B>Basic / Advanced</B> toggle in the header reskins every
+        product. Basic is clean, guided, and prebuilt. Advanced is the
+        institutional desk: order books, an interactive 3D SVI vol surface,
+        the risk-slice tranching engine, full greeks, and on-chain
+        deployment detail. The toggle, the light/dark theme, and{" "}
+        <Code>?mode=</Code> / <Code>?theme=</Code> deep links all persist
+        per browser.
+      </P>
+      <SubHeading>Non-custodial by construction</SubHeading>
+      <P>
+        The backend is a pricing and orchestration layer that builds{" "}
+        <B>unsigned</B> programmable transaction blocks. The user&apos;s
+        wallet signs and executes them, and the user&apos;s wallet owns the
+        on-chain <Code>PredictManager</Code> that gates every mint and
+        redeem. The backend never custodies user funds.
       </P>
     </>
   );
@@ -456,134 +551,77 @@ function ProductSuite() {
   return (
     <>
       <P>
-        The core primitives share a common leg universe, basket grid,
-        and portfolio surface. Positions in any product can be managed
-        and unwound from a single portfolio view.
+        Pelagos ships a full structured-product suite over one shared,
+        real-priced strip engine. The primary navigation is{" "}
+        <B>Portfolio · Distributed Options · Volatility · DeepBook · Baskets ·
+        About</B>. The table below maps each product to the Predict primitive
+        it is built from.
       </P>
       <Table
-        cols={["Product", "Description", "Intended use"]}
+        cols={["Product", "What it is", "Predict mapping"]}
         rows={[
           [
-            "Market Baskets",
-            "Weighted basket of prediction-market legs, quoted and settled at NAV.",
-            "Thematic exposure to a group of related markets.",
+            "Distributed Options",
+            "Live BTC options chain — calls and puts across every on-chain expiry (≈15m → 22d), each a $1 binary settled on Sui.",
+            "Per-strike DeepBook Predict range, priced live off the protocol&apos;s own bid/ask.",
           ],
           [
-            "Risk Slices",
-            "Senior, mezzanine, and junior claims on a basket&apos;s terminal payout.",
-            "Defined risk/return positioning: downside protection, balanced yield, or convex tail upside.",
-          ],
-          [
-            "PPN",
-            "USDC yield sleeve sized toward principal return at maturity, paired with a basket slice that carries the upside.",
-            "Floor-targeted exposure with a known maturity date.",
+            "Volatility",
+            "Implied-vs-realized vol with prebuilt structures, a live payoff diagram, greeks, and a delta-hedge sleeve. Advanced adds a 3D SVI surface.",
+            "Multi-leg range strips; greeks computed off the live SVI smile.",
           ],
           [
             "Distribution Markets",
-            "Live market groups transformed into outcome bands, scored by liquidity, orderbook depth, spread, time-to-resolution, and NLP quality.",
-            "Expressing views over ranges, counts, or terminal values rather than a single binary outcome.",
+            "A continuous μ/σ view minted as N weighted range buckets — the raw range ladder.",
+            "buildStripBuckets → N on-grid mint_range buckets weighted by Normal mass.",
+          ],
+          [
+            "Risk Slices",
+            "Senior, mezzanine, and junior risk appetites on the same underlying strip.",
+            "The same strip at 0.5σ / 1.0σ / 2.0σ width — narrow ATM is high hit-rate / low multiple, wide is convex / low hit-rate / high multiple.",
+          ],
+          [
+            "Protected Notes",
+            "A principal floor plus capped upside, sized to a chosen floor percentage.",
+            "Floor sleeve → predict::supply (PLP yield); upside sleeve → a range strip; both in one PTB.",
+          ],
+          [
+            "Baskets",
+            "Curated DeepBook recipes plus diversified Polymarket event baskets, de-correlated by an NLP layer.",
+            "Named μ/σ presets over the live oracle (Predict) and CLOB-priced event legs on Pelagos&apos;s own vault (Pelagos USDC).",
           ],
         ]}
       />
-      <SubHeading>Market Baskets</SubHeading>
+      <SubHeading>Shared surfaces</SubHeading>
       <P>
-        Market Baskets are the base primitive. A market basket is a
-        weighted basket of legs grouped by (tier, window). One token
-        represents a pro-rata claim on the basket&apos;s weighted
-        terminal NAV. Positions are opened and closed at NAV plus
-        protocol and market-maker fees and book-walk slippage.
+        Every product reads from the same backend and writes through the same
+        non-custodial prepare / sign / confirm flow. The{" "}
+        <DocLink href="/app/portfolio">Portfolio</DocLink> view aggregates
+        holdings across products with live mark-to-market, P&amp;L, and
+        per-strategy backtests on real price history.
       </P>
-      <SubHeading>Risk Slices</SubHeading>
-      <P>
-        Risk Slices partition the basket&apos;s terminal NAV distribution
-        into three sequential claims. Senior absorbs the base layer
-        and pays first; mezzanine covers the middle of the
-        distribution; junior takes the residual tail. Each tranche is
-        an independent token with its own quote, APY, and face-budget
-        cap. Senior resembles an investment-grade bond, mezzanine a
-        call spread, and junior a deep-out-of-the-money call.
-      </P>
-      <SubHeading>Principal-Protected Notes</SubHeading>
-      <P>
-        A PPN allocates a USDC deposit across a lending vault sleeve
-        and a basket slice. The vault sleeve is sized so projected
-        compounding returns the full deposit at maturity; the
-        residual USDC purchases basket tokens at the prevailing NAV.
-        Subject to vault solvency, the note&apos;s floor is the
-        deposit; the ceiling is bounded by the basket at full YES
-        resolution.
-      </P>
-      <SubHeading>Distribution Markets</SubHeading>
-      <P>
-        Distribution Markets let a user shape the whole outcome curve:
-        each live band receives a probability weight, the backend
-        normalizes the submitted curve, and compares the user&apos;s
-        target curve against the market&apos;s current CLOB-implied
-        reference curve. The position is target minus reference, and
-        required collateral is the worst negative resolution band.
-        This is the local implementation of
-        the Paradigm distribution-market idea; a production version
-        still needs native Move accounting and wallet-signed
-        transactions.
-      </P>
-      <SubHeading>Cross-product navigation</SubHeading>
-      <P>
-        Each market basket detail page links to its tranche page;
-        tranche pages link back to the underlying basket and to the
-        PPN builder with the basket pre-selected. The PPN page exposes
-        the vault aggregator. The portfolio view groups positions by
-        basket id so market basket, tranche, and PPN exposure against
-        the same basket render together.
-      </P>
-    </>
-  );
-}
-
-function DistributionConcept() {
-  return (
-    <>
-      <P>
-        A Distribution Market trades a complete probability curve
-        instead of one YES/NO token. The local implementation uses
-        explicit buckets such as BTC terminal price bands, Sui TVL
-        ranges, or a count of Fed cuts. The frontend sends every bucket
-        weight to the backend, so the quote reflects the user&apos;s actual
-        curve rather than a hardcoded preview.
-      </P>
-      <SubHeading>Local Sui flow</SubHeading>
+      <SubHeading>Where each lives</SubHeading>
       <UL
         items={[
           <>
-            The frontend loads dynamic launch candidates from{" "}
-            <Code>/api/distribution/candidates</Code>.
+            <DocLink href="/app/distribution">Distributed Options</DocLink>{" "}
+            — the BTC chain and the distribution range ladder.
           </>,
           <>
-            Band control changes call{" "}
-            <Code>/api/distribution/quote</Code> to normalize the curve
-            and compute the L2 quote, payout curve, collateral
-            requirement, fees, and peak target band.
+            <DocLink href="/app/volatility">Volatility</DocLink> — vol
+            structures, the SVI surface, and the multi-leg builder.
           </>,
           <>
-            The backend builds each candidate from live Polymarket
-            event groups, rejects poor distribution fits, and scores
-            volume, CLOB depth, spread, time-to-resolution, and NLP
-            quality.
+            <DocLink href="/app/deepbook">DeepBook</DocLink> — prebuilt range
+            strategies and Protected Notes.
           </>,
           <>
-            Settlement calls{" "}
-            <Code>/api/distribution/launch-plan</Code> returns the
-            band market ids, token ids, initial weights, depth, and
-            readiness status for a local launch.
+            <DocLink href="/app/basket">Baskets</DocLink> — DeepBook recipes
+            and Polymarket event baskets, with the Risk Slices tranching
+            engine in Advanced.
           </>,
         ]}
       />
-      <SubHeading>Production delta</SubHeading>
-      <P>
-        Production should replace backend-signed distribution actions
-        with wallet-signed Sui programmable transaction blocks, native
-        Move objects for curve accounting, indexed position state, and
-        settlement rules tied to the chosen prediction-market source.
-      </P>
     </>
   );
 }
@@ -592,1052 +630,946 @@ function Architecture() {
   return (
     <>
       <P>
-        The system is composed of three surfaces: a Next.js frontend,
-        an Express backend, and Sui Move packages deployed on Sui
-        testnet. The frontend does not contact upstream
-        prediction-market or yield-data APIs directly; all external
-        traffic is proxied, cached, and normalised by the backend.
+        Pelagos is three surfaces: a Next.js frontend, an Express backend, and
+        Move packages on Sui testnet — plus Mysten&apos;s DeepBook Predict,
+        which Pelagos calls but does not deploy. The frontend never contacts
+        upstream pricing or settlement directly; all on-chain reads, PTB
+        builds, and external data flow through the backend.
       </P>
-      <SubHeading>Surfaces</SubHeading>
+      <SubHeading>Topology</SubHeading>
+      <CodeBlock>
+        {`Next.js frontend  :13100   forked Next.js; app dir = app/app/
+      │  wallet-signed PTBs (@mysten/dapp-kit)
+      ▼
+Express API       :13101   builds UNSIGNED tx_bytes; non-custodial
+      ├── DeepBook Predict   range pricing · SVI surface · settlement
+      ├── Polymarket CLOB    event-basket markets + midpoint pricing
+      ├── DeFiLlama          live Sui USDC lending APY (note floors)
+      ├── Coinbase           BTC candles (backtests)
+      └── Sui RPC            pelagos_sui / _vault / _strategies moveCalls
+      │
+      └── Monitor :13102     process / API / on-chain / market metrics`}
+      </CodeBlock>
+      <SubHeading>Backend engines</SubHeading>
       <UL
         items={[
           <>
-            <B>Frontend</B> — Next.js App Router under{" "}
-            <Code>app/</Code>. Each product page consumes the
-            six-basket roster, derives tranche, PPN, and payoff
-            previews client-side, and dispatches local state
-            transitions through a reducer whose action shapes mirror
-            the on-chain program instructions.
+            <B>predict/</B> — the SVI surface, implied density, range-strip
+            pricing, and mint PTBs. The shared core under Distributed
+            Options, Volatility, Distribution, Risk Slices, and Notes.
           </>,
           <>
-            <B>Backend</B> — Express service under{" "}
-            <Code>backend/</Code>. Proxies the prediction-market API,
-            aggregates USDC lending yields, exposes demo PPN routes,
-            and quotes Distribution Market curves. Upstream calls are
-            cached server-side with TTLs matched to data volatility
-            (3 s for order books, 5 min for vault yields).
+            <B>options-chain</B> — the BTC options chain: each strike priced
+            off Predict range liquidity, IV from the live SVI smile,
+            depth and risk caps per strike.
           </>,
           <>
-            <B>On-chain</B> — Sui Move packages under{" "}
-            <Code>pelagos_sui/</Code> deployed to Sui testnet.
-            Local execution routes mint Pelagos USDC, create prediction
-            markets, buy position objects, resolve, and claim through
-            the deployed package.
+            <B>volatility</B> — prebuilt vol structures and greeks.
+          </>,
+          <>
+            <B>baskets / market-filter / nlp</B> — Polymarket discovery
+            through a 5-stage NLP quality filter, correlation-decorrelated
+            weighting, and tranching.
+          </>,
+          <>
+            <B>vault / sui / pelagos-chain</B> — the on-chain moveCall and
+            PTB builders.
           </>,
         ]}
       />
-      <SubHeading>Request flow</SubHeading>
-      <P>A typical product page load executes the following steps:</P>
+      <SubHeading>Why a proxy backend</SubHeading>
+      <P>
+        Routing every on-chain read and external call through the backend
+        centralises caching, rate limiting, schema normalisation, and PTB
+        construction. It also keeps signing on the client: the backend
+        computes and dry-runs transactions but holds no user keys for the
+        structured-product path.
+      </P>
+    </>
+  );
+}
+
+function NonCustodial() {
+  return (
+    <>
+      <P>
+        The structured-product path is non-custodial end to end. The backend
+        builds an unsigned transaction, dry-runs a throwaway copy for a
+        gas and feasibility estimate, and returns{" "}
+        <Code>{`{ tx_bytes, sender, dry_run }`}</Code>. The user&apos;s wallet
+        signs and executes; the user&apos;s wallet owns the{" "}
+        <Code>PredictManager</Code> whose <Code>owner</Code> field gates
+        mint, redeem, deposit, and withdraw.
+      </P>
+      <SubHeading>Prepare → sign → confirm</SubHeading>
       <OL
         items={[
           <>
-            The frontend requests the active market universe from the
-            backend. The backend returns a cached snapshot and
-            refreshes the cache asynchronously.
+            <B>Prepare.</B> The frontend posts a quote request (μ/σ, budget,
+            floor percentage, basket id) to a <Code>/prepare</Code> route.
+            The backend prices the legs against live Predict liquidity and
+            returns unsigned <Code>tx_bytes</Code> plus a dry-run result.
           </>,
           <>
-            The frontend runs the basket-construction pipeline on the
-            market list and materialises the six canonical baskets
-            keyed by (tier, window).
+            <B>Sign.</B> The wallet (<Code>@mysten/dapp-kit</Code>) signs the
+            bytes. On a first open the manager-creation step is bundled so
+            the whole position is one signature.
           </>,
           <>
-            Pages that require order-book depth (basket trade panel,
-            tranche risk engine) batch token ids and call{" "}
-            <Code>/api/markets/orderbooks</Code>.
-          </>,
-          <>
-            The PPN yield-routing block calls{" "}
-            <Code>/api/vaults/yields</Code>. The backend returns the
-            top five USDC lending venues ranked by APY with a
-            per-row freshness flag.
-          </>,
-          <>
-            User actions (buy, sell, deposit, redeem) dispatch to the
-            reducer, which emits the same action shapes the on-chain
-            program would consume.
+            <B>Confirm.</B> The frontend posts the executed digest to{" "}
+            <Code>/confirm</Code>, which verifies the transaction on chain
+            and surfaces the emitted events and any newly created manager id.
           </>,
         ]}
       />
-      <SubHeading>Rationale for the proxy backend</SubHeading>
+      <SubHeading>The two write paths</SubHeading>
       <P>
-        Routing external traffic through the backend centralises
-        caching, rate-limit enforcement, and upstream schema
-        normalisation. It also removes the need to distribute API
-        credentials to the client and allows the data source to be
-        changed without a frontend release.
+        The non-custodial prepare/sign/confirm path drives every
+        structured product. A separate custodial, backend-signed path also
+        exists for the single-strike binary tab and scripted end-to-end
+        tests; it requires a configured server signer and is never on the
+        user-facing structured-product route.
+      </P>
+      <SubHeading>What the backend never does</SubHeading>
+      <P>
+        The backend does not hold user keys, does not take custody of
+        collateral, and cannot move a position the user did not sign for.
+        Its reads run through <Code>devInspect</Code> — pricing and
+        simulation that touch no funds and need no signer.
       </P>
     </>
   );
 }
 
-function ConstConcept() {
+// ---------------------------------------------------------------------------
+// Pages — DeepBook Predict
+// ---------------------------------------------------------------------------
+
+function DbpPrimitives() {
   return (
     <>
       <P>
-        A market basket is a weighted basket of prediction-market legs
-        that share a (tier, window) signature. One market basket unit
-        represents a pro-rata claim on the basket&apos;s weighted
-        terminal NAV. At any given moment, NAV equals the
-        weight-averaged YES probability across the basket&apos;s
-        constituent legs. At resolution, each leg pays 1 if it resolves
-        YES and 0 otherwise; the basket pays the weighted sum.
+        DeepBook Predict is Mysten&apos;s on-chain prediction protocol. Over a
+        BTC SVI vol-surface oracle it exposes two primitives that Pelagos
+        builds everything from.
       </P>
-      <SubHeading>Basket grid</SubHeading>
-      <P>
-        The basket universe is a fixed 2 × 3 grid of two risk tiers
-        (High, Low) crossed with three resolution windows (Short:
-        under 30 days; Med: 30–90 days; Long: over 90 days). The grid
-        contains six canonical baskets and is regenerated on every
-        refresh. Each basket is addressed by a stable id referenced by
-        the tranche, PPN, and portfolio surfaces.
-      </P>
-      <SubHeading>Basket contents</SubHeading>
       <UL
         items={[
           <>
-            <B>Legs.</B> Individual YES or NO sides of upstream
-            markets. A low-probability market can contribute to a
-            High-tier basket via its NO side.
+            <B>Binary.</B> Pays $1 per contract if settlement is above (UP)
+            or at/below (DOWN) a single strike. A single-strike directional
+            bet.
           </>,
           <>
-            <B>Weights.</B> One positive weight per leg, summing to 1.
-            The largest single-leg weight is capped to limit
-            concentration.
-          </>,
-          <>
-            <B>Signature.</B> The (tier, window) pair plus a stable id
-            derived from the leg set. Used for deep links and
-            portfolio lookups.
-          </>,
-          <>
-            <B>Resolution date.</B> The maximum end-date across the
-            basket&apos;s legs. Displayed on every basket card and on
-            the basket detail page.
+            <B>Range (vertical).</B> A{" "}
+            <Code>RangeKey{`{ oracle_id, expiry, lower, higher }`}</Code>{" "}
+            pays $1 per contract iff settlement lands in{" "}
+            <Code>(lower, higher]</Code>. Fair value is{" "}
+            <Code>up(lower) − up(higher)</Code>.
           </>,
         ]}
       />
-      <SubHeading>Example</SubHeading>
+      <SubHeading>From one strike to a view</SubHeading>
       <P>
-        Consider a Low/Short basket containing 24 legs with
-        probabilities between 1% and 12%, whose weighted YES
-        probability is 0.05. A $1,000 deposit at NAV = $0.05 credits
-        approximately 20,000 basket tokens net of fees. If the weighted
-        terminal outcome is 0.06, the position redeems for 20,000 ×
-        0.06 = $1,200 before fees, a gross return of 20%.
+        A binary lets you bet on one strike. Pelagos&apos;s insight is that a
+        strip of adjacent ranges, weighted by a Normal(μ, σ) mass, is a
+        payoff that mirrors a whole distributional view. Drag μ for direction
+        and σ for conviction and width, and you mint exactly the basket of
+        real range-options that expresses it.
+      </P>
+      <SubHeading>Units and scales</SubHeading>
+      <P>
+        Scales are enforced in one place so the math stays consistent across
+        the whole engine:
+      </P>
+      <Table
+        cols={["Quantity", "Scale", "Meaning"]}
+        rows={[
+          ["Strikes, spot, forward, probabilities", "1e9", "PRICE_SCALE fixed-point."],
+          ["dUSDC cash", "1e6", "Micro-dUSDC (6 decimals)."],
+          ["Contract quantity", "1,000,000 = 1 contract", "One contract pays $1 at settlement."],
+        ]}
+      />
+    </>
+  );
+}
+
+function DbpPricing() {
+  return (
+    <>
+      <P>
+        This is the heart of the integration: no price on the path is
+        invented or linearly interpolated. Every bucket price comes from the
+        protocol&apos;s own <Code>get_range_trade_amounts</Code> via{" "}
+        <Code>devInspect</Code> — no funds, no signer required.
+      </P>
+      <SubHeading>How a strip is priced at real size</SubHeading>
+      <OL
+        items={[
+          <>
+            <B>Build buckets.</B> Slice <Code>Normal(μ, σ)</Code> into N
+            contiguous, on-grid, non-overlapping buckets spanning{" "}
+            <Code>±spanSigma·σ</Code>. Each bucket&apos;s weight is its Normal
+            mass <Code>Φ((higher−μ)/σ) − Φ((lower−μ)/σ)</Code>.
+          </>,
+          <>
+            <B>Marginal ask.</B> One preview per bucket at quantity = 1
+            contract gives the per-contract ask with no size impact — the
+            sizing and slippage reference.
+          </>,
+          <>
+            <B>Size ∝ Normal weight.</B> Quantities are allocated so the
+            payout mirrors the view and total marginal cost ≈ budget.
+          </>,
+          <>
+            <B>Re-price at real quantity.</B> Call{" "}
+            <Code>get_range_trade_amounts</Code> again at each bucket&apos;s
+            real quantity. Because the protocol prices against post-trade
+            vault state, the returned cost already includes the MM spread and
+            the slippage from the liability the order adds.
+          </>,
+          <>
+            <B>One budget correction.</B> If real total cost drifts more than
+            5% from the budget, quantities are scaled once and re-priced.
+          </>,
+        ]}
+      />
+      <SubHeading>Both sides surfaced</SubHeading>
+      <P>
+        For every bucket the protocol returns{" "}
+        <Code>(mint_cost, redeem_payout)</Code> — the ask you pay to mint at
+        this size and the bid you would receive redeeming it now. Pelagos
+        surfaces both, plus derived deltas:
+      </P>
+      <UL
+        items={[
+          <><Code>mint_cost</Code> — ask at quantity (spread + slippage included).</>,
+          <><Code>redeem_value</Code> — bid at quantity (the redeem-now payout).</>,
+          <><Code>slippage</Code> — <Code>mint_cost − unit_price·qty</Code>, the convexity over the marginal price.</>,
+          <><Code>spread</Code> — <Code>mint_cost − redeem_value</Code>, the round-trip MM spread at this size.</>,
+          <><Code>expected_value</Code> — EV under the user&apos;s own Normal view.</>,
+        ]}
+      />
+      <SubHeading>The [2%, 98%] mintable band</SubHeading>
+      <P>
+        The pricer will happily quote bands outside the protocol&apos;s mint
+        bounds (≈[1%, 99%]), so they look tradeable — but{" "}
+        <Code>mint_range</Code> then aborts in{" "}
+        <Code>assert_mintable_ask</Code>. To guarantee that every bucket
+        Pelagos surfaces as tradeable actually mints, a bucket is flagged
+        tradeable only when its marginal ask sits inside{" "}
+        <Code>[0.02, 0.98]</Code> — a deliberate safety margin inside the
+        protocol bound so post-trade slippage cannot push it out. Out-of-band
+        and failing buckets are skipped, never faked.
+      </P>
+      <P>
+        Verified live: a binary preview on an ATM oracle returned UP $0.509 /
+        DOWN $0.508, summing to $1.017 — the spread the PLP earns.
       </P>
     </>
   );
 }
 
-function ConstBuild() {
+function DbpOracle() {
   return (
     <>
       <P>
-        The basket construction pipeline in{" "}
-        <Code>app/_lib/live-baskets.ts</Code> rebuilds all six baskets
-        on every refresh in five sequential passes over the active
-        market universe. The pipeline&apos;s structure is documented
-        below; the specific weighting calibrations are not published.
+        DeepBook Predict prices against a BTC <B>SVI vol-surface oracle</B>.
+        Pelagos reads the live surface and forward directly from the
+        protocol, so every strike, probability, and greek is grounded in the
+        same source the protocol settles against.
+      </P>
+      <SubHeading>SVI surface</SubHeading>
+      <P>
+        The backend exposes the live surface at{" "}
+        <Code>GET /api/predict/vol-surface</Code> and an implied density at{" "}
+        <Code>GET /api/predict/density</Code>. The Advanced{" "}
+        <DocLink href="/app/volatility">Volatility</DocLink> desk renders this
+        as an interactive 3D surface with smile and term-structure analytics;
+        greeks are computed off the same smile rather than a flat-vol
+        assumption.
+      </P>
+      <SubHeading>Rolling BTC expiries</SubHeading>
+      <P>
+        The protocol publishes a ladder of BTC oracles across expiries, from
+        roughly fifteen minutes out to about twenty-two days. Pelagos reads
+        the active set from <Code>GET /api/predict/oracles</Code> and snaps a
+        requested strike to the nearest on-grid level via the indexer. The{" "}
+        <DocLink href="/app/distribution">Distributed Options</DocLink> chain
+        renders calls and puts across every live expiry; expiring oracles
+        drop off and new ones appear as the protocol rolls them.
+      </P>
+      <SubHeading>Settlement</SubHeading>
+      <P>
+        Settlement is native to DeepBook Predict. While a market is live a
+        holder can redeem at the current bid via{" "}
+        <Code>redeem_range</Code>; once the oracle settles, anyone can claim
+        a winning range permissionlessly. Pelagos does not adjudicate or
+        override resolution — it reads and submits against the protocol.
+      </P>
+    </>
+  );
+}
+
+function DbpStrip() {
+  return (
+    <>
+      <P>
+        The range strip is the single primitive every Pelagos product is
+        parameterised from. A strip is N on-grid Predict ranges, weighted by
+        a Normal(μ, σ) mass, that together reproduce a distributional payoff.
+      </P>
+      <SubHeading>Anatomy of a strip quote</SubHeading>
+      <CodeBlock>
+        {`view        Normal(μ, σ)            direction μ, width σ
+buckets     N on-grid ranges        ±spanSigma·σ, non-overlapping
+weight[i]   Φ(hi)−Φ(lo)             Normal mass of bucket i
+qty[i]      ∝ weight[i]             sized so payout mirrors the view
+cost[i]     get_range_trade_amounts priced at qty[i], post-trade state
+strip       Σ cost[i]  ≈  budget    one budget correction if >5% off`}
+      </CodeBlock>
+      <SubHeading>How each product re-parameterises it</SubHeading>
+      <Table
+        cols={["Product", "Strip parameterisation"]}
+        rows={[
+          ["Distribution", "μ/σ chosen directly on sliders; N buckets across the view."],
+          ["Risk Slices", "Same μ; width fixed per slice — senior 0.5σ, mezzanine 1.0σ, junior 2.0σ."],
+          ["Protected Notes", "Upside sleeve is a strip; floor sleeve is supplied to the PLP vault instead of minted."],
+          ["DeepBook baskets", "Named μ/σ presets — BTC Pin (0.3%σ, n4), BTC Spread (0.6%σ, n6), BTC Wide (1.0%σ, n8)."],
+          ["Volatility", "Multi-leg strips composed into straddle / strangle / butterfly / iron condor."],
+        ]}
+      />
+      <SubHeading>One signature</SubHeading>
+      <P>
+        A whole strip mints in a single programmable transaction block: an
+        optional <Code>create_manager</Code>, a dUSDC deposit, and{" "}
+        <Code>N × mint_range</Code> — all bundled and signed once. The same
+        applies to a Protected Note, where the PLP supply and the range strip
+        share one PTB.
+      </P>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pages — Products
+// ---------------------------------------------------------------------------
+
+function PDistributed() {
+  return (
+    <>
+      <P>
+        Distributed Options is a live BTC options chain. Every strike is a
+        DeepBook Predict range with a $1 binary payout, priced live off the
+        protocol&apos;s own bid/ask. Contracts are whole, depth- and
+        risk-capped per strike, and settled on Sui.
+      </P>
+      <SubHeading>The chain</SubHeading>
+      <P>
+        Calls and puts are laid out across every on-chain expiry, from
+        roughly fifteen minutes to about twenty-two days. Each strike shows
+        the live ask and bid, the implied volatility from the SVI smile, and a
+        per-strike depth cap so an order can never exceed what is actually
+        mintable. The chain is served by{" "}
+        <Code>GET /api/options/chain</Code> with per-strike depth at{" "}
+        <Code>GET /api/options/depth</Code>.
+      </P>
+      <SubHeading>Buying a contract</SubHeading>
+      <OL
+        items={[
+          <>Open <DocLink href="/app/distribution">Distributed Options</DocLink> and pick an expiry and strike.</>,
+          <>Choose call or put and a contract count. The quote shows ask, IV, and the depth-capped maximum.</>,
+          <>Confirm. The wallet signs a single PTB that mints the underlying range against dUSDC.</>,
+          <>Hold to settlement for the binary payout, or redeem early at the live bid.</>,
+        ]}
+      />
+      <SubHeading>Why it is honest</SubHeading>
+      <P>
+        Because each strike is a real Predict range, the price the chain
+        shows is the price the protocol charges — including the MM spread and
+        the slippage the order itself adds. There is no synthetic AMM and no
+        invented mark.
+      </P>
+    </>
+  );
+}
+
+function PVolatility() {
+  return (
+    <>
+      <P>
+        The Volatility desk trades implied versus realized vol with prebuilt
+        structures: straddle, strangle, butterfly, and iron condor. Each is a
+        multi-leg composition of range strips, with a live payoff diagram,
+        full greeks, and an optional delta-hedge sleeve.
+      </P>
+      <SubHeading>Basic and Advanced</SubHeading>
+      <P>
+        Basic presents the prebuilt structures with a payoff diagram and a
+        one-click open. Advanced adds an interactive{" "}
+        <B>3D SVI vol surface</B>, smile and term-structure analytics, and a
+        multi-leg trade builder for composing custom structures. Both read the
+        same live surface and price the same way.
+      </P>
+      <SubHeading>Greeks and hedging</SubHeading>
+      <P>
+        Greeks are computed off the live SVI smile rather than a flat-vol
+        assumption, so delta, gamma, vega, and theta reflect the actual
+        surface the protocol settles against. The hedge sleeve sizes a
+        delta-neutralising leg, surfaced at{" "}
+        <Code>GET /api/vol/hedge</Code>.
+      </P>
+      <SubHeading>Routes</SubHeading>
+      <UL
+        items={[
+          <><Code>GET /api/vol/surface</Code> — the live SVI surface for the desk.</>,
+          <><Code>POST /api/vol/quote</Code> — price a structure and return greeks + payoff.</>,
+          <><Code>POST /api/vol/open/prepare</Code> — unsigned multi-leg open for the wallet to sign.</>,
+        ]}
+      />
+    </>
+  );
+}
+
+function PDistribution() {
+  return (
+    <>
+      <P>
+        Distribution Markets expose the range ladder directly. A user shapes a
+        continuous view — a mean μ and a width σ — and Pelagos mints it as N
+        weighted Predict range buckets that reproduce the payoff. This is the
+        raw form of the engine every other product specialises.
+      </P>
+      <SubHeading>Flow</SubHeading>
+      <OL
+        items={[
+          <>
+            Drag μ (direction) and σ (conviction) on the{" "}
+            <DocLink href="/app/distribution">Distribution</DocLink> sliders;
+            set a budget and bucket count N.
+          </>,
+          <>
+            The preview calls <Code>POST /api/predict/strip/preview</Code>,
+            which returns N on-grid buckets priced live off the protocol, with
+            per-bucket ask, bid, slippage, and the strip totals.
+          </>,
+          <>
+            Confirm. <Code>POST /api/predict/strip/open/prepare</Code> returns
+            an unsigned <Code>deposit + N × mint_range</Code> PTB; the wallet
+            signs it in one signature.
+          </>,
+          <>
+            Redeem live via <Code>range/redeem/prepare</Code>, or
+            permissionlessly once the oracle settles.
+          </>,
+        ]}
+      />
+      <SubHeading>What the quote tells you</SubHeading>
+      <P>
+        Because the strip is priced at real quantity against post-trade vault
+        state, the quote surfaces the true cost of expressing the view: total
+        cost, max payout, total slippage, round-trip spread, and the expected
+        value under the user&apos;s own Normal. Out-of-band buckets (outside
+        the <Code>[2%, 98%]</Code> mintable band) are shown as untradeable
+        rather than silently dropped.
+      </P>
+    </>
+  );
+}
+
+function PSlices() {
+  return (
+    <>
+      <P>
+        Risk Slices express a risk appetite over the same underlying view.
+        Senior, mezzanine, and junior are the same strip taken at different
+        widths: a narrow ATM slice is high hit-rate and low multiple, a wide
+        slice is convex, low hit-rate, and high multiple.
+      </P>
+      <Table
+        cols={["Slice", "Strip width", "Profile"]}
+        rows={[
+          ["Senior", "0.5σ", "Narrow, around the mean. High probability of paying, modest multiple. Resembles an investment-grade claim."],
+          ["Mezzanine", "1.0σ", "Mid-width. Balanced hit-rate and multiple. Resembles a call spread."],
+          ["Junior", "2.0σ", "Wide tails. Low hit-rate, convex payout. Resembles a deep out-of-the-money option."],
+        ]}
+      />
+      <SubHeading>Pricing</SubHeading>
+      <P>
+        Each slice is quoted through{" "}
+        <Code>POST /api/predict/tranche/quote</Code>, which prices the
+        corresponding strip width against live Predict liquidity. The
+        Advanced <DocLink href="/app/basket">Baskets</DocLink> surface
+        renders the three slices side by side with their live quotes so the
+        seniority trade-off is legible at a glance.
+      </P>
+      <SubHeading>Settlement</SubHeading>
+      <P>
+        Slices settle exactly like any other strip: each constituent range
+        redeems at its binary payout, and the slice pays the weighted sum.
+        There is no separate waterfall contract — the seniority is encoded in
+        which part of the distribution the strip covers.
+      </P>
+    </>
+  );
+}
+
+function PNotes() {
+  return (
+    <>
+      <P>
+        A Protected Note pairs a principal floor with capped upside. The floor
+        sleeve is supplied to DeepBook Predict&apos;s PLP vault — the
+        &quot;be the house&quot; side that earns the spread Pelagos quotes
+        elsewhere — and the upside sleeve is a range strip. Both legs settle
+        in one programmable transaction block.
+      </P>
+      <SubHeading>How the split works</SubHeading>
+      <UL
+        items={[
+          <>
+            <B>Floor sleeve.</B> A chosen fraction of the deposit (default
+            <Code>floor_pct = 0.8</Code>) is supplied to the PLP vault via{" "}
+            <Code>predict::supply</Code>, earning the protocol&apos;s
+            counterparty yield.
+          </>,
+          <>
+            <B>Upside sleeve.</B> The remainder buys a range strip expressing
+            the user&apos;s view, carrying the convex upside.
+          </>,
+          <>
+            <B>One PTB.</B> The deposit split, PLP supply, and range mint are
+            bundled by <Code>POST /api/predict/ppn/open/prepare</Code> and
+            signed once.
+          </>,
+        ]}
+      />
+      <SubHeading>Floor sourcing</SubHeading>
+      <P>
+        The note&apos;s yield context is surfaced from real Sui USDC lending
+        venues (via DeFiLlama) so the floor target is grounded in live rates,
+        not a fixed assumption. Live PLP vault state — NAV, share price,
+        utilisation — is readable at{" "}
+        <Code>GET /api/predict/vault/summary</Code>. The prebuilt strategies
+        and the note builder live on the{" "}
+        <DocLink href="/app/deepbook">DeepBook</DocLink> surface.
+      </P>
+      <SubHeading>Honest floor</SubHeading>
+      <P>
+        Principal protection is a target, not a guarantee. It depends on PLP
+        vault solvency, redemption availability, and settlement timing — see{" "}
+        the risk summary. The floor is the protocol&apos;s counterparty
+        position, so it carries the risks of being the house.
+      </P>
+    </>
+  );
+}
+
+function PBaskets() {
+  return (
+    <>
+      <P>
+        Baskets come in two flavours: curated DeepBook range recipes and
+        diversified Polymarket event baskets. They share the basket terminal
+        but sit on different settlement rails.
+      </P>
+      <SubHeading>DeepBook baskets</SubHeading>
+      <P>
+        One-click μ/σ presets over the live BTC oracle, each a range strip:
+        <Code>BTC Pin</Code> (0.3%σ, n4), <Code>BTC Spread</Code> (0.6%σ, n6),
+        and <Code>BTC Wide</Code> (1.0%σ, n8). They are quoted through{" "}
+        <Code>GET /api/predict/baskets</Code> and{" "}
+        <Code>POST /api/predict/basket/quote</Code> and settle in dUSDC on
+        DeepBook Predict.
+      </P>
+      <SubHeading>Polymarket event baskets</SubHeading>
+      <P>
+        Diversified baskets of Polymarket events, priced off the live CLOB
+        midpoint. An NLP layer (TF-IDF cosine plus theme clustering)
+        de-correlates the legs so a basket is genuinely uncorrelated rather
+        than thirty variants of one bet. These settle on Pelagos&apos;s own
+        generic <Code>Vault&lt;T&gt;</Code> in Pelagos USDC, kept distinct
+        from the Predict-backed suite so demos are never bottlenecked on the
+        dUSDC faucet.
+      </P>
+      <SubHeading>Risk Slices in Advanced</SubHeading>
+      <P>
+        The Basic <DocLink href="/app/basket">Baskets</DocLink> view is a
+        clean basket terminal; Advanced is the{" "}
+        <DocLink href="/app/basket">Risk Slices</DocLink> tranching engine,
+        rendering senior, mezzanine, and junior on the same basket. The
+        5-stage NLP quality filter behind the event legs is documented in the
+        repository&apos;s market-filter writeup.
+      </P>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pages — Settlement rails
+// ---------------------------------------------------------------------------
+
+function RailsOverview() {
+  return (
+    <>
+      <P>
+        Pelagos has two settlement rails, both first-class, both 1:1 in USD.
+        Which one an order uses depends on the product: anything that touches
+        DeepBook Predict settles in dUSDC; Pelagos&apos;s own contracts settle
+        in Pelagos USDC.
+      </P>
+      <Table
+        cols={["Rail", "Asset", "Mintable?", "Used for"]}
+        rows={[
+          [
+            "DeepBook Predict",
+            "dUSDC — the protocol&apos;s quote asset (6 dp).",
+            "Faucet-gated. TreasuryCap is Mysten&apos;s; we hold a float only.",
+            "Distribution strips, Risk Slices, Protected Note floors and upside, DeepBook baskets.",
+          ],
+          [
+            "Pelagos vault",
+            "Pelagos USDC (MOCK_USDC, 6 dp).",
+            "Freely mintable via a shared, permissionless Faucet (≤1,000,000/call).",
+            "Polymarket event baskets and Pelagos&apos;s own Vault flows.",
+          ],
+        ]}
+      />
+      <SubHeading>Why two rails</SubHeading>
+      <P>
+        dUSDC is the only asset DeepBook Predict accepts — registering a quote
+        asset requires the protocol&apos;s AdminCap, which Pelagos does not
+        hold. So the Predict-backed suite is honestly collateralised in the
+        protocol&apos;s real asset. dUSDC is faucet-gated and not mintable by
+        us, which makes it the one hard blocker for live writes. To keep the
+        rest of the app frictionlessly testable, Pelagos&apos;s own contracts
+        use a freely-mintable Pelagos USDC so a demo never bottlenecks on the
+        dUSDC faucet.
+      </P>
+      <SubHeading>Getting test funds</SubHeading>
+      <P>
+        The header <B>Test funds</B> button, shown when a wallet is connected,
+        sends 25 dUSDC (from the operator float) and 10,000 Pelagos USDC
+        (freshly minted) in one click. Each Predict surface also shows a
+        contextual <B>Get test dUSDC</B> when the wallet is short. Gas (SUI) is
+        free from the standard Sui testnet faucet.
+      </P>
+      <SubHeading>A note on DEEP</SubHeading>
+      <P>
+        DeepBook Predict is an AMM/PLP-backed range protocol that settles
+        purely in dUSDC. It does <B>not</B> use DEEP — that is DeepBook v3&apos;s
+        CLOB fee token, and Pelagos places no v3 CLOB orders. A live range
+        mint consumes zero DEEP, only dUSDC and SUI gas.
+      </P>
+    </>
+  );
+}
+
+function RailsLifecycle() {
+  return (
+    <>
+      <P>
+        However it is parameterised, a Pelagos position follows the same
+        lifecycle from quote to settlement. The Predict-backed path is shown
+        below; the vault-backed event-basket path mirrors it through the
+        sim/deposit routes on the Pelagos USDC rail.
       </P>
       <OL
         items={[
           <>
-            <B>Ingest.</B> Retrieve the active market universe from the
-            backend proxy. Each market contributes two candidate legs
-            (YES and NO).
+            <B>Quote.</B> A μ/σ view (or a structure, slice, or basket
+            preset) is priced live off the protocol&apos;s own{" "}
+            <Code>get_range_trade_amounts</Code>. The quote shows ask, bid,
+            slippage, spread, and expected value at the real order size.
           </>,
           <>
-            <B>Classify.</B> Tag each leg with a probability band and a
-            resolution window derived from the market&apos;s end date.
-            A keyword classifier assigns a category label used in
-            downstream diversity checks.
+            <B>Prepare.</B> The backend builds an unsigned PTB — on a first
+            open, bundling <Code>create_manager</Code>, the dUSDC deposit, and{" "}
+            <Code>N × mint_range</Code> — and dry-runs it for a gas estimate.
           </>,
           <>
-            <B>Deduplicate.</B> Collisions are resolved along three
-            axes: shared market id, shared event id, and matching
-            token-set hash on the question. Only one side of a given
-            market can appear in the grid.
+            <B>Sign.</B> The wallet signs the bytes. The user&apos;s wallet
+            owns the resulting <Code>PredictManager</Code>.
           </>,
           <>
-            <B>Weight.</B> A sqrt-volume prior with a per-leg cap and
-            floor is combined with a tilt that anchors each
-            basket&apos;s weighted NAV to its tier target (approximately
-            0.95 and 0.05). A seeded jitter introduces minor
-            variation across refreshes.
+            <B>Confirm.</B> The executed digest is posted to{" "}
+            <Code>/confirm</Code>, which verifies it on chain and records the
+            position. It now shows in the{" "}
+            <DocLink href="/app/portfolio">Portfolio</DocLink> with live
+            mark-to-market.
           </>,
           <>
-            <B>Emit.</B> All six (tier, window) cells are populated.
-            If the preferred probability band does not yield at least
-            ten legs, an extended band is applied so no cell remains
-            empty.
+            <B>Redeem or settle.</B> Redeem early at the live bid via{" "}
+            <Code>range/redeem</Code>, or hold to settlement and claim the
+            binary payout permissionlessly once the oracle resolves.
           </>,
         ]}
       />
-      <SubHeading>Refresh cadence</SubHeading>
+      <SubHeading>Mark-to-market</SubHeading>
       <P>
-        The pipeline runs on product page mount and whenever the
-        backend publishes a new market snapshot. Basket output is
-        deterministic for a given snapshot, so concurrent clients
-        observe identical ids and weights.
-      </P>
-      <SubHeading>Delisting</SubHeading>
-      <P>
-        If an upstream market is delisted, its leg is removed on the
-        next refresh and the remaining weights are renormalised to
-        sum to 1. No synthetic leg is substituted; the basket simply
-        contains fewer legs until the next rebuild.
+        While a position is open, its mark is the live redeem-now value of its
+        constituent ranges — the same bid the protocol would pay, read off
+        chain. The Portfolio surface aggregates this across products into a
+        single P&amp;L.
       </P>
     </>
   );
 }
 
-function ConstTiers() {
+// ---------------------------------------------------------------------------
+// Pages — On-chain
+// ---------------------------------------------------------------------------
+
+function ChainPackages() {
   return (
     <>
       <P>
-        Tiers are structural labels applied during basket construction,
-        not runtime filters. Each tier selects legs from a distinct
-        slice of the upstream probability distribution, producing
-        two baskets per window with materially different payoff
-        profiles.
+        Pelagos deploys three Move packages to Sui testnet and calls a fourth
+        — Mysten&apos;s DeepBook Predict — which it does not deploy.
       </P>
       <Table
-        cols={["Tier", "Probability band", "Target NAV", "Profile"]}
+        cols={["Package", "Modules", "Role"]}
         rows={[
-          ["High", "85–99%", "~95%", "Near-certain outcomes; limited upside and limited downside."],
-          ["Low",  "1–12%",  "~5%",  "Long-tailed distribution; large proportional upside if legs resolve YES, near-total loss otherwise."],
+          [
+            "pelagos_sui",
+            "mock_usdc, prediction_market",
+            "Freely-mintable test collateral (Pelagos USDC) plus binary prediction markets.",
+          ],
+          [
+            "pelagos_vault",
+            "vault",
+            "A generic Vault&lt;T&gt; with a NAV share-price; backs event baskets and Predict-backed wrappers.",
+          ],
+          [
+            "pelagos_strategies",
+            "structured_note",
+            "A principal-protection floor primitive plus admin settlement.",
+          ],
+          [
+            "DeepBook Predict (Mysten)",
+            "predict, predict_manager, PLP vault, OracleSVI",
+            "The on-chain range markets Pelagos prices against and settles on. Called, not deployed.",
+          ],
         ]}
       />
-      <SubHeading>Tier selection</SubHeading>
+      <SubHeading>How they fit together</SubHeading>
       <UL
         items={[
           <>
-            <B>High.</B> Use for near-par exposure with tight NAV
-            ranges. Appropriate as the basket slice of a low-variance
-            PPN. Not suitable when convex upside is the objective.
+            Every option and strategy leg is priced against DeepBook
+            Predict&apos;s real liquidity via{" "}
+            <Code>get_range_trade_amounts</Code> and settled natively on it.
           </>,
           <>
-            <B>Low.</B> Use for convex upside. At a NAV near $0.05,
-            each dollar purchases a large token count, so a modest
-            number of YES resolutions produces an outsized return.
+            <Code>pelagos_vault</Code> provides a NAV-share <Code>Vault&lt;T&gt;</Code>:
+            a <Code>Vault&lt;MOCK_USDC&gt;</Code> backs the event baskets and a{" "}
+            <Code>Vault&lt;dUSDC&gt;</Code> backs Predict wrappers.
+          </>,
+          <>
+            <Code>pelagos_sui</Code> mints Pelagos USDC through a shared,
+            permissionless Faucet and runs the local binary prediction
+            markets used by event baskets.
           </>,
         ]}
       />
-      <SubHeading>Window selection</SubHeading>
+      <SubHeading>Hand-rolled PTBs</SubHeading>
       <P>
-        The window tags the legs&apos; resolution horizon: Short (under
-        30 days), Med (30–90 days), Long (over 90 days). Shorter
-        windows resolve sooner and reduce mark-to-market variance;
-        longer windows allow more time for underlying markets to
-        re-price and therefore exhibit greater mid-life NAV drift from
-        the tier target. Select the window that matches the intended
-        holding period.
+        Pelagos calls the live Predict package directly through hand-rolled
+        programmable transaction blocks: <Code>create_manager</Code>,{" "}
+        <Code>deposit</Code>, <Code>mint</Code> / <Code>redeem</Code>,{" "}
+        <Code>mint_range</Code> / <Code>redeem_range</Code>,{" "}
+        <Code>supply</Code> / <Code>withdraw</Code>, and the{" "}
+        <Code>get_trade_amounts</Code> / <Code>get_range_trade_amounts</Code>{" "}
+        previews — all against dUSDC, the protocol&apos;s quote asset.
       </P>
     </>
   );
 }
 
-function ConstPricing() {
+function ChainDeploy() {
   return (
     <>
       <P>
-        NAV is the weighted mean of the legs&apos; YES probabilities,
-        computed from the live upstream snapshot. Buy and sell quotes
-        apply symmetric protocol and market-maker fees and asymmetric
-        slippage: buys walk the ask side, sells walk the bid. Sells
-        also incur an adverse-selection premium that scales with order
-        size and inverse depth.
+        Live on Sui testnet, chain <Code>4c78adac</Code>, deployed under a
+        dedicated operator wallet. The canonical IDs and verified on-chain
+        digests live in <Code>DEPLOYMENT.md</Code>; the headline objects are
+        below.
       </P>
-      <SubHeading>Quote anatomy</SubHeading>
-      <CodeBlock>
-        {`ask     = NAV + protocolFee + mmFee + buySlippage
-bid     = NAV − protocolFee − mmFee − sellSlippage − adverseFee
-mid     = NAV
-spread  = ask − bid`}
-      </CodeBlock>
-      <UL
-        items={[
-          <>
-            <B>Protocol fee.</B> Flat percentage on notional, accrued
-            to the protocol.
-          </>,
-          <>
-            <B>Market-maker fee.</B> Basis-point spread captured by
-            the market maker on every round trip.
-          </>,
-          <>
-            <B>Slippage.</B> Book walk on the underlying legs. For a
-            buy of notional <Code>N</Code>, the pricing engine walks
-            the ask side of each leg&apos;s order book and
-            weight-averages the marginal prices across the basket
-            weights.
-          </>,
-        ]}
-      />
-      <SubHeading>Adverse-selection premium</SubHeading>
-      <P>
-        Sell quotes include an additional premium proportional to{" "}
-        <Code>sqrt(size / volumeProxy)</Code>, which rises with order
-        size and falls with available market depth. This component
-        compensates liquidity providers for the information content
-        implicit in a large sell order. Premiums are negligible for
-        small orders and become visible only on large orders against
-        thin books.
-      </P>
-      <SubHeading>Slippage ceiling</SubHeading>
-      <P>
-        Orders whose total slippage exceeds 15% display a warning and
-        are prevented from submission. If this ceiling is triggered,
-        the order&apos;s notional exceeds the displayed depth of the
-        basket&apos;s underlying legs; reduce size or split the order.
-      </P>
-    </>
-  );
-}
-
-function ConstTrade() {
-  return (
-    <>
-      <P>
-        The basket detail page exposes a single trade panel with a
-        Buy/Sell toggle. The quote preview updates as the notional or
-        token quantity inputs change.
-      </P>
-      <SubHeading>Buy flow</SubHeading>
-      <OL
-        items={[
-          <>Open the basket detail page from the Market Baskets grid.</>,
-          <>
-            Select <B>Buy</B> and enter a USDC notional.
-          </>,
-          <>
-            Review the quote: NAV, ask, protocol and market-maker
-            fees, slippage, and <Code>tokensOut</Code>.
-          </>,
-          <>
-            Confirm. USDC is debited and{" "}
-            <Code>tokensOut = netUsdc / ask</Code> basket tokens are
-            credited to the portfolio under the basket id.
-          </>,
-        ]}
-      />
-      <SubHeading>Sell flow</SubHeading>
-      <OL
-        items={[
-          <>
-            Open the basket detail page. The sell panel is active
-            regardless of whether a position is held, allowing quotes
-            to be previewed.
-          </>,
-          <>
-            Select <B>Sell</B> and enter a token quantity, or use the
-            MAX shortcut to close the full position.
-          </>,
-          <>
-            Review the quote: NAV, bid, protocol and market-maker
-            fees, sell slippage, adverse-selection premium, and final
-            USDC payout.
-          </>,
-          <>
-            Confirm. Tokens are burned and{" "}
-            <Code>payoutUsdc = qty × bid</Code> is credited to the
-            wallet balance.
-          </>,
-        ]}
-      />
-      <SubHeading>Portfolio consistency</SubHeading>
-      <P>
-        The deposit action carries <Code>tokensOut</Code> from the buy
-        panel into the reducer, ensuring the portfolio view matches
-        the quoted token count exactly. Sells dispatch a{" "}
-        <Code>basket/redeem</Code> action with quantity and payout
-        guards to prevent partial fills from leaving residual
-        positions.
-      </P>
-      <SubHeading>Hold-to-resolution</SubHeading>
-      <P>
-        Selling before resolution is optional. Positions held to
-        resolution are closed through the portfolio view&apos;s{" "}
-        <B>Resolve</B> action, which redeems each leg at its final
-        binary payout and credits the weighted USDC amount.
-        Resolution payouts do not incur adverse-selection or
-        market-maker fees.
-      </P>
-    </>
-  );
-}
-
-function TrConcept() {
-  return (
-    <>
-      <P>
-        A tranche is a defined claim on a subset of a
-        market basket&apos;s terminal payout. Every basket in the grid
-        has three tranches stacked on top of it: senior, mezzanine,
-        and junior. Each tranche is an independent token with its own
-        quote, face budget, and target APY. At resolution, the
-        basket&apos;s weighted terminal NAV is distributed through a
-        waterfall: senior claims its layer in full before mezzanine
-        receives any payout, and mezzanine is satisfied in full before
-        junior.
-      </P>
-      <SubHeading>Tranche kinds</SubHeading>
-      <UL
-        items={[
-          <>
-            <B>Senior.</B> Top of the waterfall. Pays close to par
-            across the common outcome range. Lowest expected return
-            and lowest variance. Payoff profile resembles an
-            investment-grade bond.
-          </>,
-          <>
-            <B>Mezzanine.</B> Middle of the waterfall. Pays through
-            approximately the 68th-percentile outcome, then tapers to
-            zero. Moderate expected return with non-trivial variance.
-            Payoff profile resembles a call spread.
-          </>,
-          <>
-            <B>Junior.</B> Bottom of the waterfall. Pays only when the
-            basket clears the upper attach point. Highest expected
-            return and highest variance. Payoff profile resembles a
-            deep out-of-the-money call.
-          </>,
-        ]}
-      />
-      <SubHeading>Rationale</SubHeading>
-      <P>
-        A basket&apos;s terminal NAV is a distribution rather than a
-        single value. Tranching partitions that distribution into
-        three non-overlapping claims with differentiated risk/return
-        profiles. By construction, the sum of the three tranche claims
-        equals the underlying basket.
-      </P>
-      <SubHeading>Tranche detail page</SubHeading>
-      <P>
-        Each basket has a tranche detail page linked from its basket
-        card. The page displays the attach and detach points as NAV
-        percentiles, the current quote for each tranche kind, the
-        implied APY, the remaining face-budget capacity, and the
-        risk-engine breakdown for the order size being evaluated.
-      </P>
-    </>
-  );
-}
-
-function TrWaterfall() {
-  return (
-    <>
-      <P>
-        Attach points are derived from the basket&apos;s terminal-NAV
-        distribution, approximated as Normal(μ, σ²), where μ is the
-        current weighted NAV and σ is the basket&apos;s implied
-        volatility over time-to-resolution. Tranches attach at{" "}
-        <Code>K1 = μ</Code> and <Code>K2 = μ + σ</Code>:
-      </P>
-      <UL
-        items={[
-          <>
-            <B>Senior</B> claims <Code>[0, K1]</Code>. Pays full face
-            when terminal NAV ≥ K1; pro-rates below.
-          </>,
-          <>
-            <B>Mezzanine</B> claims <Code>[K1, K2]</Code>. Pays
-            linearly from zero at K1 to full face at K2.
-          </>,
-          <>
-            <B>Junior</B> claims <Code>[K2, 1]</Code>. Pays zero below
-            K2 and rises linearly to full face at NAV = 1.
-          </>,
-        ]}
-      />
-      <SubHeading>Example</SubHeading>
-      <P>
-        Assume a basket with μ = 0.50 and σ = 0.18, giving attach
-        points K1 = 0.50 and K2 = 0.68. The following table shows
-        terminal payouts per $1 face:
-      </P>
+      <SubHeading>Pelagos packages</SubHeading>
       <Table
-        cols={["Terminal NAV", "Senior", "Mezzanine", "Junior"]}
+        cols={["Object", "ID"]}
         rows={[
-          ["0.30", "0.60",  "0.00",  "0.00"],
-          ["0.50", "1.00",  "0.00",  "0.00"],
-          ["0.60", "1.00",  "0.56",  "0.00"],
-          ["0.68", "1.00",  "1.00",  "0.00"],
-          ["0.85", "1.00",  "1.00",  "0.53"],
-          ["1.00", "1.00",  "1.00",  "1.00"],
+          ["pelagos_sui package", "0x598434be…3e45"],
+          ["mock_usdc::Faucet (shared)", "0xd1f67a0e…a07f0"],
+          ["pelagos_vault package", "0xcaff49f8…2e2b19"],
+          ["Vault&lt;MOCK_USDC&gt; (shared)", "0x5fdc7d7a…042d2d"],
+          ["Vault&lt;dUSDC&gt; (shared)", "0x9110df66…68c54a"],
         ]}
       />
-      <P>
-        Senior is paid in full whenever terminal NAV clears K1.
-        Mezzanine begins accruing payout above K1 and reaches full
-        face at K2. Junior remains at zero below K2 and accrues
-        linearly up to NAV = 1.
-      </P>
-    </>
-  );
-}
-
-function TrPricing() {
-  return (
-    <>
-      <P>
-        A tranche is a call spread on terminal basket NAV. Under the
-        Normal approximation <Code>NAV ~ Normal(μ, σ²)</Code>, fair
-        value per $1 face is the spread of two call prices:
-      </P>
-      <CodeBlock>
-        {`fair(A, D) = [ C(μ,σ,A) − C(μ,σ,D) ] / (D − A)
-C(μ,σ,K)   = σ · φ(z) + (μ − K) · Φ_c(z)     where z = (K − μ)/σ`}
-      </CodeBlock>
-      <P>
-        <Code>fair(A, D)</Code> is the fair value per $1 face of a
-        tranche with attach <Code>A</Code> and detach <Code>D</Code>.
-        This corresponds to the price a risk-neutral buyer would pay
-        given a perfect hedge. Senior uses <Code>[0, K1]</Code>,
-        mezzanine <Code>[K1, K2]</Code>, and junior{" "}
-        <Code>[K2, 1]</Code>.
-      </P>
-      <SubHeading>Ask construction</SubHeading>
-      <P>
-        The ask anchors to fair value and discounts to a kind-specific
-        target APY:
-      </P>
-      <CodeBlock>
-        {`ask        = fair / (1 + target_apy · τ)
-target_apy = base[kind] + slope[kind] · σ     (clamped to max[kind])`}
-      </CodeBlock>
-      <P>
-        <Code>τ</Code> is time-to-resolution in years.{" "}
-        <Code>target_apy</Code> increases with basket volatility and
-        with the convexity of the tranche kind. The{" "}
-        <Code>base</Code>, <Code>slope</Code>, and <Code>max</Code>{" "}
-        constants are internal calibrations. Quoted yields are
-        constrained to the published ranges below.
-      </P>
-      <SubHeading>Target APY ranges</SubHeading>
+      <SubHeading>DeepBook Predict (Mysten)</SubHeading>
       <Table
-        cols={["Kind", "Target APY (annualised)", "Characteristics"]}
+        cols={["Object", "ID"]}
         rows={[
-          ["Senior",    "3–12%",   "Narrow range near par. Modest pickup for higher-volatility baskets."],
-          ["Mezzanine", "12–45%",  "Yield compensation for covering the middle of the distribution."],
-          ["Junior",    "35–120%", "Deep-OTM yield range, calibrated to compensate for the expected-loss profile."],
+          ["Predict package", "0xf5ea2b37…785138"],
+          ["Predict object (market root)", "0xc8736204…38028a"],
+          ["dUSDC type", "0xe9504008…73e1a::dusdc::DUSDC"],
+          ["Indexer", "predict-server.testnet.mystenlabs.com"],
         ]}
       />
+      <SubHeading>Verified end-to-end</SubHeading>
       <P>
-        Displayed APY is annualised relative to the
-        time-to-resolution. A tranche with a 28-day window quoting
-        10% APY is priced such that a hold-to-maturity purchase
-        earns the discount implied by 10% per annum over that window.
+        Both Pelagos packages publish with green Move tests. Live, on-chain,
+        wallet-signed digests this deploy include a one-PTB range-strip mint,
+        a PLP supply for a note floor, and a range mint and redeem in both
+        directions. The indexer corroborates four range mints and one redeem.
+        Every wallet-signed build dry-runs clean on chain, and a fresh
+        mint→redeem cycle confirms the live path on current code. Full digests
+        are in <Code>DEPLOYMENT.md</Code>.
       </P>
     </>
   );
 }
 
-function TrRisk() {
-  return (
-    <>
-      <P>
-        Each tranche quote is produced by a risk engine in{" "}
-        <Code>app/app/tranche/_risk.ts</Code> that adds four
-        components on top of the fair-anchored ask. The engine
-        estimates hedging cost using the live order book depth of the
-        basket&apos;s constituent legs.
-      </P>
-      <Table
-        cols={["Component", "Scales with", "Captures"]}
-        rows={[
-          ["Market impact", "√(size / hedge_capacity)",      "Order-book walk on underlying legs as exposure is laid off."],
-          ["Warehouse",     "(1 − hedge_cap / face) × CoC",   "Residual tail that cannot be hedged linearly; held on inventory at a cost of capital."],
-          ["Inventory",     "σ × √τ",                        "Vega and theta drift on the hedged book over time-to-resolution."],
-          ["Tail premium",  "(tokens × capitalAtRisk) / USDC","Convex gamma cost applicable to mezzanine and junior positions."],
-        ]}
-      />
-      <SubHeading>Reading the breakdown</SubHeading>
-      <P>
-        The tranche detail page displays each component as a separate
-        line on the quote breakdown. A component that dominates the
-        total (for example, market impact exceeding the sum of
-        warehouse, inventory, and tail) indicates the order size is
-        large relative to displayed depth. Reducing size typically
-        improves the all-in price.
-      </P>
-      <SubHeading>Hedging profile</SubHeading>
-      <P>
-        A senior write is approximately linear: the desk can short
-        the underlying legs at pre-attach prices and hedge most of
-        the resulting exposure. A junior write is non-linear because
-        the payoff activates only above K2, leaving the desk with
-        meaningful gamma. As a result, the warehouse and tail
-        components dominate junior quotes, and a single basket can
-        produce materially different quotes across the three kinds
-        at the same notional.
-      </P>
-    </>
-  );
-}
-
-function TrCaps() {
-  return (
-    <>
-      <P>
-        Face obligation is bounded by available hedge liquidity. Each
-        order is subject to a face-budget cap computed from the
-        basket&apos;s live order-book depth:
-      </P>
-      <CodeBlock>
-        {`maxUsdc = hedgeCapacity × FACE_BUDGET[kind] × marketPrice
-FACE_BUDGET = { senior: 3.0, mezz: 1.5, junior: 0.75 }`}
-      </CodeBlock>
-      <P>
-        Senior receives the largest multiplier because senior face is
-        the most hedgeable linearly. Junior receives the smallest
-        multiplier because a junior write produces convex inventory
-        that must be carried on the book.
-      </P>
-      <SubHeading>Cap-trip behaviour</SubHeading>
-      <P>
-        Orders exceeding the cap display{" "}
-        <Code>Insufficient liquidity — max $X</Code> and the submit
-        action is disabled until the size is reduced. A secondary
-        kind-specific fee block (senior 20%, mezzanine 35%, junior
-        50% of notional) prevents submission when the computed fee
-        exceeds those thresholds, producing the same UX as a cap
-        trip.
-      </P>
-      <SubHeading>Mitigations</SubHeading>
-      <UL
-        items={[
-          <>
-            <B>Split the order.</B> Submit a smaller tranche position,
-            allow book depth to replenish, and re-quote. The cap is
-            evaluated per order against a fresh order-book snapshot.
-          </>,
-          <>
-            <B>Select a less convex kind.</B> If a junior order is
-            capped, senior or mezzanine on the same basket carry
-            higher multipliers against the same depth.
-          </>,
-          <>
-            <B>Select a different window.</B> Long-window baskets may
-            have deeper underlying order books than short-window
-            baskets nearing resolution at the same tier.
-          </>,
-        ]}
-      />
-    </>
-  );
-}
-
-function PpnConcept() {
-  return (
-    <>
-      <P>
-        A principal-protected note allocates a USDC deposit across two
-        sleeves: a <B>vault slice</B> that earns yield until maturity
-        and a <B>basket slice</B> that holds a market basket position.
-        The vault slice is sized so its projected compounded value at
-        maturity equals the original deposit. The residual USDC funds
-        the basket slice.
-      </P>
-      <SubHeading>Floor and ceiling</SubHeading>
-      <UL
-        items={[
-          <>
-            <B>Floor target.</B> The vault sleeve is sized toward full
-            deposit recovery at maturity, so the note&apos;s floor does
-            not depend on the basket settling above zero. Subject to
-            vault solvency and redemption availability.
-          </>,
-          <>
-            <B>Ceiling.</B> The basket slice is bounded by{" "}
-            <Code>basketTokens × $1</Code>, realised only if every leg
-            resolves YES. The expected outcome is close to the
-            basket&apos;s prevailing weighted NAV.
-          </>,
-        ]}
-      />
-      <SubHeading>Use cases</SubHeading>
-      <UL
-        items={[
-          <>
-            Prediction-market exposure with a known maturity date and
-            a bounded downside.
-          </>,
-          <>
-            Thematic basket exposure without committing the full
-            deposit to market risk.
-          </>,
-          <>
-            Yield sleeve that tracks the best available USDC lending
-            venue rather than a fixed protocol.
-          </>,
-        ]}
-      />
-      <SubHeading>Opening a note</SubHeading>
-      <OL
-        items={[
-          <>
-            Select a basket from the market basket picker. Tier choice
-            determines the shape of the upside.
-          </>,
-          <>
-            Enter the deposit size. The UI updates the vault/basket
-            split in real time.
-          </>,
-          <>
-            Select a maturity between 7 and 365 days. Longer
-            maturities produce a larger basket slice at a given APY.
-          </>,
-          <>
-            Review the payoff preview: floor, expected, and maximum
-            payout, together with a payoff curve across terminal NAV.
-          </>,
-          <>
-            Confirm the deposit. The note is recorded in the portfolio
-            view.
-          </>,
-        ]}
-      />
-      <SubHeading>Maturity and withdrawal</SubHeading>
-      <P>
-        At maturity, the portfolio view exposes a <B>withdraw</B>{" "}
-        action. Withdrawal unwinds both sleeves atomically: the vault
-        slice is redeemed at its matured value, the basket slice is
-        redeemed at the prevailing NAV, and the combined USDC is
-        credited to the wallet balance. Early withdrawal is not
-        supported in the current hackathon build.
-      </P>
-    </>
-  );
-}
-
-function PpnSplit() {
-  return (
-    <>
-      <P>
-        The deposit split is determined by three inputs: the prevailing
-        vault APY, the note&apos;s maturity, and the deposit size. The
-        split is computed deterministically from the vault&apos;s
-        compounding growth:
-      </P>
-      <CodeBlock>
-        {`dailyRate  = apy / 365
-growth     = (1 + dailyRate)^days
-vaultPct   = 1 / growth
-basketPct  = 1 − vaultPct`}
-      </CodeBlock>
-      <P>
-        <Code>vaultPct</Code> is the fraction of the deposit that, when
-        compounded at the given APY over the note&apos;s window,
-        returns to 1. The remainder is allocated to the basket sleeve.
-      </P>
-      <SubHeading>Examples</SubHeading>
-      <Table
-        cols={["Vault APY", "Maturity (days)", "Vault slice", "Basket slice (of $1,000)"]}
-        rows={[
-          ["6%",  "30",  "99.51%", "$4.92"],
-          ["6%",  "90",  "98.53%", "$14.69"],
-          ["6%",  "180", "97.08%", "$29.18"],
-          ["6%",  "365", "94.34%", "$56.60"],
-          ["12%", "180", "94.36%", "$56.35"],
-          ["12%", "365", "89.29%", "$107.14"],
-        ]}
-      />
-      <P>
-        Short maturities against modest APYs produce small basket
-        slices. Longer maturities against higher APYs produce
-        substantially larger basket slices.
-      </P>
-      <SubHeading>Levers</SubHeading>
-      <UL
-        items={[
-          <>
-            <B>Maturity.</B> At a given APY, doubling the window
-            approximately doubles the basket slice.
-          </>,
-          <>
-            <B>Vault APY.</B> Higher APY reduces the vault sleeve and
-            increases the basket slice. Higher APY venues may carry
-            additional credit and liquidity risk (see{" "}
-            <Code>Yield routing</Code>).
-          </>,
-          <>
-            <B>Tier.</B> The tier of the selected basket sets the
-            token count per dollar. A Low-tier basket near $0.05 NAV
-            purchases roughly 20× as many tokens per dollar as a
-            High-tier basket near $0.95 NAV, with a correspondingly
-            higher ceiling.
-          </>,
-        ]}
-      />
-    </>
-  );
-}
-
-function PpnPayoff() {
-  return (
-    <>
-      <P>
-        The payoff preview exposes three headline values and a payoff
-        curve plotted against terminal basket NAV:
-      </P>
-      <CodeBlock>
-        {`floor     = deposit                              (basket → $0)
-expected  = deposit − structuringFee                (basket at fair NAV)
-max       = deposit + basketAmt × (1/nav − 1)       (basket → $1/token)`}
-      </CodeBlock>
-      <P>
-        <B>Floor</B> is the deposit returned by the vault sleeve in
-        isolation. <B>Expected</B> assumes the basket settles at its
-        current fair NAV, net of the structuring fee. <B>Max</B> is
-        realised when every basket leg resolves YES.
-      </P>
-      <SubHeading>Example</SubHeading>
-      <P>
-        A $1,000 deposit for 180 days at a 6% vault APY, paired with a
-        Low-tier basket at NAV ≈ $0.05:
-      </P>
-      <UL
-        items={[
-          <>
-            Vault slice: 97.08% of $1,000 = $970.82, compounding back
-            to $1,000 at maturity.
-          </>,
-          <>
-            Basket slice: $29.18 at NAV $0.05 ≈ 583.6 tokens net of
-            fees.
-          </>,
-          <>
-            <B>Floor</B>: $1,000. <B>Expected</B> at basket NAV 0.05:
-            approximately $1,000. <B>Max</B> if basket → 1.0:
-            $1,000 + 583.6 × (1 − 0.05) = $1,554.40, a 55.4% return on
-            deposit.
-          </>,
-        ]}
-      />
-      <P>
-        The same deposit against a High-tier basket at NAV ≈ $0.95
-        produces a floor of $1,000 and a maximum of approximately
-        $1,000 + 30.7 × (1 − 0.95) ≈ $1,001.50. Token count per
-        dollar is near 1, so the basket contribution to the ceiling is
-        negligible.
-      </P>
-      <SubHeading>Payoff curve</SubHeading>
-      <P>
-        The SVG curve plots terminal PPN payout as a function of
-        terminal basket NAV. It is flat at <Code>floor</Code> until
-        the break-even NAV and rises linearly to <Code>max</Code> at
-        basket NAV = 1. Steeper curves correspond to more convex
-        notes; flatter curves correspond to near-par notes.
-      </P>
-      <SubHeading>Tier selection</SubHeading>
-      <UL
-        items={[
-          <>
-            <B>Low-tier.</B> Maximum upside per dollar of deposit.
-            Token count per dollar is highest at NAV near $0.05.
-          </>,
-          <>
-            <B>High-tier.</B> Near-par note. Basket NAV is close to
-            $1, so the basket slice contributes minimal upside.
-          </>,
-        ]}
-      />
-    </>
-  );
-}
-
-function PpnRouting() {
-  return (
-    <>
-      <P>
-        Each PPN routes its vault slice to the highest-APY USDC
-        lending venue that passes the backend&apos;s verification
-        rules. The routing decision is surfaced on the PPN page.
-      </P>
-      <SubHeading>Data source</SubHeading>
-      <P>
-        The <B>Yield Routing</B> block on the PPN page reads from the
-        backend aggregator <Code>GET /api/vaults/yields</Code>. The
-        aggregator pulls a public yields dataset every five minutes,
-        filters to verified single-asset USDC lending venues with TVL
-        above $100k, and returns the top five by APY. Each row
-        carries a <Code>live / estimated</Code> freshness flag.
-      </P>
-      <SubHeading>Selection rules</SubHeading>
-      <UL
-        items={[
-          <>Single-asset USDC pools only; multi-asset LP pools are excluded.</>,
-          <>Sui local mode only.</>,
-          <>Minimum $100k TVL to exclude dust and newly launched pools.</>,
-          <>
-            Protocol slug matched against an internal allowlist of
-            lending protocols; top-TVL pools are used as back-fill
-            when the allowlist produces fewer than five entries.
-          </>,
-          <>
-            Top five results returned, ranked by APY, with the most
-            recent snapshot ordered first.
-          </>,
-        ]}
-      />
-      <SubHeading>Cache behaviour</SubHeading>
-      <P>
-        The aggregator caches upstream results for five minutes. If an
-        upstream fetch fails, the route returns the most recent
-        successful snapshot with <Code>cache_stale: true</Code>. When
-        no successful fetch has occurred (for example during cold
-        boot), the route returns an{" "}
-        <Code>estimated</Code> fallback so deposit flows remain
-        available.
-      </P>
-      <SubHeading>Interpreting the block</SubHeading>
-      <P>
-        The top row indicates the venue selected for the vault slice.
-        Remaining rows list ranked alternatives. A{" "}
-        <Code>live</Code> badge indicates the APY originated from a
-        successful upstream fetch within the cache window.{" "}
-        <Code>estimated</Code> indicates the fallback path was used.
-      </P>
-    </>
-  );
-}
+// ---------------------------------------------------------------------------
+// Pages — Developers
+// ---------------------------------------------------------------------------
 
 function DevApi() {
   return (
     <>
       <P>
-        All frontend data flows are served by the backend under{" "}
-        <Code>backend/</Code>. Every endpoint is rate-limited per IP
-        and caches upstream responses. The base URL is configured via{" "}
-        <Code>NEXT_PUBLIC_BACKEND_URL</Code>. Endpoints are scoped to
-        the hackathon deployment.
+        All frontend data and on-chain orchestration flow through the backend
+        under <Code>backend/</Code>. The base URL is configured via{" "}
+        <Code>NEXT_PUBLIC_BACKEND_URL</Code> (default{" "}
+        <Code>http://localhost:13101</Code>). Reads run through{" "}
+        <Code>devInspect</Code> — no funds, no signer. Writes are returned as
+        unsigned <Code>tx_bytes</Code> for the wallet to sign.
       </P>
+      <SubHeading>Predict — reads (no funds)</SubHeading>
+      <Endpoint
+        method="GET"
+        path="/api/predict/oracles"
+        description="Active BTC oracles across expiries. Filters: ?active=true, ?underlying=BTC."
+        params={[
+          ["active", "bool", "Default true."],
+          ["underlying", "string", "Default BTC."],
+        ]}
+        responseNote="{ oracles: Oracle[] }"
+      />
+      <Endpoint
+        method="GET"
+        path="/api/predict/vol-surface"
+        description="Live SVI vol surface for the Volatility desk and greeks."
+        params={[]}
+        responseNote="{ surface, smile, term_structure }"
+      />
+      <Endpoint
+        method="GET"
+        path="/api/predict/vault/summary"
+        description="Live PLP vault summary — NAV, share price, utilisation. The 'vault strategy' behind Protected Note floors."
+        params={[]}
+        responseNote="{ nav, share_price, utilization }"
+      />
+      <SubHeading>Predict — pricing (the core preview)</SubHeading>
+      <Endpoint
+        method="POST"
+        path="/api/predict/strip/preview"
+        description="μ/σ view → N on-grid range buckets, live MM-priced off get_range_trade_amounts. Surfaces ask, bid, slippage, spread, and EV per bucket and as strip totals."
+        params={[
+          ["asset", "string", "Default BTC; or oracle_id directly."],
+          ["mu_usd", "number", "View mean (or mu_raw, 1e9)."],
+          ["sigma_usd", "number", "View width (or sigma_raw, 1e9)."],
+          ["budget_usd", "number", "Total spend (or budget_raw, 6dp)."],
+          ["n", "number", "Bucket count."],
+        ]}
+        responseNote="{ buckets: PricedBucket[], totals: StripQuote }"
+      />
+      <SubHeading>Predict — structured products (non-custodial)</SubHeading>
+      <Endpoint
+        method="POST"
+        path="/api/predict/strip/open/prepare"
+        description="Unsigned deposit + N × mint_range PTB (one signature). Bundles create_manager on a first open."
+        params={[
+          ["asset", "string", "Or oracle_id."],
+          ["mu_usd", "number", "View mean."],
+          ["sigma_usd", "number", "View width."],
+          ["budget_usd", "number", "Total spend."],
+          ["n", "number", "Bucket count."],
+        ]}
+        responseNote="{ tx_bytes, sender, dry_run }"
+      />
+      <Endpoint
+        method="POST"
+        path="/api/predict/ppn/open/prepare"
+        description="Unsigned single-PTB Protected Note open: split → PLP supply (floor) + deposit + range strip (upside)."
+        params={[
+          ["budget_usd", "number", "Total deposit."],
+          ["floor_pct", "number", "Floor fraction; default 0.8."],
+          ["mu_usd", "number", "Upside view mean."],
+          ["sigma_usd", "number", "Upside view width."],
+        ]}
+        responseNote="{ tx_bytes, sender, dry_run }"
+      />
+      <Endpoint
+        method="POST"
+        path="/api/predict/tranche/quote"
+        description="Senior / mezzanine / junior Risk Slice quotes — the same strip at 0.5σ / 1σ / 2σ."
+        params={[
+          ["asset", "string", "Or oracle_id."],
+          ["budget_usd", "number", "Per-slice budget."],
+        ]}
+        responseNote="{ senior, mezzanine, junior }"
+      />
+      <Endpoint
+        method="POST"
+        path="/api/predict/confirm"
+        description="Verify a wallet-executed digest on chain. Surfaces emitted events and any newly created manager id."
+        params={[["digest", "string", "The executed transaction digest."]]}
+        responseNote="{ ok, events, manager_id? }"
+      />
+      <SubHeading>Other product surfaces</SubHeading>
+      <Endpoint
+        method="GET"
+        path="/api/options/chain"
+        description="The BTC options chain — calls and puts across every live expiry, each priced off Predict range liquidity with IV from the SVI smile and a per-strike depth cap."
+        params={[["asset", "string", "Default BTC."]]}
+        responseNote="{ expiries: Expiry[], strikes: Strike[] }"
+      />
+      <Endpoint
+        method="POST"
+        path="/api/vol/quote"
+        description="Price a vol structure (straddle / strangle / butterfly / iron condor) and return greeks + payoff."
+        params={[["structure", "string", "The structure id."], ["budget_usd", "number", "Total spend."]]}
+        responseNote="{ legs, greeks, payoff }"
+      />
+      <Endpoint
+        method="GET"
+        path="/api/predict/baskets"
+        description="The named DeepBook structured baskets (BTC Pin / Spread / Wide)."
+        params={[]}
+        responseNote="{ baskets: Basket[] }"
+      />
       <SubHeading>Conventions</SubHeading>
       <UL
         items={[
           <>
-            Responses are JSON objects. Errors return{" "}
-            <Code>{`{ error: string }`}</Code> with an appropriate HTTP
-            status.
+            Bodies accept raw or human amounts: <Code>*_raw</Code> (u64
+            string, 6dp/1e9) or <Code>*_ui</Code> (<Code>budget_usd</Code>,{" "}
+            <Code>mu_usd</Code>, <Code>sigma_usd</Code>, …).
           </>,
           <>
-            Proxied endpoints include a <Code>fetched_at</Code> ISO
-            timestamp and, where applicable, a <Code>cache_stale</Code>{" "}
-            flag.
+            The server resolves a valid on-grid oracle by{" "}
+            <Code>oracle_id</Code> or by <Code>asset</Code> (default BTC) and
+            reads the live forward.
           </>,
           <>
-            Rate limits: general endpoints 60 req/min/IP, portfolio
-            endpoints 10 req/min/IP. Throttled requests return 429 with
-            a <Code>Retry-After</Code> header.
+            Errors return <Code>{`{ error: string }`}</Code> with an
+            appropriate HTTP status. Health is at{" "}
+            <Code>GET /api/health</Code>; the monitor runs on{" "}
+            <Code>:13102</Code>.
           </>,
         ]}
       />
-      <SubHeading>Markets</SubHeading>
-      <Endpoint
-        method="GET"
-        path="/api/markets"
-        description="Active market universe. Proxied and cached from the upstream prediction-market API."
-        params={[
-          ["limit",  "number", "Default 20, max 20000."],
-          ["active", "bool",   "Default true."],
-        ]}
-        responseNote="{ markets: Market[], fetched_at, cache_stale }"
-      />
-      <Endpoint
-        method="GET"
-        path="/api/markets/orderbooks"
-        description="Batched CLOB snapshot. 3-second cache, top 25 levels per side."
-        params={[["token_ids", "string", "Comma-separated, max 25 ids per request."]]}
-        responseNote="{ books: Record<tokenId, { bids, asks }>, fetched_at }"
-      />
-      <CodeBlock>
-        {`curl "https://api.example.com/api/markets?limit=200&active=true"
-curl "https://api.example.com/api/markets/orderbooks?token_ids=<id1>,<id2>"`}
-      </CodeBlock>
-      <SubHeading>Vaults</SubHeading>
-      <Endpoint
-        method="GET"
-        path="/api/vaults/yields"
-        description="Ranked USDC lending venues. Cached 5 min. Always returns five rows."
-        params={[]}
-        responseNote="{ sources: VaultRow[], best: VaultRow, fetched_at, cache_stale }"
-      />
-      <CodeBlock>
-        {`curl "https://api.example.com/api/vaults/yields"
-
-// Example row shape
-{
-  name: "NAVI",
-  slug: "navi-lending",
-  apy: 0.0518,
-  tvl_usd: 4350000,
-  source: "live"    // or "estimated"
-}`}
-      </CodeBlock>
-      <SubHeading>PPN</SubHeading>
-      <Endpoint
-        method="POST"
-        path="/api/ppn/deposit"
-        description="Open a demo PPN position."
-        params={[
-          ["bundle_id",      "string", "Basket id for the basket slice."],
-          ["wallet_address", "string", "Depositor wallet (base58)."],
-          ["amount_usdc",    "number", "Total deposit."],
-          ["maturity_days",  "number", "7–365."],
-        ]}
-        responseNote="{ vault_id, floor, expected, max, split: { vault_pct, basket_pct } }"
-      />
-      <Endpoint
-        method="GET"
-        path="/api/ppn/portfolio/:walletAddress"
-        description="All demo PPN positions for a wallet."
-        params={[]}
-        responseNote="{ positions: PpnPosition[] }"
-      />
-      <Endpoint
-        method="POST"
-        path="/api/ppn/withdraw/:vaultId"
-        description="Redeem a matured demo PPN. Returns the summed vault + basket payout."
-        params={[]}
-        responseNote="{ payout_usdc, breakdown: { vault, basket } }"
-      />
-      <SubHeading>Distribution Markets</SubHeading>
-      <Endpoint
-        method="GET"
-        path="/api/distribution/candidates"
-        description="Live distribution-market launch candidates discovered from liquid market groups with CLOB-implied reference curves."
-        params={[]}
-        responseNote="{ candidates: DistributionCandidate[], funnel, fetched_at }"
-      />
-      <Endpoint
-        method="POST"
-        path="/api/distribution/quote"
-        description="Normalize and quote a submitted target curve against the live reference curve, returning target-reference payouts and required collateral."
-        params={[
-          ["candidate_id", "string", "Live distribution candidate id."],
-          ["weights", "number[]", "One probability weight per live band."],
-          ["collateral_usdc", "number", "USDC collateral amount."],
-        ]}
-        responseNote="{ quote: DistributionQuote }"
-      />
-      <Endpoint
-        method="POST"
-        path="/api/distribution/launch-plan"
-        description="Build a local launch plan for the selected candidate."
-        params={[
-          ["candidate_id", "string", "Live distribution candidate id."],
-        ]}
-        responseNote="{ plan: DistributionLaunchPlan }"
-      />
-      <SubHeading>Error shapes</SubHeading>
-      <P>
-        Validation failures return 400 with{" "}
-        <Code>{`{ error: "invalid ‘maturity_days’: must be 7–365" }`}</Code>.
-        Rate limits return 429 with a <Code>Retry-After</Code> header.
-        Upstream failures return 502 and leave the client free to fall
-        back on the last good cached snapshot.
-      </P>
     </>
   );
 }
@@ -1646,231 +1578,206 @@ function DevRepo() {
   return (
     <>
       <P>
-        The repository is a monorepo with three top-level packages.
-        Each package has an independent <Code>package.json</Code> or
-        <Code>Cargo.toml</Code> and can be built in isolation. Shared
-        types are consumed via relative imports.
+        The repository is a monorepo: a Next.js frontend, an Express backend,
+        and three Move packages, each independently buildable.
       </P>
       <CodeBlock>
-        {`app/          Next.js frontend (pages, UI state, reducers)
-backend/      Express service (market proxy, vault aggregator, PPN demo)
-pelagos_sui/ Sui Move package (testnet deployment)`}
+        {`app/                 Next.js frontend (forked; app dir = app/app/)
+backend/             Express engine (pricing, PTB builders, proxies)
+pelagos_sui/         Move: mock_usdc + prediction_market
+pelagos_vault/       Move: generic Vault<T>
+pelagos_strategies/  Move: structured_note`}
       </CodeBlock>
       <SubHeading>Frontend layout</SubHeading>
       <CodeBlock>
-        {`app/
-  app/
-    page.tsx              // Landing
-    market baskets/       // Basket grid and detail
-    tranche/              // Tranche quote + buy/sell
-    ppn/                  // PPN builder and portfolio embed
-    portfolio/            // Positions + personalization tabs
-    docs/                 // Documentation surface
-    _components/          // Shared layout components
-    _lib/                 // tokens, orderbook, live-baskets, sandbox reducer
-  public/                 // Static assets`}
+        {`app/app/
+  page.tsx              // Landing
+  distribution/         // Distributed Options + range ladder
+  volatility/           // Vol structures, SVI surface, builder
+  deepbook/             // Prebuilt range strategies + Protected Notes
+  basket/               // DeepBook recipes + Polymarket event baskets
+  tranche/  ppn/        // Risk Slices + Notes (deep-link routes)
+  portfolio/            // Holdings, mark-to-market, P&L, backtests
+  docs/                 // This About & docs surface
+  _components/          // Header, shared layout
+  _lib/                 // tokens, clients, mode/theme, strip math`}
       </CodeBlock>
       <SubHeading>Backend layout</SubHeading>
       <CodeBlock>
-        {`backend/
-  src/
-    index.ts              // Express wiring, rate-limiters
-    routes/
-      markets.ts          // /api/markets, /api/markets/orderbooks
-      vaults.ts           // /api/vaults/yields
-      ppn.ts              // /api/ppn/*
-      portfolio.ts        // Personalisation + AI portfolio routes
-    services/             // Upstream proxies, cache layer
-    lib/                  // Shared helpers`}
+        {`backend/src/
+  index.ts              // Express wiring, ~30 /api/* route groups
+  routes/
+    predict.ts          // /api/predict/* (core engine)
+    options.ts          // /api/options/chain · /depth
+    vol.ts              // /api/vol/*
+    distribution.ts     // /api/distribution/*
+    deepbook.ts ppn.ts vaults.ts ...
+  services/
+    predict/            // SVI surface, strip math, PTB builders
+    options-chain/  volatility/  baskets/  vault/  sui/ ...`}
       </CodeBlock>
-      <SubHeading>Local development</SubHeading>
-      <CodeBlock>
-        {`# frontend
-cd app && npm install && npm run dev
-
-# backend
-cd backend && npm install && npm run dev
-
-# typecheck
-npx tsc --noEmit`}
-      </CodeBlock>
+      <SubHeading>Forked Next.js</SubHeading>
       <P>
-        Configure the frontend&apos;s backend host by setting{" "}
-        <Code>NEXT_PUBLIC_BACKEND_URL</Code> in{" "}
-        <Code>app/.env.local</Code>. The backend&apos;s default
-        upstream endpoints do not require paid credentials.
+        The frontend is a <B>forked</B> Next.js with non-standard
+        conventions — the app directory is <Code>app/app/</Code>. Read{" "}
+        <Code>AGENTS.md</Code> and <Code>node_modules/next/dist/docs/</Code>{" "}
+        before touching frontend code.
       </P>
-      <SubHeading>On-chain programs</SubHeading>
+      <SubHeading>Run and verify</SubHeading>
+      <CodeBlock>
+        {`# backend (:13101) + monitor (:13102)
+cd backend && npm install && npm run dev
+# frontend (:13100) — in another shell
+npm run dev
+
+# typecheck + Move tests
+(cd app && npx tsc --noEmit)
+(cd backend && npx tsc --noEmit)
+(cd pelagos_strategies && sui move test)`}
+      </CodeBlock>
       <P>
-        The Sui Move package under <Code>pelagos_sui/</Code> is
-        deployed to Sui testnet. It exposes Pelagos USDC minting plus
-        prediction-market create, buy, resolve, and claim flows used by
-        the local Sui execution harness.
+        Configure the backend host via <Code>NEXT_PUBLIC_BACKEND_URL</Code> in{" "}
+        <Code>app/.env.local</Code>. Pricing, previews, and simulations need
+        no paid credentials and no funds; only live writes need dUSDC.
       </P>
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pages — Risks
+// ---------------------------------------------------------------------------
 
 function RiskSummary() {
   return (
     <>
       <P>
-        The risks documented below describe the protocol&apos;s
-        behaviour in a live deployment. The current hackathon
-        deployment is on Sui testnet and exposes no real capital to these
-        risks; they are documented because any structured-products
-        surface should disclose the loss paths inherent to its design.
+        The risks below describe how the protocol would behave with real
+        capital. The current deployment is on Sui testnet and exposes no real
+        value to any of them; they are documented because any
+        structured-products surface should disclose the loss paths inherent to
+        its design.
       </P>
-      <SubHeading>NAV risk</SubHeading>
+      <SubHeading>Directional risk</SubHeading>
       <P>
-        A basket&apos;s NAV is the weighted mean of its legs&apos; YES
-        probabilities. When the upstream market re-prices, the basket
-        re-prices with it. Market Baskets provide diversification, not
-        hedging; directional moves affecting a substantial portion of
-        the leg universe propagate to basket NAV.
-      </P>
-      <P>
-        <B>Scenario.</B> A macro event re-prices half of the legs in a
-        basket. The basket&apos;s NAV falls from 0.50 to 0.35. A
-        position opened at 0.50 incurs an immediate ~30%
-        mark-to-market loss; the terminal outcome is a distribution
-        centred near the new NAV.
-      </P>
-      <SubHeading>Convex tail risk (mezzanine and junior)</SubHeading>
-      <P>
-        Mezzanine and junior tranches are non-linear claims. A junior
-        position can move from a positive mark to zero if the basket
-        does not clear the upper attach point. The pricing engine
-        prices this through a tail premium and constrains capacity
-        through a face-budget cap, but the underlying payoff shape is
-        intrinsic.
+        A strip is a leveraged expression of a view on where an asset lands. If
+        BTC settles outside the range mass the position pays little or
+        nothing. A narrow ATM slice has a high hit-rate but small multiple; a
+        wide junior slice is convex and frequently expires worthless.
       </P>
       <P>
-        <B>Scenario.</B> A Low-tier junior tranche trades at $0.08 per
-        $1 face. The basket settles at NAV = 0.04, below the detach
-        point. The junior position pays zero at settlement, producing
-        a total loss of premium even though the basket itself has a
-        positive mark.
+        <B>Scenario.</B> A junior (2.0σ) slice is minted for a sharp move. BTC
+        settles near the forward, inside the senior band but outside the
+        junior tails. The junior position pays zero even though a senior slice
+        on the same view would have paid in full.
       </P>
-      <SubHeading>Liquidity risk</SubHeading>
+      <SubHeading>Liquidity and slippage risk</SubHeading>
       <P>
-        Quotes are derived from the live central limit order book on
-        the underlying legs. Orders that are large relative to
-        displayed depth produce high slippage and can exceed the 15%
-        slippage ceiling, preventing submission. Book depth is also
-        the sole input to the tranche face-budget cap, so thin books
-        reduce the maximum tranche order size.
+        Every bucket is priced against post-trade vault state, so a large
+        order pays the slippage of the liability it adds. The{" "}
+        <Code>[2%, 98%]</Code> mintable band means buckets near the edges of
+        the distribution can become untradeable; size that exceeds available
+        depth is rejected rather than filled at a fictional price.
       </P>
+      <SubHeading>PLP / floor risk (Protected Notes)</SubHeading>
       <P>
-        <B>Scenario.</B> A Long-window Low-tier basket contains legs
-        with shallow displayed depth. A $20k senior tranche order is
-        reduced to $6k by the face-budget cap and must be split
-        across multiple baskets to reach the intended notional.
-      </P>
-      <SubHeading>Vault risk (PPN)</SubHeading>
-      <P>
-        Principal protection depends on the solvency and redemption
-        availability of the selected USDC lending vault. The routing
-        logic selects the highest-APY venue passing the allowlist,
-        which is not equivalent to selecting the lowest-risk venue.
-        Vault failure or withdrawal suspension impairs the PPN&apos;s
-        vault sleeve.
-      </P>
-      <P>
-        <B>Scenario.</B> The routed venue suspends withdrawals ahead
-        of a PPN&apos;s maturity. Principal recovery is delayed until
-        the venue resumes redemptions; the note&apos;s floor is not
-        available on schedule.
+        A note&apos;s floor sleeve is supplied to the PLP vault as the
+        protocol&apos;s counterparty — the &quot;be the house&quot; side.
+        Principal protection is a target, not a guarantee: it depends on PLP
+        vault solvency, redemption availability, and settlement timing. A loss
+        on the house side, or a withdrawal delay around maturity, impairs the
+        floor.
       </P>
       <SubHeading>Oracle and settlement risk</SubHeading>
       <P>
-        Leg payouts follow the upstream market&apos;s resolution
-        oracle. The protocol does not substitute for or override
-        upstream resolution. Ambiguous resolutions adjudicated by the
-        upstream venue propagate to every Pelagos position that
-        references the affected leg.
+        Settlement follows DeepBook Predict&apos;s SVI oracle. Pelagos does
+        not adjudicate or override resolution; an oracle fault or a delayed
+        settlement propagates to every position referencing the affected
+        market.
       </P>
       <SubHeading>Smart-contract risk</SubHeading>
       <P>
-        A live deployment carries the standard risks associated with
-        on-chain programs: bugs in settlement logic, upgrade-authority
-        compromise, and oracle integration errors. The programs
-        included in the repository target Sui testnet and have not
-        been audited.
+        A live deployment carries the standard risks of on-chain programs:
+        bugs in settlement logic, upgrade-authority compromise, and
+        integration errors. The Pelagos packages target testnet and have not
+        been audited. DeepBook Predict is Mysten&apos;s code, called as-is.
       </P>
       <SubHeading>Operational risk</SubHeading>
       <P>
-        Backend outages freeze quote generation and may delay deposit
-        or redeem flows until cached data is refreshed. The UI
-        degrades to the most recent cached snapshot, which may be
-        stale relative to the live underlying market.
+        Backend outages freeze quote generation and the prepare step until
+        service is restored. Reads degrade to the most recent cached snapshot,
+        which may be stale relative to the live oracle.
       </P>
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pages — FAQ
+// ---------------------------------------------------------------------------
 
 function FaqAll() {
   return (
     <>
       <Faq
         q="Is real capital used in the application?"
-        a="No. Pelagos runs on Sui testnet — every balance is a testnet token with no monetary value, including both dUSDC and Pelagos USDC (mUSDC). Pricing and payoffs are live off real DeepBook liquidity, but no real capital is routed through the protocol."
+        a="No. Pelagos runs on Sui testnet — every balance is a testnet token with no monetary value, including both dUSDC and Pelagos USDC. Pricing and settlement are live off real DeepBook Predict liquidity, but no real capital is routed through the protocol."
       />
       <Faq
         q="Will the protocol be deployed to mainnet?"
         a="No. The repository will remain available as a reference, but there are no plans to deploy to mainnet, issue a token, or continue maintenance after the hackathon."
       />
       <Faq
-        q="Who built the project?"
-        a="A hackathon team building Pelagos as a Sui testnet structured prediction-market prototype."
+        q="What is DeepBook Predict and what does Pelagos add?"
+        a="DeepBook Predict is Mysten's on-chain prediction protocol — it exposes binary and range options over a BTC SVI oracle. Pelagos calls it (does not deploy it) and adds a structured-product layer: a range-strip engine that turns a continuous μ/σ view into a basket of real range-options minted in one signature."
       />
       <Faq
-        q="How many baskets are there?"
-        a="Six. The basket universe is a 2×3 grid of tiers (High, Low) and resolution windows (Short, Med, Long). Baskets are regenerated from the active upstream market universe on every refresh."
+        q="Where do the prices come from?"
+        a="Every bucket price comes from the protocol's own get_range_trade_amounts via devInspect, priced at the actual order quantity against post-trade vault state. Nothing on the pricing path is invented or linearly interpolated — the quote already includes the MM spread and the order's own slippage."
       />
       <Faq
-        q="Can a basket position be closed before resolution?"
-        a="Yes. Market Baskets are bidirectional. The basket detail page exposes a sell panel that walks the bid side of the underlying order book and applies an adverse-selection premium."
+        q="Is Pelagos custodial?"
+        a="No. The backend builds unsigned programmable transaction blocks; the user's wallet signs and executes them, and the user's wallet owns the on-chain PredictManager that gates mint and redeem. The backend never holds user keys or collateral on the structured-product path."
       />
       <Faq
-        q="Can a tranche position be closed before resolution?"
-        a="Not in the current hackathon build. Tranche sells involve non-linear hedging dynamics that differ from basket sells; a secondary market is a post-hackathon roadmap item. Market Baskets remain bidirectional."
+        q="Why are there two USDC tokens?"
+        a="dUSDC is the only asset DeepBook Predict accepts, so anything settling on Predict uses it — but it is faucet-gated and not mintable by us. Pelagos USDC (MOCK_USDC) is freely mintable and backs Pelagos's own contracts (Polymarket event baskets, vault flows), so a demo never bottlenecks on the dUSDC faucet. Both are 1:1 in USD and first-class."
       />
       <Faq
-        q="What happens when an upstream market is delisted?"
-        a="The corresponding leg is removed from the basket on the next refresh and the remaining weights are renormalised to sum to 1. No synthetic leg is substituted."
+        q="How do I get test funds?"
+        a="The header 'Test funds' button (shown when a wallet is connected) sends 25 dUSDC plus 10,000 Pelagos USDC in one click. Each Predict surface also shows a contextual 'Get test dUSDC' when the wallet is short. Gas (SUI) is free from the standard Sui testnet faucet."
       />
       <Faq
-        q="Why does a tranche order report 'insufficient liquidity'?"
-        a="The order size exceeds the face-budget cap computed from live order-book depth and the tranche kind. Reduce size, select a less convex kind (senior or mezzanine in place of junior), or route the order to a basket with deeper underlying books."
+        q="Does Pelagos use DEEP?"
+        a="No. DeepBook Predict is an AMM/PLP-backed range protocol that settles purely in dUSDC. DEEP is DeepBook v3's CLOB fee token; Pelagos places no v3 CLOB orders, and a live range mint consumes zero DEEP — only dUSDC and SUI gas."
       />
       <Faq
-        q="Why is my PPN's basket slice small?"
-        a="Short-dated PPNs routed to modest-APY vaults allocate most of the deposit to the vault sleeve to compound back to par. Select a longer maturity or a higher-APY vault to increase the basket slice."
+        q="What is the range strip, exactly?"
+        a="A set of adjacent, on-grid DeepBook Predict ranges weighted by a Normal(μ, σ) mass. Together they reproduce a distributional payoff. Every Pelagos product — Distribution, Risk Slices, Protected Notes, DeepBook baskets, Volatility — is the same strip engine with a different parameterisation."
       />
       <Faq
-        q="How is the PPN floor sized?"
-        a="The vault slice is sized so projected compounding at the selected APY returns the deposit at maturity. It is not risk-free; vault solvency and redemption availability still apply."
+        q="What are Risk Slices?"
+        a="The same underlying strip taken at three widths: senior 0.5σ, mezzanine 1.0σ, junior 2.0σ. Narrow is high hit-rate and low multiple; wide is convex, low hit-rate, and high multiple. Seniority is encoded in which part of the distribution the strip covers."
       />
       <Faq
-        q="Where do slippage values come from?"
-        a="Every quote walks the live order book via the backend. Legs without a live token fall back to a volume-proxy curve. Quoted slippage represents the projected book walk at the specified size."
+        q="How is a Protected Note's floor produced?"
+        a="A chosen fraction of the deposit (default 80%) is supplied to DeepBook Predict's PLP vault — the 'be the house' side that earns the spread — and the remainder buys a range strip for upside. Both legs settle in one PTB. The floor is a target, not a guarantee: it depends on PLP solvency and redemption availability."
       />
       <Faq
-        q="What is the adverse-selection premium applied to sells?"
-        a="A premium on basket sell quotes proportional to sqrt(size / market depth). It compensates liquidity providers for the information content implicit in a large sell order. It is negligible on small orders and becomes material on large orders against thin books."
+        q="What is the [2%, 98%] mintable band?"
+        a="The pricer will quote bands outside the protocol's mint bounds, which would then abort in assert_mintable_ask. So Pelagos only flags a bucket tradeable when its marginal ask sits inside [0.02, 0.98] — a safety margin inside the protocol's ~[1%, 99%] so post-trade slippage can't push a surfaced bucket out of bounds."
       />
       <Faq
-        q="How often does the vault APY refresh?"
-        a="The backend aggregator caches the upstream snapshot for five minutes. The PPN page surfaces the cache status via a live / estimated badge per row."
+        q="Which BTC expiries are available?"
+        a="The protocol publishes a rolling ladder of BTC oracles, from roughly fifteen minutes out to about twenty-two days. Pelagos reads the active set live; expiring oracles drop off and new ones appear as the protocol rolls them."
       />
       <Faq
-        q="Can the same basket back multiple products simultaneously?"
-        a="Yes. A single basket id can support a direct market basket position, risk slice positions (senior, mezzanine, junior), and a PPN reference at the same time. The portfolio view groups these positions by basket id."
+        q="Can I close a position before settlement?"
+        a="Yes. A range can be redeemed at the live bid via range/redeem while the market is open. Once the oracle settles, a winning range can be claimed permissionlessly. The Portfolio surface marks open positions to the live redeem-now value."
       />
       <Faq
-        q="Why are the tranche attach points set at μ and μ+σ?"
-        a="Percentile-based attach points maintain meaningful separation across baskets of different volatility. Under the Normal approximation, senior covers the full pre-median range, mezzanine covers approximately 34 percentile points above the median, and junior covers the tail past the first standard deviation."
+        q="Where can I verify it actually works on chain?"
+        a="DEPLOYMENT.md lists the live testnet package and object IDs plus verified wallet-signed digests — a one-PTB range-strip mint, a PLP supply, and a range mint and redeem — corroborated by the Predict indexer. Every build also dry-runs clean on chain before signing."
       />
     </>
   );
@@ -1919,6 +1826,22 @@ function P({ children }: { children: React.ReactNode }) {
 function B({ children }: { children: React.ReactNode }) {
   return (
     <strong style={{ color: C.textPrimary, fontWeight: 600 }}>{children}</strong>
+  );
+}
+
+function DocLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      style={{
+        color: C.tealLight,
+        textDecoration: "none",
+        borderBottom: `1px solid ${C.tealLight}44`,
+        transition: `border-color 0.15s ${EASE}`,
+      }}
+    >
+      {children}
+    </Link>
   );
 }
 

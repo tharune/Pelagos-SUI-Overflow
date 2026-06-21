@@ -13,7 +13,7 @@
 // (smoothed area + line, drop-shadow, tabular mono axis labels).
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import {
   fetchBacktest,
@@ -339,10 +339,21 @@ export function StrategyBacktestPanel({ portfolioMix }: { portfolioMix?: Portfol
     return [portfolioMeta, ...strategies.filter((s) => s.id !== PORTFOLIO_ID)];
   }, [strategies, hasPortfolio, mix]);
 
-  // Default the selection: your portfolio first, else the first class.
+  // Tracks whether the user has manually picked a strategy. Until they do, the
+  // selection is an auto-default and may be re-pointed at "Your Portfolio" once
+  // the (async) portfolio mix arrives.
+  const userPicked = useRef(false);
+
+  // Default the selection: your portfolio first, else the first class. The
+  // portfolio mix is a prop that lands AFTER the catalog fetch, so this must also
+  // re-point an existing auto-default at PORTFOLIO_ID the moment a portfolio
+  // appears — otherwise the very first render (no mix yet) latches the first
+  // class (Long Vol) and the old `if (activeId) return` guard froze it there.
   useEffect(() => {
-    if (activeId || !displayStrategies || displayStrategies.length === 0) return;
-    setActiveId(hasPortfolio ? PORTFOLIO_ID : displayStrategies[0].id);
+    if (!displayStrategies || displayStrategies.length === 0) return;
+    if (userPicked.current) return;
+    const desired = hasPortfolio ? PORTFOLIO_ID : displayStrategies[0].id;
+    if (activeId !== desired) setActiveId(desired);
   }, [activeId, displayStrategies, hasPortfolio]);
 
   // Run the backtest whenever the selection or window changes.
@@ -422,7 +433,7 @@ export function StrategyBacktestPanel({ portfolioMix }: { portfolioMix?: Portfol
               <button
                 key={s.id}
                 type="button"
-                onClick={() => setActiveId(s.id)}
+                onClick={() => { userPicked.current = true; setActiveId(s.id); }}
                 style={{
                   textAlign: "left",
                   border: `0.5px solid ${on ? `${C.tealLight}66` : C.border}`,

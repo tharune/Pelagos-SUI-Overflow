@@ -937,7 +937,17 @@ function AdvancedDistribution() {
                   <Slider label="Mean (μ)" value={mu} min={muMin} max={muMax} step={step} fmt={(v) => `$${Math.round(v).toLocaleString()}`} onChange={setMu} />
                   <Slider label="Std dev (σ) · conviction" value={sigma} min={sigMin} max={sigMax} step={step} fmt={(v) => `±$${Math.round(v).toLocaleString()}`} onChange={setSigma} />
                   <div>
-                    <div className="dc-cap" style={{ marginBottom: 6 }}>Budget · max loss</div>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                      <span className="dc-cap">Budget · max loss</span>
+                      {/* Pool-depth cap is a DeepBook Predict liability — it binds the
+                          dUSDC rail only. mUSDC settles on our own Vault<MOCK_USDC>,
+                          so no Predict-pool cap applies there. */}
+                      {currency === "dUSDC" && poolCapUsd != null && (
+                        <span style={{ fontFamily: FM, fontSize: 9, letterSpacing: "0.04em", whiteSpace: "nowrap", color: overPoolCap ? C.amber : C.textMuted }}>
+                          max ≈ ${Math.round(poolCapUsd).toLocaleString()} · pool depth
+                        </span>
+                      )}
+                    </div>
                     <div className="dc-amount-in">
                       <span className="dc-amount-cur">$</span>
                       <input className="dc-num dc-num-bare" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />

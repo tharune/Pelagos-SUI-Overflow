@@ -127,11 +127,17 @@ export async function prepareSimOpen(
   return { ...prepared, sim_id: simId, label };
 }
 
-/** Mark a sim position opened once the user's deposit confirms. */
+/** Mark a sim position opened once the user's deposit confirms.
+ *  A position only ever leaves 'pending' on a REAL on-chain digest — never on a
+ *  rejected/abandoned signature — so the portfolio's status === 'open' filter can
+ *  trust that an "open" row corresponds to a confirmed deposit. We also refuse to
+ *  re-open an already-settled position. */
 export async function confirmSimOpen(simId: string, digest: string): Promise<SimPosition> {
   await load();
   const pos = positions.get(simId);
   if (!pos) throw new Error(`unknown sim position ${simId}`);
+  if (!digest || !digest.trim()) throw new Error('a real settlement digest is required to confirm');
+  if (pos.status === 'settled') throw new Error(`sim position ${simId} is already settled`);
   pos.status = 'open';
   pos.open_digest = digest;
   await persist();

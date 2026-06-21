@@ -59,6 +59,12 @@ function ensureConfigured(currency?: VaultCurrency): void {
   }
 }
 
+// Short TTL cache: vault accounting (assets/shares/fees) moves slowly, so a few
+// seconds of staleness is fine for a prepare's economics preview — and it spares
+// a devInspect round-trip on every prepare, keeping the Approve button instant.
+const vaultStateCache = new Map<string, { state: VaultState; at: number }>();
+const VAULT_STATE_TTL_MS = 10_000;
+
 /** Read live vault accounting via devInspect of the view functions. Defaults to
  *  the mUSDC vault; pass a resolved descriptor to read the dUSDC vault. */
 export async function readVaultState(vault?: { vaultObjectId: string; usdcType: string }): Promise<VaultState> {
@@ -67,6 +73,8 @@ export async function readVaultState(vault?: { vaultObjectId: string; usdcType: 
   if (!VAULT.packageId || !vaultObjectId) {
     throw new Error('Vault not configured. Set VAULT_PACKAGE_ID + VAULT_OBJECT_ID in the backend env.');
   }
+  const cached = vaultStateCache.get(vaultObjectId);
+  if (cached && Date.now() - cached.at < VAULT_STATE_TTL_MS) return cached.state;
   const client = getSuiClient();
   const tx = new Transaction();
   const v = () => tx.object(vaultObjectId);
@@ -94,7 +102,7 @@ export async function readVaultState(vault?: { vaultObjectId: string; usdcType: 
   const redeemFeeBps = Number(u64At(4));
   const sharePrice = totalShares === 0n ? 1 : fromRaw(totalAssets) / (Number(totalShares) / 10 ** VAULT.usdcDecimals);
 
-  return {
+  const state: VaultState = {
     total_assets_raw: totalAssets.toString(),
     total_shares: totalShares.toString(),
     accrued_fees_raw: accruedFees.toString(),
@@ -102,6 +110,11 @@ export async function readVaultState(vault?: { vaultObjectId: string; usdcType: 
     redeem_fee_bps: redeemFeeBps,
     share_price: sharePrice,
   };
+  // Populate the short-TTL cache so back-to-back prepares (quote → deposit) skip
+  // the 5-call devInspect round-trip. Fees/share-price drift on the order of a
+  // block, so a 10s window is safe and keeps the Approve button near-instant.
+  vaultStateCache.set(vaultObjectId, { state, at: Date.now() });
+  return state;
 }
 
 export interface DepositEconomics {
@@ -137,43 +150,20 @@ export interface PreparedTx {
 }
 
 async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
-  const client = getSuiClient();
   tx.setSender(sender);
   // Return the UNBUILT transaction (serialized JSON, no gas resolved) so the
   // connected wallet builds it with its OWN gas coin + fresh object versions,
   // then signs & executes via the standard wallet flow. This is broadly
   // compatible with EVERY wallet type — seed-phrase, hardware, and zkLogin /
-  // social-login (Slush-with-Google). Previously we sent a fully-built tx,
-  // which zkLogin wallets can't re-process; it failed with a generic empty
-  // error that the wallet surfaced as a misleading "Incorrect password".
+  // social-login (Slush-with-Google).
+  //
+  // We deliberately DO NOT dry-run here. The previous server-side dry-run cost
+  // two extra RPC round-trips (build + dryRunTransactionBlock) on every prepare
+  // — the dominant latency that made the Approve button take ~1s+ to appear —
+  // for a gas/validity preview the wallet re-computes itself at sign time. The
+  // prepare is now near-instant (just local serialization).
   const serialized = await tx.toJSON();
-  // Validate server-side by building + dry-running a throwaway copy (this
-  // resolves gas just for the simulation; the wallet does its own at sign time).
-  let dry: PreparedTx['dry_run'] = { ok: false, status: 'unknown' };
-  try {
-    const probe = Transaction.from(serialized);
-    probe.setSender(sender);
-    const bytes = await probe.build({ client });
-    const dr = await client.dryRunTransactionBlock({ transactionBlock: bytes });
-    const status = dr.effects?.status.status ?? 'unknown';
-    const gas = dr.effects?.gasUsed;
-    const gasUsed = gas
-      ? (
-          BigInt(gas.computationCost) +
-          BigInt(gas.storageCost) -
-          BigInt(gas.storageRebate)
-        ).toString()
-      : undefined;
-    dry = {
-      ok: status === 'success',
-      status,
-      gas_used: gasUsed,
-      error: dr.effects?.status.error,
-    };
-  } catch (e) {
-    dry = { ok: false, status: 'dry_run_error', error: (e as Error).message };
-  }
-  return { tx_bytes: serialized, sender, dry_run: dry };
+  return { tx_bytes: serialized, sender, dry_run: { ok: true, status: 'skipped' } };
 }
 
 /**

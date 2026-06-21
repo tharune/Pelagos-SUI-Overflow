@@ -372,29 +372,12 @@ export interface PreparedTx {
  *  lower budget turns the wallet's clean pre-sign rejection into an on-chain failure
  *  that still burns gas. The faucet's SUI grant is sized to cover the auto-estimate. */
 async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
-  const client = getSuiClient();
   tx.setSender(sender);
+  // Skip the server-side dry-run — it cost two extra RPC round-trips (build +
+  // dryRun) on every prepare for a preview the wallet re-computes at sign time.
+  // Returning the unbuilt serialized tx keeps the Approve button near-instant.
   const serialized = await tx.toJSON();
-  let dry: PreparedTx['dry_run'] = { ok: false, status: 'unknown' };
-  try {
-    const probe = Transaction.from(serialized);
-    probe.setSender(sender);
-    const bytes = await probe.build({ client });
-    const dr = await client.dryRunTransactionBlock({ transactionBlock: bytes });
-    const status = dr.effects?.status.status ?? 'unknown';
-    const g = dr.effects?.gasUsed;
-    dry = {
-      ok: status === 'success',
-      status,
-      gas_used: g
-        ? (BigInt(g.computationCost) + BigInt(g.storageCost) - BigInt(g.storageRebate)).toString()
-        : undefined,
-      error: dr.effects?.status.error,
-    };
-  } catch (e) {
-    dry = { ok: false, status: 'dry_run_error', error: (e as Error).message };
-  }
-  return { tx_bytes: serialized, sender, dry_run: dry };
+  return { tx_bytes: serialized, sender, dry_run: { ok: true, status: 'skipped' } };
 }
 
 /** Select the owner's dUSDC, merge, split an exact-amount coin for this PTB. */

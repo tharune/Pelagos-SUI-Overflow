@@ -136,16 +136,18 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
       row.map((_, c) => (g[Math.max(0, r - 1)][c] + k * g[r][c] + g[Math.min(g.length - 1, r + 1)][c]) / (k + 2)));
     const blurCols = (g: number[][], k: number) => g.map((row, r) =>
       row.map((_, c) => (g[r][Math.max(0, c - 1)] + k * g[r][c] + g[r][Math.min(row.length - 1, c + 1)]) / (k + 2)));
-    let sgrid = blurRows(grid, 1.4);
-    sgrid = blurRows(sgrid, 2.2);
-    sgrid = blurCols(sgrid, 3);
+    let sgrid = blurRows(grid, 1.1);
+    sgrid = blurRows(sgrid, 1.6);
+    sgrid = blurRows(sgrid, 2.4);
+    sgrid = blurCols(sgrid, 2.0);
+    sgrid = blurCols(sgrid, 2.6);
 
     // Robust scale from the SMOOTHED values + SOFT compression: linear inside
     // [p4, p90], a gentle tanh roll-off above so any residual spike is a soft bump,
     // not a clamped plateau with a cliff. Colour saturates at the top (normC).
     const flat = sgrid.flat().sort((a, b) => a - b);
     let ivLo = quantile(flat, 0.04);
-    let ivHi = quantile(flat, 0.9);
+    let ivHi = quantile(flat, 0.93);
     if (!(ivHi > ivLo)) { ivLo = flat[0]; ivHi = Math.max(flat[flat.length - 1], ivLo + 0.01); }
     const norm = (v: number) => {
       const r = (v - ivLo) / (ivHi - ivLo);
@@ -154,9 +156,9 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     const normC = (v: number) => Math.min(1, norm(v));
 
     // ---- world layout ------------------------------------------------------
-    const SX = 7.4;   // moneyness half-width (wide — fills the wide analytics card)
-    const SY = 5.2;   // tenor depth
-    const SZ = 2.7;   // IV height
+    const SX = 5.7;   // moneyness half-width (balanced footprint, never clips the card)
+    const SY = 5.4;   // tenor depth
+    const SZ = 2.45;  // IV height
     const xAt = (cI: number) => -SX + (cI / (cols.length - 1)) * 2 * SX;
     const yAt = (r: number) => (rows === 1 ? 0 : -SY / 2 + (r / (rows - 1)) * SY);
     const zAt = (v: number) => norm(v) * SZ;
@@ -202,7 +204,11 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     const ivFine = (fr: number, c: number) => {
       const t = MROWS === 1 ? 0 : fr / UP;
       const r0 = Math.floor(t), r1 = Math.min(rows - 1, r0 + 1), f = t - r0;
-      return sgrid[r0][c] * (1 - f) + sgrid[r1][c] * f;
+      // smoothstep across the tenor gap: rounds the linear facets between raw
+      // slices into one continuous slope (kills the "wall" at the short→long
+      // term-structure drop). fs(0)=0, fs(1)=1, so the raw rows stay on the mesh.
+      const fs = f * f * (3 - 2 * f);
+      return sgrid[r0][c] * (1 - fs) + sgrid[r1][c] * fs;
     };
     const vert: THREE.Vector3[] = [];
     const vcol: THREE.Color[] = [];
@@ -268,6 +274,11 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     for (let r = 0; r < rows; r++) grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-SX, 0, yAt(r)), new THREE.Vector3(SX, 0, yAt(r)),
     ]), gridMat));
+    // IV axis spine — a vertical at the back-left corner so the % ticks read as a
+    // measured axis instead of numbers floating over the mesh.
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-SX, 0, SY / 2), new THREE.Vector3(-SX, SZ, SY / 2),
+    ]), new THREE.LineBasicMaterial({ color: 0x3a5573, transparent: true, opacity: 0.6 })));
     scene.add(grp);
 
     // ---- HTML-overlay labels (projected each frame; never overlap) ---------
@@ -319,24 +330,27 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     // Pick the smallest "nice" step that yields ≤3 ticks so they never crowd the
     // short vertical axis.
     const ivSpan = ivHi - ivLo;
-    const ivStep = [0.05, 0.1, 0.15, 0.2, 0.25, 0.5, 1].find((s) => ivSpan / s <= 3.0) ?? 0.5;
-    const ivStart = Math.ceil((ivLo + ivStep * 0.25) / ivStep) * ivStep;
-    for (let v = ivStart; v <= ivHi - ivStep * 0.15; v += ivStep) {
-      mkLabel(`${(v * 100).toFixed(0)}%`, new THREE.Vector3(-SX - 0.75, zAt(v), -SY / 2), "iv", rampCss(normC(v)));
+    const ivStep = [0.05, 0.1, 0.15, 0.2, 0.25, 0.5, 1].find((s) => ivSpan / s <= 2.2) ?? 0.5;
+    const ivStart = Math.ceil((ivLo + ivStep * 0.3) / ivStep) * ivStep;
+    // IV axis lives on the FRONT-left vertical edge (long-tenor corner, where the
+    // surface is low) so the % ticks stand in clear space, never on the short-tenor
+    // put-wing spike at the back-left.
+    for (let v = ivStart; v <= ivHi - ivStep * 0.2; v += ivStep) {
+      mkLabel(`${(v * 100).toFixed(0)}%`, new THREE.Vector3(-SX - 1.05, zAt(v), SY / 2), "iv", rampCss(normC(v)));
     }
-    mkLabel("IV", new THREE.Vector3(-SX - 0.75, SZ + 0.55, -SY / 2), "title", TITLE);
+    mkLabel("IV", new THREE.Vector3(-SX - 1.05, SZ + 0.5, SY / 2), "title", TITLE);
 
     // ---- camera auto-frame (projected corners + label gutter) --------------
     // Asymmetric gutter: just enough room for the labels on each side, tight on
     // the empty top so the surface fills the card instead of floating low.
-    const bmin = new THREE.Vector3(-SX - 1.5, -0.5, -SY / 2 - 1.2);
-    const bmax = new THREE.Vector3(SX + 1.9, SZ + 0.15, SY / 2 + 1.45);
+    const bmin = new THREE.Vector3(-SX - 1.5, -0.15, -SY / 2 - 1.2);
+    const bmax = new THREE.Vector3(SX + 1.9, SZ + 0.6, SY / 2 + 1.45);
     const center = new THREE.Vector3((bmin.x + bmax.x) / 2, (bmin.y + bmax.y) / 2, (bmin.z + bmax.z) / 2);
     const vFov = (camera.fov * Math.PI) / 180;
     const aspect = width / height;
     const vHalf = Math.tan(vFov / 2);
     const hHalf = vHalf * aspect;
-    const dir = new THREE.Vector3(0.34, 0.52, 0.78).normalize();
+    const dir = new THREE.Vector3(0.3, 0.62, 0.72).normalize();
     const rightV = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
     const upV = new THREE.Vector3().crossVectors(dir, rightV).normalize();
     let dist = 0;
@@ -345,6 +359,7 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
       const fwd = rel.dot(dir);
       dist = Math.max(dist, fwd + Math.abs(rel.dot(rightV)) / hHalf, fwd + Math.abs(rel.dot(upV)) / vHalf);
     }
+    dist *= 1.04; // small margin so the back corners never touch the card edges
     camera.position.copy(center.clone().add(dir.clone().multiplyScalar(dist)));
     camera.lookAt(center);
     controls.target.copy(center);

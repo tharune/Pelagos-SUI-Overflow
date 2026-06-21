@@ -204,10 +204,16 @@ export default function PortfolioPage() {
   }, [appWalletAddress, dispatch]);
 
   // Settle an open mUSDC position: the protocol computes the payoff and mints it.
+  // On success we optimistically flip the local row to "settled" so it leaves the
+  // open list immediately (the open filter is status === "open"), then refetch the
+  // authoritative list + balances so the headline/total/count reconcile.
   const settleSimPosition = React.useCallback(async (simId: string) => {
     setSimBusy(simId);
     try {
       await simSettle(simId);
+      setSimPositions((prev) =>
+        prev.map((p) => (p.sim_id === simId ? { ...p, status: "settled" as const } : p)),
+      );
       await hydratePortfolio();
       void usdc.refresh(); void dusdc.refresh();
     } catch {
@@ -227,6 +233,19 @@ export default function PortfolioPage() {
       cancelled = true;
     };
   }, [hydratePortfolio]);
+
+  // Poll the authoritative sim list so a position settled out-of-band (another
+  // tab/session, or via the explorer) leaves the open list and the headline/total
+  // reconcile without a manual reload. The open filter (status === "open") drops
+  // any row that has flipped to "settled" server-side.
+  useEffect(() => {
+    if (!appWalletAddress) return;
+    const wallet = appWalletAddress;
+    const t = setInterval(() => {
+      void fetchSimPositions(wallet).then((ps) => setSimPositions(Array.isArray(ps) ? ps : []));
+    }, 8000);
+    return () => clearInterval(t);
+  }, [appWalletAddress]);
 
   async function handleRedeem(bundleId: string, uiBundleId: string, tokens: number) {
     if (!walletReady || !appWalletAddress) return;
@@ -342,11 +361,17 @@ export default function PortfolioPage() {
 
   const deployedValue = Math.max(0, displayTotal - liveUsdc);
   const deployedPct = displayTotal > 0 ? (deployedValue / displayTotal) * 100 : 0;
+  // Count every position the grid actually renders. This MUST include the
+  // confirmed-open structured (sim) positions — omitting them showed "Positions 0"
+  // while three sim cards were on screen. Settled/pending sim rows are already
+  // excluded (openSimPositions filters status === "open"), so a settlement that
+  // drops a card also decrements this headline.
   const positionCount =
     Object.keys(onchainTokensByUuid).length +
     effectiveTranches.length +
     effectivePpnVaults.length +
-    effectiveDistPositions.length;
+    effectiveDistPositions.length +
+    openSimPositions.length;
 
   return (
     <>

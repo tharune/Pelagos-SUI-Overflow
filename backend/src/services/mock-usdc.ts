@@ -54,6 +54,11 @@ export async function mintMockUsdc(
   if (status !== 'success') {
     throw new Error(`mint failed (${res.digest}): ${res.effects?.status.error}`);
   }
+  // Block until the fullnode has indexed this tx. Without this, an immediate
+  // `suix_getBalance` read after a mint (e.g. the /balances refresh fired right
+  // after a sim settle) races the indexer and returns the STALE pre-mint balance.
+  // Matches the waitForTransaction pattern used by vault/structured/distribution.
+  await client.waitForTransaction({ digest: res.digest });
   return {
     digest: res.digest,
     amount: displayAmount,

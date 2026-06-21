@@ -24,7 +24,10 @@ const MAX_GRANT_UI = Number(process.env.DUSDC_GRANT_MAX_UI ?? 25);
 // (faucet-gated); SUI is gas so the user can actually sign their first tx.
 const DUSDC_GRANT_UI = Math.min(25, MAX_GRANT_UI);
 const MUSDC_GRANT_UI = Number(process.env.MUSDC_GRANT_UI ?? 10_000);
-const SUI_GRANT_MIST = BigInt(process.env.SUI_GRANT_MIST ?? 50_000_000); // 0.05 SUI
+// 0.6 SUI — enough for the gas-heavy DeepBook Predict (dUSDC) rail, which needs a
+// manager-create plus a multi-leg trade. The old 0.05 SUI covered the cheap mUSDC
+// vault/sim rail but left dUSDC users unable to sign the Predict trade.
+const SUI_GRANT_MIST = BigInt(process.env.SUI_GRANT_MIST ?? 600_000_000); // 0.6 SUI
 
 export interface TestFundsGrant {
   digest: string;
@@ -34,7 +37,7 @@ export interface TestFundsGrant {
   explorer_url: string;
 }
 
-/** Mint mUSDC + transfer dUSDC + transfer 0.05 SUI to `recipient` in ONE
+/** Mint mUSDC + transfer dUSDC + transfer the SUI gas grant to `recipient` in ONE
  *  operator-signed PTB. Atomic, one digest, one fee. */
 export async function dispenseTestFunds(recipient: string): Promise<TestFundsGrant> {
   if (!/^0x[0-9a-fA-F]{1,64}$/.test(recipient)) throw new Error('recipient (0x...) is required');

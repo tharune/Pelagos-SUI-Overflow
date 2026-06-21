@@ -135,7 +135,9 @@ export default function PortfolioPage() {
 
   // Open mUSDC structured positions (DeepBook strips / options / vol / notes settled
   // in Pelagos USDC): the premium is escrowed in the vault until settle.
-  const openSimPositions = walletReady ? simPositions.filter((p) => p.status !== "settled") : [];
+  // Only confirmed-open positions — a "pending" sim row is an orphan from a
+  // rejected/abandoned wallet signature and must not pollute the portfolio.
+  const openSimPositions = walletReady ? simPositions.filter((p) => p.status === "open") : [];
   const simValue = openSimPositions.reduce(
     (sum, p) => sum + (Number.isFinite(p.premium_usd) ? p.premium_usd : 0),
     0,

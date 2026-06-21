@@ -10,7 +10,7 @@ import { suiExplorerTxUrl } from "../_lib/chain";
 const GRANTS: Array<{ asset: string; amount: string; use: string; color: string }> = [
   { asset: "dUSDC", amount: "25", use: "Native DeepBook Predict quote asset", color: C.tealLight },
   { asset: "mUSDC", amount: "10,000", use: "Pelagos USDC — trade any product, 1:1 with dUSDC", color: C.blue },
-  { asset: "SUI", amount: "0.05", use: "Gas, to sign your first transaction", color: C.violet },
+  { asset: "SUI", amount: "0.6", use: "Gas, enough to sign across every product", color: C.violet },
 ];
 
 /**

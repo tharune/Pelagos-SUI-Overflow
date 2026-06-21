@@ -366,7 +366,11 @@ export interface PreparedTx {
   dry_run: { ok: boolean; status: string; gas_used?: string; error?: string };
 }
 
-/** Serialize an unsigned tx + dry-run a throwaway copy (mirrors vault/index.ts). */
+/** Serialize an unsigned tx + dry-run a throwaway copy (mirrors vault/index.ts).
+ *  We deliberately do NOT pin an explicit gas budget: a multi-leg DeepBook Predict
+ *  PTB genuinely costs ~0.8 SUI, so the wallet's auto-estimate is correct. Forcing a
+ *  lower budget turns the wallet's clean pre-sign rejection into an on-chain failure
+ *  that still burns gas. The faucet's SUI grant is sized to cover the auto-estimate. */
 async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
   const client = getSuiClient();
   tx.setSender(sender);

@@ -72,7 +72,7 @@ export function MmDeskBid({
     setSoldMsg(null);
     try {
       const r = await sellToMM({ bundleId, walletAddress, productType, trancheKind, sizeUsdc, quote });
-      setSoldMsg(`Sold to desk · +$${r.payoutUsdc.toFixed(2)} (simulated fill, recorded to History)`);
+      setSoldMsg(`Sold to desk · +$${r.payoutUsdc.toFixed(2)} (recorded to History)`);
       onSold?.(r.payoutUsdc);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -93,7 +93,7 @@ export function MmDeskBid({
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <span style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: C.textMuted }}>
-          Market-maker desk bid · simulated
+          Market-maker desk bid
         </span>
         <span style={{ fontFamily: FM, fontSize: 10.5, color: C.textMuted }}>
           {(quote.spread_bps / 100).toFixed(2)}% below {quote.mark_source === "par" ? "par" : "mark"}

@@ -412,7 +412,7 @@ export default function PortfolioPage() {
         .pf-alloc-row:hover { opacity: 0.84; }
         .pf-spark { height: 5px; border-radius: 999px; background: ${C.surface}; overflow: hidden; }
         .pf-spark span { display: block; height: 100%; border-radius: inherit; }
-        .pf-positions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        .pf-positions { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 14px; }
         @media (max-width: 1180px) {
           .pf-overview { grid-template-columns: 1fr; }
         }

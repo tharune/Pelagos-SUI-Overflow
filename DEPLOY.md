@@ -75,9 +75,9 @@ Akash deploys **images, not Dockerfiles**. Build + push, then deploy the SDL.
      both (see the persistence note — Supabase is the durable option).
 
 3. **Pre-fund the operator wallet** before going live. The faucet float dispenses
-   per request: `SUI_GRANT_MIST` = 0.6 SUI of gas plus a dUSDC + mUSDC top-up per
+   per request: `SUI_GRANT_MIST` = 0.4 SUI of gas plus a dUSDC + mUSDC top-up per
    recipient. Fund **generously**:
-   - SUI for gas (cover expected `0.6 SUI × claimants` + headroom), and
+   - SUI for gas (cover expected `0.4 SUI × claimants` + headroom), and
    - a **dUSDC float** the operator owns and transfers from.
    Underfunding makes `/api/dev` grants and Predict supply fail mid-demo.
 

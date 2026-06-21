@@ -21,8 +21,8 @@
  * Order ROUTING is simulated (we don't submit a real perp order), but every
  * number shown — mark, funding, hedge size/notional — is real or honestly
  * labeled, and `chain` says whether the mark came from a Sui-native venue.
- * Geo-blocked hosts are reached through the same `proxiedFetch` relay as
- * Polymarket so they still resolve.
+ * External hosts are reached through the shared `proxiedFetch` helper (a direct
+ * fetch with a timeout), consistent with the Polymarket client.
  */
 import { proxiedFetch } from './proxy';
 

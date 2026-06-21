@@ -43,17 +43,21 @@ services:
       - PREDICT_OPEN_GAS_BUDGET_MIST=200000000  # pinned gas budget on heavy multi-leg dUSDC opens (0.2 SUI); validate w/ a funded open
       # Vercel frontend origin. *.vercel.app is auto-allowed by CORS, so this is
       # mainly for an explicit/custom domain. Comma-separated list is supported.
-      - FRONTEND_URL=https://<vercel-domain>
+      - FRONTEND_URL=https://pelagos-sui.vercel.app
 
       # ── On-chain object / package IDs (mirror backend/.env.example) ──────
       - SUI_PACKAGE_ID=0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45
       - SUI_MARKET_MODULE=prediction_market
-      - SUI_ACTIVE_ADDRESS=0x78f0be0d03f277c11d696436a3dd2f02c02f9cce118f6c0286fbc701a29ec411
-      - SUI_MARKET_ADMIN_CAP_ID=0x450d3450381a1f0fcbfbc0c354b8af4e7d0e7f732591bd6db57d5c14bf01105d
+      - SUI_ACTIVE_ADDRESS=0xcad0f800f44a48360c01e9fa2d21e779bd829cb60e7220227ed16bb74d4d73e5
+      - SUI_MARKET_ADMIN_CAP_ID=0x0c14a699335427625eb7317cd16e758f201b8a0413d58fd0592b20e761597c4b
+      - MARKET_ADMIN_CAP_ID=0x0c14a699335427625eb7317cd16e758f201b8a0413d58fd0592b20e761597c4b
       # Pelagos on-chain vault (pelagos_vault::vault, generic Vault<MOCK_USDC>)
-      - VAULT_PACKAGE_ID=0xa88c4e60aeb45927607e9de932f6ae8982b6fe2452891cf32ae643be90cdb670
-      - VAULT_OBJECT_ID=0xeb8402f9f18c1762cae4bd8dc09acb73f51abd55d34c8cd4d0059d4c7181e3fd
-      - VAULT_ADMIN_CAP_ID=0xafe1cf30b8ee3ef4c1f15b984681e50eb9f521e3381803d7445bb3d651d21801
+      - VAULT_PACKAGE_ID=0xcaff49f849bdf83b2df754ffc7d43c07b19ee33c2395255185607b55802e2b19
+      - VAULT_OBJECT_ID=0x5fdc7d7a94d1dc7ae459b2e3f6760cb3b6745e6c3e4f2eed511da54bd0042d2d
+      - VAULT_ADMIN_CAP_ID=0x177582ae9cb44b119835d224d4b8d2f14aac0157d41f0931b55ebef0f66ef348
+      # dUSDC settlement vault (Vault<DUSDC>) — real DeepBook Predict rail
+      - VAULT_DUSDC_OBJECT_ID=0x9110df6651807391a65f060a5c1fb0cfecf3163ecb11d879e1aa552f1868c54a
+      - VAULT_DUSDC_ADMIN_CAP_ID=0xeecb761376a03d5d875846886905af59ebd418150666666102806e54fe7f843f
 
       # ── DeepBook Predict + dUSDC coin type ───────────────────────────────
       - PREDICT_NETWORK=testnet
@@ -64,8 +68,9 @@ services:
 
       # ── Mock-USDC type / metadata / decimals + mint authority ────────────
       - MOCK_USDC_TYPE=0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45::mock_usdc::MOCK_USDC
-      - MOCK_USDC_METADATA_ID=0x952435fcae9412796ddf2a9f0e173c9a2caba7b2f26079714a9e1a3bfd33a287
+      - MOCK_USDC_METADATA_ID=0x4ff64a1b6d5fa953c7d419a1e87472457aafbbfa8c54d12935e2504f78f3504f
       - MOCK_USDC_DECIMALS=6
+      - MOCK_USDC_FAUCET_ID=0xd1f67a0ec1d4b26631fcd1810f16bbc0fdf88a83cfe04c26ad400566528a07f0
       # TreasuryCap that mints test mUSDC — held by the operator key. Low-value, rotate after event.
       - MOCK_USDC_TREASURY_CAP_ID=0x16b34adda0f968ab481449d55f445d3598e0a617f2d6a83d62e84907be534aa1
 

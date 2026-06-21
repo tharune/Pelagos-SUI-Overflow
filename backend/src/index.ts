@@ -36,6 +36,7 @@ import { startCronJobs } from './services/cron';
 import { supabase } from './db/supabase';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
+import { requireAdmin } from './middleware/requireAdmin';
 
 const app = express();
 
@@ -209,7 +210,10 @@ app.use('/api/deposit', depositRoutes);
 app.use('/api/markets', marketLimiter, marketRoutes);
 app.use('/api/docs', docsRoutes);
 app.use('/api/ppn', ppnRoutes);
-app.use('/api/metrics', metricsRoutes);
+// Operational snapshot (operator address, balances, admin caps, request log) is
+// admin-only — never expose it publicly. Internal monitor server (MONITOR_PORT)
+// is unaffected.
+app.use('/api/metrics', requireAdmin, metricsRoutes);
 app.use('/api/lending', lendingRoutes);
 app.use('/api/dev', devRoutes);
 app.use('/api/predict', predictRoutes);

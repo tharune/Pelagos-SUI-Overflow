@@ -1,8 +1,8 @@
 /**
  * Polymarket Gamma API client + basket NAV computation.
  *
- * Fetches the live market/event universe via the relay (proxiedFetch) with
- * retry, pagination, and a coalesced 15-min cache. Exposes fetchMarkets,
+ * Fetches the live market/event universe via proxiedFetch (a direct, timed
+ * fetch) with retry, pagination, and a coalesced 15-min cache. Exposes fetchMarkets,
  * fetchEvents, fetchMarketByConditionId, getMarketProbability, searchMarkets,
  * and getHighLiquidityMarkets. getPolymarketBasketNAVs buckets markets by
  * tier/window and returns volume-weighted basket NAVs mirroring the frontend.

@@ -49,6 +49,11 @@ export function MmDeskBid({
       setQuote(null);
       return;
     }
+    // Clear the previous quote up-front so the widget can't display (and let the
+    // user Sell against) a STALE quote priced for an old sizeUsdc while a new
+    // fetch is in flight or has failed. The bid only reappears once the fetch
+    // for the current sizeUsdc resolves.
+    setQuote(null);
     const ctrl = new AbortController();
     fetchMmQuote({ productType, trancheKind, sizeUsdc, bundleId, signal: ctrl.signal })
       .then(setQuote)

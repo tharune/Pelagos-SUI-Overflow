@@ -112,11 +112,7 @@ const VALID_CATEGORIES: ReadonlyArray<Category> = [
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    // Clamp to [1, 20000] — fetchMarkets auto-paginates past Gamma's 500/page
-    // cap. The full active-market universe is typically <5k, but we leave
-    // generous headroom so the frontend can ask for "everything" and let
-    // the backend terminate naturally when Gamma returns an empty page.
-    // Cap at 100 (one Gamma page). The Polymarket relay's body-transfer
+    // Clamp to [1, 100] (one Gamma page). The Polymarket relay's body-transfer
     // bandwidth is the bottleneck — larger pulls time out over the relay. 100
     // top-by-volume markets are enough to build all 9 baskets, and capping here
     // (rather than only client-side) means any client — including a stale cached
@@ -248,7 +244,9 @@ router.get('/curated/stats', (_req: Request, res: Response) => {
 router.get('/search/:query', async (req: Request, res: Response) => {
   try {
     const { query } = req.params;
-    const limit = parseInt(req.query.limit as string, 10) || 20;
+    // Clamp to [1, 100] (mirrors /markets + /curated): searchMarkets overfetches
+    // Gamma at Math.max(limit*6, 60), so an unclamped limit fans out unbounded.
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit as string, 10) || 20));
 
     if (!query || query.trim().length === 0) {
       return res.status(400).json({ error: 'Search query is required' });

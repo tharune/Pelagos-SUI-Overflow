@@ -104,8 +104,11 @@ function resampleWeights(w: number[], n: number): number[] {
   });
 }
 
-const money = (v: number, d = 2) =>
-  `$${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const money = (v: number, d = 2) => {
+  const r = Number(v.toFixed(d));
+  const neg = r < 0;
+  return `${neg ? "-" : ""}$${Math.abs(r).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+};
 
 // Signed percent that never renders a negative-zero ("-0.00%"). Values that
 // round to 0 read as a clean "0.00"; positives carry an explicit "+".
@@ -148,6 +151,10 @@ function sliceForHorizon(surface: VolDeskSurface | null, h: Horizon): VolDeskSur
 export default function VolatilityPage() {
   const { mode } = useMode();
   const wallet = useWalletSigner();
+  // Charged-rail balances — refreshed after a successful open so the header /
+  // ticket reflects the debited amount immediately (mirrors distribution).
+  const musdc = useUsdcBalance();
+  const dusdc = useDusdcBalance();
   const [strategy, setStrategy] = useState<VolStrategy>("straddle");
   // Institutional default: at $100 the gamma/delta-hedge numbers round to
   // 0.0000 and the desk reads as dead. A $25k ticket makes the Greeks, the
@@ -284,8 +291,13 @@ export default function VolatilityPage() {
   // changes — Basic (strategy/horizon) AND Advanced (tenor/sculpt/width) drivers.
   useEffect(() => { setHedged(null); }, [strategy, notionalNum, horizon, sliceIdx, weights, spanSigma]);
 
+  // Clear a stale "opened" success banner + explorer link (and any open error)
+  // the moment the structure/inputs change, so the result can't linger over a
+  // structure it no longer describes (mirrors deepbook's reset guard).
+  useEffect(() => { setResult(null); setOpenErr(null); }, [strategy, notionalNum, currency, mode, weights, spanSigma, sliceIdx]);
+
   const g = q?.greeks ?? null;
-  const tradeable = q ? q.strip.buckets.filter((b) => b.tradeable).length : 0;
+  const tradeable = q ? (q.strip?.buckets ?? []).filter((b) => b.tradeable).length : 0;
 
   // Live mark drives the real-time hedge: the position is delta-neutral at the
   // quote forward; as BTC ticks away from it, gamma generates delta to re-hedge,
@@ -335,6 +347,7 @@ export default function VolatilityPage() {
         setStage("Confirming…");
         await simConfirm(prep.sim_id, digest);
         setResult(digest);
+        void musdc.refresh();
         return;
       }
       setStage("Preparing manager…");
@@ -349,6 +362,7 @@ export default function VolatilityPage() {
       setStage("Confirming…");
       const c = await confirmPredict(digest);
       setResult(c.digest);
+      void dusdc.refresh();
     } catch (e) { setOpenErr(friendlyWalletError(e)); }
     finally { setBusy(false); setStage(null); }
   }
@@ -414,7 +428,7 @@ export default function VolatilityPage() {
           )}
 
           {/* Only surface a quote error when we have NOTHING to show. */}
-          {err && !q && <div className="vd-err">{err}</div>}
+          {err && !q && <div className="vd-err" role="alert">{err}</div>}
 
           {mode === "advanced" ? <AdvancedDesk {...deskState} /> : <BasicDesk {...deskState} />}
         </div>
@@ -575,7 +589,7 @@ function BasicDesk(p: DeskProps) {
           {!wallet.connected ? (
             <ConnectModal trigger={<button className="vd-open-btn" style={{ background: accent }}>Connect a wallet</button>} />
           ) : (
-            <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} onClick={() => setShowExecute(true)}>
+            <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} aria-busy={busy} onClick={() => setShowExecute(true)}>
               {`Open ${meta.label} · ${q ? usd(q.strip.total_cost_raw) : ""}`}
             </button>
           )}
@@ -593,10 +607,10 @@ function BasicDesk(p: DeskProps) {
       <p className="vd-legs-desc">{PLAIN_THESIS[strategy]} <span>Highlighted bands are where you net a profit.</span></p>
       <div className="vd-legs-table">
         <div className="vd-leg vd-leg-h"><span>Strike band</span><span>Contracts</span><span>Cost</span><span>Pays</span></div>
-        {q ? q.strip.buckets.filter((b) => b.tradeable).map((b, i) => {
+        {q ? (q.strip?.buckets ?? []).filter((b) => b.tradeable).map((b) => {
           const profit = Number(b.max_payout_raw) > Number(q.strip.total_cost_raw);
           return (
-            <div className={`vd-leg${profit ? " profit" : ""}`} key={i}>
+            <div className={`vd-leg${profit ? " profit" : ""}`} key={`${b.lower}-${b.higher}`}>
               <span className="vd-leg-band">{dollars(b.lower_usd)}–{dollars(b.higher_usd)}{profit && <i className="vd-leg-tag">in profit</i>}</span>
               <span>{(Number(b.quantity) / 1e6).toFixed(0)}</span>
               <span>{usd(b.mint_cost_raw)}</span>
@@ -681,13 +695,15 @@ function ExecuteModal({ p, hedgeOn, setHedgeOn, onClose }: { p: DeskProps; hedge
         )}
 
         {result ? (
-          <ResultLine digest={result} label={`${meta.label} opened${hedgeOn && hasDelta ? " + hedged" : ""}`} />
+          <div role="status" aria-live="polite">
+            <ResultLine digest={result} label={`${meta.label} opened${hedgeOn && hasDelta ? " + hedged" : ""}`} />
+          </div>
         ) : (
-          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q || shortBal} onClick={confirm}>
+          <button className="vd-modal-confirm" style={{ background: accent }} disabled={busy || !q || shortBal} aria-busy={busy} onClick={confirm}>
             {busy ? (stage ?? "Submitting…") : shortBal ? `Need more ${ccy} to open` : `Sign & open · ${q ? usd(q.strip.total_cost_raw) : ""}`}
           </button>
         )}
-        {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}
+        {openErr && <div className="vd-err" role="alert" style={{ marginTop: 10 }}>{openErr}</div>}
         <p className="vd-note">Structure minted on-chain on Sui (wallet-signed).{hedgeOn && hasDelta ? " Delta hedge sized against live BTC‑PERP marks." : ""}</p>
       </div>
     </div>
@@ -936,11 +952,35 @@ function BuilderSculptor({ weights, onSculpt, quote, side }: {
         onPointerUp={(e) => { dragging.current = false; try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ } }}
         onPointerLeave={() => { dragging.current = false; }}
       >
-        {weights.map((w, i) => (
-          <div key={i} className="vd-sculpt-col">
-            <div className="vd-sculpt-bar" style={{ height: `${Math.max(4, (w / maxW) * 100)}%`, background: i === atmIdx ? C.tealLight : accent, opacity: i === atmIdx ? 1 : 0.85 }} />
-          </div>
-        ))}
+        {weights.map((w, i) => {
+          const bandLabel = buckets.length === n && buckets[i]
+            ? `${dollars(buckets[i].lower_usd)}–${dollars(buckets[i].higher_usd)} weight`
+            : `band ${i + 1} weight`;
+          return (
+            <div
+              key={i}
+              className="vd-sculpt-col"
+              role="slider"
+              tabIndex={0}
+              aria-label={bandLabel}
+              aria-valuemin={0.04}
+              aria-valuemax={1}
+              aria-valuenow={Number(w.toFixed(3))}
+              aria-valuetext={`${Math.round(w * 100)}%`}
+              onKeyDown={(e) => {
+                const STEP = 0.05;
+                let next: number | null = null;
+                if (e.key === "ArrowUp" || e.key === "ArrowRight") next = Math.min(1, w + STEP);
+                else if (e.key === "ArrowDown" || e.key === "ArrowLeft") next = Math.max(0.04, w - STEP);
+                else if (e.key === "Home") next = 0.04;
+                else if (e.key === "End") next = 1;
+                if (next !== null) { e.preventDefault(); onSculpt(i, Number(next.toFixed(3))); }
+              }}
+            >
+              <div className="vd-sculpt-bar" style={{ height: `${Math.max(4, (w / maxW) * 100)}%`, background: i === atmIdx ? C.tealLight : accent, opacity: i === atmIdx ? 1 : 0.85 }} />
+            </div>
+          );
+        })}
       </div>
       <div className="vd-sculpt-axis">
         <span>← puts</span>
@@ -1000,12 +1040,12 @@ function OpenControls(p: DeskProps) {
       {!wallet.connected ? (
         <ConnectModal trigger={<button className="vd-open-btn" style={{ background: accent }}>Connect a wallet</button>} />
       ) : (
-        <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} onClick={openPosition}>
+        <button className="vd-open-btn" style={{ background: accent }} disabled={busy || !q || tradeable === 0} aria-busy={busy} onClick={openPosition}>
           {busy ? (stage ?? "Submitting…") : `Open ${advStructLabel} · ${q ? usd(q.strip.total_cost_raw) : ""}`}
         </button>
       )}
-      {result && <ResultLine digest={result} label={`${advStructLabel} opened`} />}
-      {openErr && <div className="vd-err" style={{ marginTop: 10 }}>{openErr}</div>}
+      {result && <div role="status" aria-live="polite"><ResultLine digest={result} label={`${advStructLabel} opened`} /></div>}
+      {openErr && <div className="vd-err" role="alert" style={{ marginTop: 10 }}>{openErr}</div>}
     </>
   );
 }
@@ -1388,7 +1428,7 @@ const VD_CSS = `
   .vd-ticket-be b { color: ${C.textPrimary}; font-weight: 600; }
 
   /* Execute / review modal (optional delta-neutral hedge before signing). */
-  .vd-modal-bg { position: fixed; inset: 0; z-index: 60; background: rgba(2, 10, 20, 0.62); backdrop-filter: blur(3px); display: grid; place-items: center; padding: 20px; animation: vd-fade 0.14s ${EASE}; }
+  .vd-modal-bg { position: fixed; inset: 0; z-index: 60; background: rgba(2, 10, 20, 0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); display: grid; place-items: center; padding: 20px; animation: vd-fade 0.14s ${EASE}; }
   @keyframes vd-fade { from { opacity: 0; } to { opacity: 1; } }
   .vd-modal { width: min(440px, 100%); background: ${C.card}; border: 0.5px solid ${C.borderStrong}; border-radius: 16px; padding: 18px; display: grid; gap: 13px; box-shadow: 0 24px 60px rgba(0,0,0,0.45); }
   .vd-modal-head { display: flex; justify-content: space-between; align-items: center; }

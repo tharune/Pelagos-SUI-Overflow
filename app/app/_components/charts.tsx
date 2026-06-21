@@ -24,6 +24,7 @@ export function MetricTile({
       padding: "18px 20px",
       position: "relative",
       overflow: "hidden",
+      WebkitBackdropFilter: "blur(10px)",
       backdropFilter: "blur(10px)",
     }}>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1.5, background: `linear-gradient(to right, transparent, ${color || C.tealLight}66, transparent)`, opacity: 0.6 }} />

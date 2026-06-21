@@ -103,10 +103,9 @@ const CONC_EFF_LEG_THRESHOLD = 20;
  * HIGH ~95, MID ~50, LOW ~5. Lower-confidence books should carry more
  * impact/warehouse cost and tighter max clips.
  */
-const PROFILE_RISK_MULT: Record<90 | 70 | 50, number> = {
-  90: 0.9,  // ~95th percentile confidence
-  70: 1.15, // ~50th percentile confidence
-  50: 1.4,  // ~5th percentile confidence
+const PROFILE_RISK_MULT: Record<90 | 50, number> = {
+  90: 0.9, // ~95th percentile confidence
+  50: 1.4, // ~5th percentile confidence
 };
 
 // ---------------------------------------------------------------------------
@@ -316,7 +315,9 @@ export function computeOrderRisk(
   const convexity = TRANCHE_CONVEXITY[kind];
   const horizonYears = Math.max(1 / 365, stats.daysLeft / 365);
   const depth = Math.max(MIN_LEG_DEPTH_USDC, hedge.hedgeCapacityUsdc);
-  const profileRisk = PROFILE_RISK_MULT[stats.tier];
+  // `?? 1` so an out-of-domain tier (e.g. a stale 70) is a no-op multiplier
+  // rather than `undefined` → NaN propagating through every bps component.
+  const profileRisk = PROFILE_RISK_MULT[stats.tier] ?? 1;
 
   // Market impact: blend sqrt + quadratic term so larger tickets widen
   // materially faster, consistent with production MM quoting behavior.
@@ -385,7 +386,7 @@ export function computeMaxPositionUsdc(
 ): PositionCap {
   const depth = Math.max(MIN_LEG_DEPTH_USDC, hedge.hedgeCapacityUsdc);
   const horizonYears = Math.max(1 / 365, stats.daysLeft / 365);
-  const profileRisk = PROFILE_RISK_MULT[stats.tier];
+  const profileRisk = PROFILE_RISK_MULT[stats.tier] ?? 1;
   const horizonPenalty = 1 / (1 + 0.45 * Math.sqrt(horizonYears));
   const concentrationPenalty = 1 / (1 + 0.8 * Math.max(0, hedge.herfindahl - 0.06));
   const coveragePenalty =

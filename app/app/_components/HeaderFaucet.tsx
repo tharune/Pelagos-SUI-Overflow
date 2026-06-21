@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { useActiveWalletAddress, faucetTestFunds } from "../_lib/wallet-bridge";
@@ -9,8 +9,8 @@ import { suiExplorerTxUrl } from "../_lib/chain";
 // What a single Mint hands out. Kept in sync with the backend dispenseTestFunds.
 const GRANTS: Array<{ asset: string; amount: string; use: string; color: string }> = [
   { asset: "dUSDC", amount: "25", use: "Native DeepBook Predict quote asset", color: C.tealLight },
-  { asset: "mUSDC", amount: "10,000", use: "Pelagos USDC — trade any product, 1:1 with dUSDC", color: C.blue },
-  { asset: "SUI", amount: "0.6", use: "Gas, enough to sign across every product", color: C.violet },
+  { asset: "mUSDC", amount: "10,000", use: "Demo token — trade any product, 1:1 with dUSDC", color: C.blue },
+  { asset: "SUI", amount: "0.4", use: "Gas — enough to sign across products", color: C.violet },
 ];
 
 /**
@@ -27,8 +27,29 @@ export function HeaderFaucet() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ digest: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // pending close-reset timer + focus restore target
+  const resetTimer = useRef<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
+
+  // Open: clear any pending close-reset so reopening within the 200ms window can't
+  // flash a stale "✓ Sent", and reset state synchronously to a clean modal.
+  function openModal() {
+    if (resetTimer.current) { window.clearTimeout(resetTimer.current); resetTimer.current = null; }
+    setDone(null);
+    setErr(null);
+    setOpen(true);
+  }
+
+  // Focus the dialog when it opens + restore focus to the trigger on close.
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const t = triggerRef.current;
+    dialogRef.current?.focus();
+    return () => { t?.focus(); };
+  }, [open, mounted]);
 
   // Lock body scroll + close on Escape while the modal is open.
   useEffect(() => {
@@ -62,10 +83,33 @@ export function HeaderFaucet() {
 
   function close() {
     setOpen(false);
-    window.setTimeout(() => {
+    if (resetTimer.current) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => {
       setDone(null);
       setErr(null);
+      resetTimer.current = null;
     }, 200);
+  }
+
+  // Basic focus trap: keep Tab focus inside the dialog while it's open.
+  function onModalKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== "Tab") return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusable = root.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === root)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   const modal = (
@@ -76,6 +120,7 @@ export function HeaderFaucet() {
         inset: 0,
         zIndex: 1000,
         background: "rgba(3,7,11,0.66)",
+        WebkitBackdropFilter: "blur(4px)",
         backdropFilter: "blur(4px)",
         display: "flex",
         alignItems: "center",
@@ -86,8 +131,15 @@ export function HeaderFaucet() {
     >
       <style>{`@keyframes vfFade{from{opacity:0}to{opacity:1}}@keyframes vfRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="faucet-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onModalKeyDown}
         style={{
+          outline: "none",
           width: "min(440px, 100%)",
           borderRadius: 16,
           border: `0.5px solid ${C.border}`,
@@ -102,7 +154,7 @@ export function HeaderFaucet() {
             <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: "0.16em", textTransform: "uppercase", color: C.textMuted, marginBottom: 5 }}>
               Testnet faucet
             </div>
-            <h3 style={{ fontFamily: FD, fontSize: 19, fontWeight: 640, color: C.textPrimary, margin: 0, letterSpacing: "-0.01em" }}>
+            <h3 id="faucet-modal-title" style={{ fontFamily: FD, fontSize: 19, fontWeight: 640, color: C.textPrimary, margin: 0, letterSpacing: "-0.01em" }}>
               Get test funds
             </h3>
           </div>
@@ -146,7 +198,7 @@ export function HeaderFaucet() {
         </div>
 
         {done ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          <div role="status" aria-live="polite" style={{ display: "flex", flexDirection: "column", gap: 11 }}>
             <div style={{ fontFamily: FM, fontSize: 12, color: C.green, lineHeight: 1.5, textAlign: "center" }}>
               ✓ Sent to your wallet ·{" "}
               <a href={suiExplorerTxUrl(done.digest)} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
@@ -162,6 +214,7 @@ export function HeaderFaucet() {
             type="button"
             onClick={mint}
             disabled={busy}
+            aria-busy={busy}
             style={{
               width: "100%",
               height: 46,
@@ -180,7 +233,7 @@ export function HeaderFaucet() {
             {busy ? "Minting…" : "Mint test funds"}
           </button>
         )}
-        {err && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 11, color: C.red, lineHeight: 1.5, textAlign: "center" }}>{err}</div>}
+        {err && <div role="alert" style={{ marginTop: 12, fontFamily: FM, fontSize: 11, color: C.red, lineHeight: 1.5, textAlign: "center" }}>{err}</div>}
       </div>
     </div>
   );
@@ -188,8 +241,11 @@ export function HeaderFaucet() {
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openModal}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         title="Get testnet funds (dUSDC, mUSDC, SUI)"
         style={{
           appearance: "none",

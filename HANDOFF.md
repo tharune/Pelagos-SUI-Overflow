@@ -4,12 +4,20 @@ Pelagos: a Sui-testnet structured-products dApp on DeepBook Predict. Forked Next
 16 frontend + Express/tsx backend. This doc is the fast-orient for a fresh session.
 For depth: `README.md`, `ARCHITECTURE.md`, `README_DEEPBOOK.md`, `DEPLOYMENT.md`.
 
-_Last updated: 2026-06-21. Tree is clean and pushed to `sui/main` @ `11237ab`._
+_Last updated: 2026-06-21. Tree is clean and pushed to `sui/main`._
 
 ---
 
+## ⚠️ ACTIVE PARALLEL WORK — pull before you touch anything
+A teammate (**Victor** `victorrs0215@gmail.com`) is pushing to `sui/main` at the same
+time (landing, portfolio, and strategy-grid commits). **Always `git pull --rebase sui
+main` before starting**, and rebase + re-verify before each push. As of this writing
+the agent's work (mUSDC default, basic-3 strategies, vol surface, clean copy, dead-nav
+removal) is all merged and intact in the tree, and the merged tree is FE+BE `tsc`-clean.
+
 ## State right now
-- **Deploy-ready.** Both production builds pass: frontend `next build` ✓, backend `tsc` ✓.
+- **Deploy-ready** as of the last full check: frontend `next build` ✓, backend `tsc` ✓.
+  After pulling Victor's latest, **re-run `npm run build` once** before deploying.
 - Working tree clean, everything pushed to remote **`sui`**, branch **`main`**.
 - Dev servers were left running: frontend `:13100`, backend `:13101` (monitor `:13102`).
 

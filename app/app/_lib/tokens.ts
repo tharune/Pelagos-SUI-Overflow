@@ -69,8 +69,23 @@ export const FS = "'Inter', system-ui, sans-serif";
 export const FD = "'Inter', system-ui, sans-serif";
 export const FM = "'JetBrains Mono', 'SF Mono', Menlo, monospace";
 export const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
-export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:13101";
+// Resolved at BUILD time (NEXT_PUBLIC_* are inlined by Next). In production the
+// var MUST be set to the deployed backend; if it is missing we surface it loudly
+// in the browser instead of silently falling back to localhost (which would make
+// every product call fail in prod). Dev keeps the localhost convenience.
+function resolveBackendUrl(): string {
+  const url = process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (url) return url;
+  if (process.env.NODE_ENV === "production" && typeof window !== "undefined") {
+    throw new Error(
+      "NEXT_PUBLIC_BACKEND_URL was not set at build time — the production frontend cannot reach the backend. " +
+        "Set it in the Vercel project env (Production + Preview) and rebuild.",
+    );
+  }
+  return "http://localhost:13101";
+}
+
+export const BACKEND_URL = resolveBackendUrl();
 
 // USDC balance a fresh portfolio starts with. Real balance comes from the
 // active Sui account once wired; until then every session starts at zero.
@@ -104,5 +119,7 @@ export function lightenColor(hex: string, amount = 0.25): string {
 }
 
 export function fmtUsd(n: number, digits = 0): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  const r = Number(n.toFixed(digits));
+  const neg = r < 0;
+  return `${neg ? "-" : ""}$${Math.abs(r).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }

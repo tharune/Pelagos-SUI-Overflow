@@ -56,8 +56,11 @@ import { CurrencySelect, type Currency } from "../_components/CurrencySelect";
 import { simOpen, simConfirm } from "../_lib/sim-client";
 
 // ───────────────────────── formatters ─────────────────────────
-const money = (v: number, d = 0) =>
-  `$${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const money = (v: number, d = 0) => {
+  const r = Number(v.toFixed(d));
+  const neg = r < 0;
+  return `${neg ? "-" : ""}$${Math.abs(r).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+};
 const money2 = (v: number) => money(v, 2);
 const pctSigned = (v: number) => {
   const r = Number(v.toFixed(2));
@@ -207,8 +210,10 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); };
   }, [selected, notionalNum, valid, expiryPref, oracleId, mode, wallet.address]);
 
-  // reset deploy result when the structure changes
-  useEffect(() => { setResult(null); setOpenErr(null); }, [selected, notionalNum, expiryPref, oracleId]);
+  // reset deploy result when the structure changes — including a rail switch, so a
+  // stale "<name> deployed" ResultLine + explorer link can't linger while the note
+  // copy flips to the other rail (contradictory panel).
+  useEffect(() => { setResult(null); setOpenErr(null); }, [selected, notionalNum, expiryPref, oracleId, currency]);
 
   // Basic shows a curated 3 strategies; Advanced shows the full set. If the active
   // pick falls outside the basic list (e.g. after toggling Advanced→Basic), snap
@@ -287,7 +292,7 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
     !wallet.connected ? (
       <ConnectModal trigger={<button className="db-cta" style={{ background: C.tealLight }}>Connect a wallet</button>} />
     ) : (
-      <button className="db-cta" style={{ background: C.tealLight }} disabled={busy || !quote || tradeableBuckets.length === 0} onClick={deploy}>
+      <button className="db-cta" style={{ background: C.tealLight }} disabled={busy || !quote || tradeableBuckets.length === 0} aria-busy={busy} onClick={deploy}>
         {busy ? (stage ?? "Submitting…") : `Deploy · ${quote ? usd(quote.strip.total_cost_raw) : "—"}`}
       </button>
     )
@@ -399,14 +404,14 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
           <div className="db-dsum">
             <div><span className="db-dsum-k">Strategy</span><span className="db-dsum-v">{quote.name}</span></div>
             <div><span className="db-dsum-k">Expiry</span><span className="db-dsum-v">{fmtExpiry(quote.expiry)}</span></div>
-            <div><span className="db-dsum-k">Settles</span><span className="db-dsum-v">{currency === "mUSDC" ? "Sui · Pelagos USDC vault" : "Sui · DeepBook Predict"}</span></div>
+            <div><span className="db-dsum-k">Settles</span><span className="db-dsum-v">{currency === "mUSDC" ? "Sui · mUSDC vault" : "Sui · DeepBook Predict"}</span></div>
           </div>
           <div className="db-deploy-act">
             {deployBtn}
-            {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
-            {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+            {result && <div role="status" aria-live="polite"><ResultLine digest={result} label={`${quote.name} deployed`} /></div>}
+            {openErr && <div className="db-banner err" role="alert" style={{ marginTop: 10 }}>{openErr}</div>}
             <p className="db-note">{currency === "mUSDC"
-              ? "Premium deposited to the Pelagos USDC vault on Sui (real on-chain receipt, ~$0.003 gas); the payoff is minted to you at settlement. Pricing live from the order book."
+              ? "Settles in mUSDC — a demo token on the same contracts + pricing as dUSDC. Premium deposited to the vault on Sui (~$0.003 gas); payoff minted at settlement."
               : "Strip minted on-chain on Sui via DeepBook Predict. Pricing live from the order book; settles on testnet."}</p>
           </div>
         </div>
@@ -450,8 +455,8 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
           </div>
           <div className="db-card db-deploy-card">
             {deployBtn}
-            {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
-            {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+            {result && <div role="status" aria-live="polite"><ResultLine digest={result} label={`${quote.name} deployed`} /></div>}
+            {openErr && <div className="db-banner err" role="alert" style={{ marginTop: 10 }}>{openErr}</div>}
           </div>
         </div>
       </div>
@@ -466,10 +471,10 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
           <div className="db-brow db-brow-h">
             <span>Range band</span><span>Qty</span><span>Cost</span><span>Pays</span><span>Slippage</span><span>Spread</span>
           </div>
-          {quote.strip.buckets.map((b, i) => {
+          {(quote.strip?.buckets ?? []).map((b) => {
             const t = b.tradeable && Number(b.quantity) > 0;
             return (
-              <div className={`db-brow${t ? "" : " is-dim"}`} key={i}>
+              <div className={`db-brow${t ? "" : " is-dim"}`} key={`${b.lower}-${b.higher}`}>
                 <span className="db-band">{money(b.lower_usd)}–{money(b.higher_usd)}</span>
                 <span>{t ? (Number(b.quantity) / 1e6).toFixed(0) : "—"}</span>
                 <span>{t ? usd(b.mint_cost_raw) : "—"}</span>
@@ -606,7 +611,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
         </div>
         <div className="db-tenor">
           <span className="db-cap">Tenor · {effTenor}d</span>
-          <input type="range" className="db-range" min={30} max={365} step={5} value={effTenor} onChange={(e) => setTenor(Number(e.target.value))} />
+          <input type="range" className="db-range" aria-label="Note tenor in days" min={30} max={365} step={5} value={effTenor} onChange={(e) => setTenor(Number(e.target.value))} />
         </div>
         <div className="db-amount">
           <span className="db-cap">Principal</span>
@@ -631,8 +636,8 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
 function NoteBasic({ quote, pricing, principal, wallet, strategy, currency }: { quote: NoteQuote | null; pricing: boolean; principal: number; wallet: ReturnType<typeof useWalletSigner>; strategy?: string; currency: Currency }) {
   if (!quote) return <div className="db-card db-empty">{pricing ? "Pricing the note…" : "Enter a principal to price this note."}</div>;
   const { floor_usd, expected_usd, best_usd } = quote.projected;
-  const gainExp = pctSigned(((expected_usd - principal) / principal) * 100);
-  const gainBest = pctSigned(((best_usd - principal) / principal) * 100);
+  const gainExp = pctSigned(principal > 0 ? ((expected_usd - principal) / principal) * 100 : 0);
+  const gainBest = pctSigned(principal > 0 ? ((best_usd - principal) / principal) * 100 : 0);
   const floorPctOfPrincipal = principal > 0 ? (floor_usd / principal) * 100 : 0;
   // bar scaled so best = 100%
   const span = Math.max(best_usd, principal) || 1;
@@ -656,8 +661,8 @@ function NoteBasic({ quote, pricing, principal, wallet, strategy, currency }: { 
         <div className="db-card">
           <div className="db-card-head"><span className="db-cap">Yield sleeve</span><span className="db-dim">{quote.yield_sleeve.length} pools · live</span></div>
           <div className="db-sleeve">
-            {quote.yield_sleeve.map((p, i) => (
-              <div className="db-sleeve-row" key={i}>
+            {quote.yield_sleeve.map((p) => (
+              <div className="db-sleeve-row" key={p.pool}>
                 <span className="db-sleeve-pool">{p.pool}</span>
                 <span className="db-sleeve-apy" style={{ color: C.green }}>{(p.apy * 100).toFixed(2)}%</span>
                 <span className="db-sleeve-alloc">{money(p.allocation_usd)}</span>
@@ -689,8 +694,8 @@ function NoteAdvanced({ quote, pricing, wallet, strategy, currency }: { quote: N
         <div className="db-card-head"><span className="db-cap">Yield sleeve · Sui DeFi pools</span><span className="db-dim">DeFiLlama · live APY</span></div>
         <div className="db-sleeve-table">
           <div className="db-srow db-srow-h"><span>Pool</span><span>APY</span><span>Allocation</span><span>Weight</span><span>Source</span></div>
-          {quote.yield_sleeve.map((p, i) => (
-            <div className="db-srow" key={i}>
+          {quote.yield_sleeve.map((p) => (
+            <div className="db-srow" key={p.pool}>
               <span className="db-band">{p.pool}</span>
               <span style={{ color: C.green }}>{(p.apy * 100).toFixed(2)}%</span>
               <span>{money2(p.allocation_usd)}</span>
@@ -769,8 +774,9 @@ function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
   const [result, setResult] = useState<string | null>(null);
   const [openErr, setOpenErr] = useState<string | null>(null);
 
-  // reset the deploy result whenever the priced note changes
-  useEffect(() => { setResult(null); setOpenErr(null); }, [quote.preset_id, quote.principal_usd, quote.upside_budget_usd]);
+  // reset the deploy result whenever the priced note OR settlement rail changes, so
+  // a stale "<name> deployed" line can't linger after a rail switch.
+  useEffect(() => { setResult(null); setOpenErr(null); }, [quote.preset_id, quote.principal_usd, quote.upside_budget_usd, currency]);
 
   async function deploy() {
     if (busy) return;
@@ -785,8 +791,27 @@ function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
         const principal = quote.principal_usd;
         const upBands = vq.strip.buckets
           .filter((b) => b.tradeable && Number(b.quantity) > 0)
-          .map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: principal + r(b.max_payout_raw) }));
-        const bands = [...upBands, { lower_usd: 0, higher_usd: 1e15, payout_usd: principal }];
+          .map((b) => ({ lower_usd: b.lower_usd, higher_usd: b.higher_usd, payout_usd: principal + r(b.max_payout_raw) }))
+          .sort((a, b) => a.lower_usd - b.lower_usd);
+        // Principal floor pays back the full principal anywhere the settlement does
+        // NOT land in an upside band. The upside bands already fold principal into
+        // their payout, so the floor must be NON-OVERLAPPING with them (settlement
+        // matches the single band it falls in — first match — so an overlapping
+        // [0,1e15] catch-all would shadow the upside or double-cover). Emit floor
+        // bands only for the gaps: below the first upside band, between adjacent
+        // bands, and above the last.
+        const floorBands: { lower_usd: number; higher_usd: number; payout_usd: number }[] = [];
+        if (upBands.length === 0) {
+          floorBands.push({ lower_usd: 0, higher_usd: 1e15, payout_usd: principal });
+        } else {
+          let cursor = 0;
+          for (const b of upBands) {
+            if (b.lower_usd > cursor) floorBands.push({ lower_usd: cursor, higher_usd: b.lower_usd, payout_usd: principal });
+            cursor = Math.max(cursor, b.higher_usd);
+          }
+          floorBands.push({ lower_usd: cursor, higher_usd: 1e15, payout_usd: principal });
+        }
+        const bands = [...upBands, ...floorBands];
         setStage("Opening position…");
         const prep = await simOpen({
           owner: wallet.address as string, product: "vol", name: quote.preset_name,
@@ -830,12 +855,12 @@ function NoteDeployButton({ quote, wallet, strategy, label, currency }: {
       {!wallet.connected ? (
         <ConnectModal trigger={<button className="db-cta" style={{ background: C.tealLight }}>Connect a wallet</button>} />
       ) : (
-        <button className="db-cta" style={{ background: C.tealLight }} disabled={busy} onClick={deploy}>
+        <button className="db-cta" style={{ background: C.tealLight }} disabled={busy} aria-busy={busy} onClick={deploy}>
           {busy ? (stage ?? "Submitting…") : label}
         </button>
       )}
-      {result && <ResultLine digest={result} label={`${quote.preset_name} deployed`} />}
-      {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
+      {result && <div role="status" aria-live="polite"><ResultLine digest={result} label={`${quote.preset_name} deployed`} /></div>}
+      {openErr && <div className="db-banner err" role="alert" style={{ marginTop: 10 }}>{openErr}</div>}
     </>
   );
 }

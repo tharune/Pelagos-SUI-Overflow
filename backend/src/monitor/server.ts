@@ -73,12 +73,17 @@ async function probeSui() {
       status: 'error' as const,
       latency_ms: Date.now() - t0,
       network: process.env.SUI_NETWORK ?? 'testnet',
+      active_env: process.env.SUI_NETWORK ?? 'testnet',
       rpc_url: process.env.SUI_RPC_URL ?? 'https://fullnode.testnet.sui.io:443',
       active_address: process.env.SUI_ACTIVE_ADDRESS ?? null,
       package_id: process.env.SUI_PACKAGE_ID ?? null,
       market_module: process.env.SUI_MARKET_MODULE ?? 'prediction_market',
       market_admin_cap_id: process.env.SUI_MARKET_ADMIN_CAP_ID ?? null,
       mock_usdc_type: process.env.MOCK_USDC_TYPE ?? null,
+      // Mirror the success branch's keys with null/[] defaults so a monitor UI that
+      // reads sui.balances.* / sui.mock_usdc_metadata_id doesn't crash when RPC is down.
+      mock_usdc_metadata_id: process.env.MOCK_USDC_METADATA_ID ?? null,
+      balances: { sui: null, mock_usdc: null },
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -233,6 +238,17 @@ export async function buildSnapshot() {
   };
 }
 
+// Read the monitor HTML once at module load. If the asset isn't beside the
+// compiled JS (e.g. a build that didn't copy it), fall back to a small inline
+// placeholder so GET / never 500s per request.
+const MONITOR_HTML: string = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'monitor.html'), 'utf-8');
+  } catch {
+    return '<!doctype html><title>Monitor</title><body><h1>Monitor</h1><p>monitor.html asset not found; the JSON snapshot is available at <a href="/data">/data</a>.</p></body>';
+  }
+})();
+
 export function startMonitorServer() {
   const app = express();
 
@@ -251,9 +267,8 @@ export function startMonitorServer() {
   });
 
   app.get('/', (_req, res) => {
-    const html = fs.readFileSync(path.join(__dirname, 'monitor.html'), 'utf-8');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(html);
+    res.send(MONITOR_HTML);
   });
 
   app.listen(MONITOR_PORT, () => {

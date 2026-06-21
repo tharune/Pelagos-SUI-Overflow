@@ -130,17 +130,3 @@ export function fetchNotePresets(): Promise<{ presets: NotePreset[]; apy_sources
 export function quoteNote(body: { principal_usd: number; preset_id: string; tenor_days?: number }): Promise<NoteQuote> {
   return postJson<NoteQuote>(`/api/notes/quote`, body);
 }
-
-// ───────────────────────── Backtests (Portfolio) ─────────────────────────────
-export type BacktestResult = {
-  strategy_id: string; window_days: number; source: string; coverage_note: string;
-  equity_curve: { t: number; equity: number }[];
-  metrics: { total_return_pct: number; sharpe: number; max_drawdown_pct: number; win_rate: number; ann_vol_pct: number };
-  series?: { t: number; close: number }[];
-};
-export function fetchBacktest(id: string, windowDays = 60): Promise<BacktestResult> {
-  return getJson(`/api/backtest/strategy?id=${encodeURIComponent(id)}&window=${windowDays}`);
-}
-export function fetchBacktestStrategies(): Promise<{ strategies: { id: string; name: string; kind: string; product?: string; description: string }[] }> {
-  return getJson(`/api/backtest/strategies`);
-}

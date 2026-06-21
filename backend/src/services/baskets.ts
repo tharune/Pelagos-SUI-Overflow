@@ -245,11 +245,21 @@ function themeOf(question: string): string | null {
   return null;
 }
 
-function parseYesProbability(outcomePrices: string): number | null {
+// Resolve the index of the YES outcome. Polymarket does NOT guarantee outcome
+// order is [Yes, No] — match the token whose outcome label is (case-insensitive)
+// 'yes' and read the price at that index; fall back to index 0 if unresolvable.
+function resolveYesIndex(m: PolymarketMarket): number {
+  const tokenIdx = m.tokens?.findIndex((t) => t.outcome?.trim().toLowerCase() === 'yes');
+  if (typeof tokenIdx === 'number' && tokenIdx >= 0) return tokenIdx;
+  return 0;
+}
+
+function parseYesProbability(m: PolymarketMarket): number | null {
   try {
-    const arr = JSON.parse(outcomePrices);
+    const arr = JSON.parse(m.outcomePrices);
     if (Array.isArray(arr) && arr.length > 0) {
-      const p = parseFloat(arr[0]);
+      const idx = resolveYesIndex(m);
+      const p = parseFloat(arr[idx] ?? arr[0]);
       if (Number.isFinite(p) && p >= 0 && p <= 1) return p;
     }
   } catch { /* fall through */ }
@@ -285,7 +295,7 @@ function relativeChange(priceToday: number, absDelta: number): number {
 function normalizeMarketCandidates(m: PolymarketMarket): Candidate[] {
   if (!m.active || m.closed) return [];
   if (!m.question || !m.id) return [];
-  const yesProb = parseYesProbability(m.outcomePrices);
+  const yesProb = parseYesProbability(m);
   if (yesProb === null) return [];
   const vol = parseFloat(m.volume);
   if (!Number.isFinite(vol) || vol < MIN_VOLUME_USD) return [];
@@ -514,16 +524,23 @@ async function fetchClobMidpoints(tokenIds: string[]): Promise<Map<string, numbe
 function applyClobPrice(leg: Candidate, mids: Map<string, number>): Candidate {
   const clob = leg.tokenId ? mids.get(leg.tokenId) : undefined;
   if (typeof clob === 'number' && Number.isFinite(clob) && clob > 0 && clob < 1) {
-    return { ...leg, probability: clob, priceSource: 'clob' };
+    // dailyChange was computed as a relative move off the Gamma probability;
+    // re-pricing to the CLOB mid changes the basis, so the stale relative
+    // change no longer applies. We don't carry the absolute 24h delta on the
+    // leg, so clear it rather than report a wrong-basis number.
+    return { ...leg, probability: clob, dailyChange: 0, priceSource: 'clob' };
   }
   // BBO fallback: best_bid/best_ask are the YES market's top of book.
   if (typeof leg.bestBid === 'number' && typeof leg.bestAsk === 'number') {
     const yesMid = (leg.bestBid + leg.bestAsk) / 2;
     if (Number.isFinite(yesMid) && yesMid > 0 && yesMid < 1) {
       const sided = leg.side === 'YES' ? yesMid : 1 - yesMid;
-      return { ...leg, probability: sided, priceSource: 'bbo' };
+      // Same basis-staleness as the CLOB branch: the probability moved off the
+      // Gamma snapshot, so the relative dailyChange no longer reflects it.
+      return { ...leg, probability: sided, dailyChange: 0, priceSource: 'bbo' };
     }
   }
+  // Gamma price unchanged → dailyChange basis still valid; leave it intact.
   return { ...leg, priceSource: 'gamma' };
 }
 

@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { C, FM, EASE } from "../_lib/tokens";
 
 export type Currency = "dUSDC" | "mUSDC";
 
 // Two equal USD settlement currencies (both $1), priced off the same DeepBook
-// book. dUSDC is Predict's native quote asset; mUSDC is Pelagos-minted USDC.
+// book. dUSDC is Predict's native quote asset; mUSDC is a freely-mintable demo
+// token routed through the same engine.
 const CURRENCY_NOTE: Record<Currency, string> = {
   dUSDC: "Native · DeepBook Predict",
-  mUSDC: "Pelagos USDC · same DeepBook",
+  mUSDC: "Demo token · same engine",
 };
 
 /**
@@ -26,7 +27,12 @@ export function CurrencySelect({
   options?: Currency[];
 }) {
   const [open, setOpen] = useState(false);
+  // Active descendant for keyboard navigation in the open listbox (roving
+  // highlight): starts on the current value when the list opens.
+  const [activeIdx, setActiveIdx] = useState(0);
   const ref = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -42,6 +48,40 @@ export function CurrencySelect({
     };
   }, [open]);
 
+  // When the list opens, seed the active option to the current value and move
+  // keyboard focus into the listbox so Arrow/Enter/Escape are handled.
+  useEffect(() => {
+    if (!open) return;
+    const i = options.indexOf(value);
+    setActiveIdx(i >= 0 ? i : 0);
+    listRef.current?.focus();
+  }, [open, value, options]);
+
+  // Keyboard handler for the open listbox: Arrow Up/Down move the highlight,
+  // Enter/Space selects the highlighted option, Escape closes without changing.
+  function onListKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(options.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(0, i - 1));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setActiveIdx(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setActiveIdx(options.length - 1);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const o = options[activeIdx];
+      if (o) { onChange(o); setOpen(false); }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+  }
+
   return (
     <div ref={ref} style={{ position: "relative", flex: "0 0 auto" }}>
       <button
@@ -49,6 +89,7 @@ export function CurrencySelect({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         style={{
           appearance: "none",
           display: "inline-flex",
@@ -75,8 +116,15 @@ export function CurrencySelect({
       </button>
       {open && (
         <div
+          ref={listRef}
+          id={listboxId}
           role="listbox"
+          tabIndex={-1}
+          aria-label="Settlement currency"
+          aria-activedescendant={`${listboxId}-opt-${activeIdx}`}
+          onKeyDown={onListKeyDown}
           style={{
+            outline: "none",
             position: "absolute",
             top: "calc(100% + 5px)",
             right: 0,
@@ -91,25 +139,29 @@ export function CurrencySelect({
             gap: 2,
           }}
         >
-          {options.map((o) => {
+          {options.map((o, i) => {
             const active = o === value;
+            const highlighted = i === activeIdx;
             return (
               <button
                 key={o}
+                id={`${listboxId}-opt-${i}`}
                 type="button"
                 role="option"
                 aria-selected={active}
+                tabIndex={-1}
                 onClick={() => {
                   onChange(o);
                   setOpen(false);
                 }}
+                onMouseMove={() => setActiveIdx(i)}
                 style={{
                   appearance: "none",
                   border: "none",
                   textAlign: "left",
                   borderRadius: 6,
                   padding: "7px 9px",
-                  background: active ? `${C.tealLight}14` : "transparent",
+                  background: active ? `${C.tealLight}14` : highlighted ? C.surface : "transparent",
                   color: active ? C.tealLight : C.textSecondary,
                   cursor: "pointer",
                   fontFamily: FM,
@@ -118,7 +170,7 @@ export function CurrencySelect({
                   transition: `background 0.12s ${EASE}`,
                 }}
                 onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = C.surface; }}
-                onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                onMouseLeave={(e) => { if (!active && !highlighted) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
                 <span style={{ display: "block" }}>{o}</span>
                 {CURRENCY_NOTE[o] && (

@@ -121,7 +121,12 @@ export type DistributionLaunchPlan = {
 
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
-  const payload = text ? JSON.parse(text) : undefined;
+  let payload: unknown = undefined;
+  try {
+    payload = text ? JSON.parse(text) : undefined;
+  } catch {
+    payload = text;
+  }
   if (!res.ok) {
     const message =
       payload && typeof payload === "object" && "error" in payload

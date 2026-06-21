@@ -27,7 +27,7 @@ Nav: **Portfolio · Distributed Options · Volatility · Baskets · DeepBook · 
 | **Volatility** | Trade implied-vs-realized vol with prebuilt structures (straddle / strangle / butterfly / iron condor), a live payoff diagram + greeks, and a delta-hedge sleeve. Advanced adds an interactive **3D SVI vol surface** + smile / term-structure analytics + a multi-leg trade builder. |
 | **Baskets** | Diversified event baskets (Polymarket CLOB-priced), de-correlated by an NLP layer (TF-IDF cosine + theme clustering) so the legs are genuinely uncorrelated, not 30 variants of one bet. Basic is a clean basket terminal; **Advanced** is the risk-slice tranching engine (senior / mezzanine / junior). |
 | **DeepBook** | Prebuilt DeepBook Predict range strategies + principal-protected notes (a DeFi-yield sleeve allocated into the strategies). |
-| **Portfolio** | Holdings, live mark-to-market, P&L, and per-strategy backtests on real price history. |
+| **Portfolio** | Holdings, live mark-to-market, and P&L. |
 
 ## On-chain (Sui testnet)
 

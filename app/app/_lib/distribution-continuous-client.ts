@@ -101,7 +101,12 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const text = await res.text();
-  const payload = text ? JSON.parse(text) : undefined;
+  let payload: unknown = undefined;
+  try {
+    payload = text ? JSON.parse(text) : undefined;
+  } catch {
+    payload = text;
+  }
   if (!res.ok) {
     const msg =
       payload && typeof payload === "object" && "error" in payload

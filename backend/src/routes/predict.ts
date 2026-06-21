@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { Router, Request, Response } from 'express';
 import * as predict from '../services/predict';
 import * as structured from '../services/predict/structured';
 import * as products from '../services/predict/products';
 import { PREDICT } from '../services/predict/config';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -200,10 +199,16 @@ router.get('/density', async (req: Request, res: Response) => {
   try {
     const oracleId =
       typeof req.query.oracle_id === 'string' && req.query.oracle_id ? req.query.oracle_id : undefined;
+    // Guard a supplied oracle_id (0x...) before it reaches the predict-server
+    // fetch path, mirroring the other oracle_id routes. Undefined is allowed —
+    // buildImpliedDensity falls back to the active oracle.
+    if (oracleId !== undefined && !isObjectId(oracleId)) {
+      return res.status(400).json({ error: 'oracle_id (0x...) is required' });
+    }
     const steps = req.query.steps !== undefined ? Number(req.query.steps) : undefined;
     const span = req.query.span !== undefined ? Number(req.query.span) : undefined;
     if (span !== undefined && (!Number.isFinite(span) || span <= 0 || span >= 1)) {
-      throw new Error('span must be in (0, 1)');
+      return res.status(400).json({ error: 'span must be in (0, 1)' });
     }
     const density = await predict.buildImpliedDensity(oracleId, steps, span);
     res.json(density);
@@ -227,23 +232,6 @@ router.get('/markets', async (req: Request, res: Response) => {
     const underlying = String(req.query.underlying ?? 'BTC').toUpperCase();
     res.json(await predict.buildMarketsDepth(underlying));
   } catch (err) {
-    sendError(res, err);
-  }
-});
-
-/**
- * Indexer-replay BACKTEST results (the "simulation results for a vault strategy").
- * Reads backend/.backtest-strip.json produced by `npm run backtest`. The headline
- * series is house{} — the PLP / vault counterparty that earns the strip spread.
- */
-router.get('/backtest', (_req: Request, res: Response) => {
-  try {
-    const path = resolve(__dirname, '../../.backtest-strip.json');
-    res.json(JSON.parse(readFileSync(path, 'utf8')));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return res.status(404).json({ error: 'backtest not generated yet; run npm run backtest' });
-    }
     sendError(res, err);
   }
 });
@@ -390,10 +378,12 @@ router.post('/simulate/mint', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Writes (require a configured signer)
+// Writes — OPERATOR-SIGNED (sign with SUI_PRIVATE_KEY). Admin-gated: these move
+// the operator float and must never be reachable by the public. The app/wallet
+// uses the non-custodial /prepare routes below instead. See middleware/requireAdmin.
 // ---------------------------------------------------------------------------
 
-router.post('/manager', async (_req: Request, res: Response) => {
+router.post('/manager', requireAdmin, async (_req: Request, res: Response) => {
   try {
     res.json(await predict.createManager());
   } catch (err) {
@@ -401,7 +391,7 @@ router.post('/manager', async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/deposit', async (req: Request, res: Response) => {
+router.post('/deposit', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
@@ -413,7 +403,7 @@ router.post('/deposit', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/mint', async (req: Request, res: Response) => {
+router.post('/mint', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
@@ -430,7 +420,7 @@ router.post('/mint', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/redeem', async (req: Request, res: Response) => {
+router.post('/redeem', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
@@ -447,7 +437,7 @@ router.post('/redeem', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/range/mint', async (req: Request, res: Response) => {
+router.post('/range/mint', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
@@ -464,7 +454,7 @@ router.post('/range/mint', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/range/redeem', async (req: Request, res: Response) => {
+router.post('/range/redeem', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
@@ -480,7 +470,7 @@ router.post('/range/redeem', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/supply', async (req: Request, res: Response) => {
+router.post('/supply', requireAdmin, async (req: Request, res: Response) => {
   try {
     const amountRaw = rawAmount(req.body as Record<string, unknown>, 'amount_raw', 'amount_ui');
     if (!amountRaw) throw new Error('amount_raw or amount_ui (positive) is required');
@@ -490,7 +480,7 @@ router.post('/supply', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/withdraw', async (req: Request, res: Response) => {
+router.post('/withdraw', requireAdmin, async (req: Request, res: Response) => {
   try {
     const body = req.body as Record<string, unknown>;
     const sharesRaw = body.shares_raw !== undefined ? BigInt(String(body.shares_raw)) : undefined;
@@ -615,16 +605,19 @@ router.post('/strip/open/prepare', async (req: Request, res: Response) => {
       throw new Error('buckets[] is required');
     }
     const depositRaw = rawAmount(body, 'deposit_amount_raw', 'deposit_amount_ui') ?? undefined;
-    res.json(
-      await structured.prepareMintStrip({
-        owner: body.owner as string,
-        managerId: body.manager_id as string,
-        oracleId: body.oracle_id as string,
-        expiry: String(body.expiry),
-        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
-        depositRaw,
-      }),
-    );
+    // Re-resolve the oracle: a cached client oracle_id may have rolled/expired.
+    // Since the PTB no longer dry-runs, minting against a stale id aborts on-chain
+    // AFTER the wallet signs (gas burn). Mint against the fresh id and surface it.
+    const o = await resolveGridOracle(body);
+    const prepared = await structured.prepareMintStrip({
+      owner: body.owner as string,
+      managerId: body.manager_id as string,
+      oracleId: o.oracle_id,
+      expiry: String(o.expiry),
+      buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
+      depositRaw,
+    });
+    res.json({ ...prepared, oracle_id: o.oracle_id, expiry: String(o.expiry) });
   } catch (err) {
     sendError(res, err, 400);
   }
@@ -770,17 +763,19 @@ router.post('/ppn/open/prepare', async (req: Request, res: Response) => {
     const floorRaw = rawAmount(body, 'floor_amount_raw', 'floor_amount_ui');
     const upsideRaw = rawAmount(body, 'upside_amount_raw', 'upside_amount_ui');
     if (!floorRaw || !upsideRaw) throw new Error('floor_amount_* and upside_amount_* are required');
-    res.json(
-      await structured.preparePpnOpen({
-        owner: body.owner as string,
-        managerId: body.manager_id as string,
-        oracleId: body.oracle_id as string,
-        expiry: String(body.expiry),
-        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
-        floorRaw,
-        upsideRaw,
-      }),
-    );
+    // Re-resolve the oracle (a cached client id may have rolled/expired); the PTB
+    // no longer dry-runs, so a stale id aborts on-chain after the wallet signs.
+    const o = await resolveGridOracle(body);
+    const prepared = await structured.preparePpnOpen({
+      owner: body.owner as string,
+      managerId: body.manager_id as string,
+      oracleId: o.oracle_id,
+      expiry: String(o.expiry),
+      buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
+      floorRaw,
+      upsideRaw,
+    });
+    res.json({ ...prepared, oracle_id: o.oracle_id, expiry: String(o.expiry) });
   } catch (err) {
     sendError(res, err, 400);
   }
@@ -859,14 +854,31 @@ router.post('/termbasket/open/prepare', async (req: Request, res: Response) => {
     if (!isObjectId(body.manager_id)) throw new Error('manager_id (0x...) is required');
     if (!Array.isArray(body.legs) || body.legs.length === 0) throw new Error('legs[] is required');
     const depositRaw = rawAmount(body, 'deposit_amount_raw', 'deposit_amount_ui') ?? undefined;
-    res.json(
-      await structured.prepareMintMultiStrip({
-        owner: body.owner as string,
-        managerId: body.manager_id as string,
-        legs: body.legs as Array<{ oracleId: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>,
-        depositRaw,
+    const rawLegs = body.legs as Array<{ oracleId: string; expiry: string; buckets: Array<{ lower: string; higher: string; quantity: string }> }>;
+    // Each leg targets a DISTINCT tenor oracle, so (unlike the single-oracle opens)
+    // we can't substitute a fallback oracle without losing the tenor. Instead verify
+    // each leg's oracle is still live and DROP any that rolled/expired — minting
+    // against a stale oracle aborts on-chain after the wallet signs (gas burn), and
+    // the PTB no longer dry-runs. Surface which legs were dropped to the client.
+    const checked = await Promise.all(
+      rawLegs.map(async (leg) => {
+        if (!isObjectId(leg.oracleId)) return { leg, live: false };
+        const st = (await predict.predictServer.oracleState(leg.oracleId).catch(() => null)) as {
+          oracle?: { expiry: number };
+        } | null;
+        return { leg, live: !!(st?.oracle && st.oracle.expiry > Date.now() + 6 * 60_000) };
       }),
     );
+    const legs = checked.filter((c) => c.live).map((c) => c.leg);
+    const droppedLegs = checked.filter((c) => !c.live).map((c) => c.leg.oracleId);
+    if (legs.length === 0) throw new Error('all term-basket legs reference expired/stale oracles; re-quote');
+    const prepared = await structured.prepareMintMultiStrip({
+      owner: body.owner as string,
+      managerId: body.manager_id as string,
+      legs,
+      depositRaw,
+    });
+    res.json({ ...prepared, dropped_oracle_ids: droppedLegs });
   } catch (err) {
     sendError(res, err, 400);
   }

@@ -15,7 +15,7 @@ Express API       :13101   ── builds UNSIGNED tx_bytes; non-custodial
       ├── DeepBook Predict (Mysten testnet) ── range pricing · SVI surface · native settlement
       ├── Polymarket Gamma + CLOB           ── basket markets + midpoint pricing
       ├── DeFiLlama                         ── live Sui USDC lending APY (protected notes)
-      ├── Coinbase                          ── BTC candles (backtests)
+      ├── Coinbase                          ── BTC spot (CEX price reference)
       ├── Supabase                          ── persistence (bundles, positions)
       └── Sui RPC                           ── pelagos_sui / _vault / _strategies moveCalls
       │
@@ -45,7 +45,6 @@ mintable. Settlement is native to DeepBook Predict (oracle settles → permissio
 - **`custom-basket` / `baskets` / `market-filter` / `nlp`** — Polymarket discovery → 5-stage NLP quality
   filter → correlation-decorrelated weighting → tranching.
 - **`deepbook` / `notes` / `notes-allocation`** — prebuilt range strategies + protected-note DeFi-yield sleeve.
-- **`backtest`** — per-strategy backtests on Coinbase candles + Polymarket price history.
 - **`vault/` · `sui` · `pelagos-chain`** — on-chain moveCall / PTB builders.
 
 The live API surface is ~30 route groups mounted under `/api/*` (see `backend/src/index.ts`).

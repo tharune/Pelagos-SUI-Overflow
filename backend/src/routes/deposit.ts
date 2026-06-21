@@ -38,6 +38,7 @@ import {
   vaultConfigured,
   VAULT,
 } from '../services/vault';
+import { resolveVault } from '../services/vault/config';
 import { validate, depositSchema, redeemSchema } from '../utils/validation';
 
 const router = Router();
@@ -265,14 +266,19 @@ router.post('/redeem/prepare', validate(redeemSchema), async (req: Request, res:
 
 router.post('/redeem/confirm', async (req: Request, res: Response) => {
   try {
-    const { bundle_id, wallet_address, signature } = req.body as {
+    const { bundle_id, wallet_address, signature, currency } = req.body as {
       bundle_id: string;
       wallet_address: string;
       signature: string;
+      currency?: 'mUSDC' | 'dUSDC';
     };
     if (!signature) return res.status(400).json({ error: 'signature (tx digest) required' });
 
-    const c = await confirmDigest(signature, wallet_address);
+    // Thread the settlement rail so the owner-payout delta is read against the
+    // right coin (and decimals). Absent currency => infer from the share type /
+    // default to mUSDC, preserving prior behavior.
+    const ccy: 'mUSDC' | 'dUSDC' | undefined = currency === 'dUSDC' ? 'dUSDC' : currency === 'mUSDC' ? 'mUSDC' : undefined;
+    const c = await confirmDigest(signature, wallet_address, ccy);
     if (!c.ok) {
       return res.status(400).json({ error: `Sui transaction not confirmed: ${c.status}`, ...c });
     }
@@ -355,38 +361,64 @@ router.post('/redeem', validate(redeemSchema), async (req: Request, res: Respons
 router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    if (!vaultConfigured()) {
+    // Reject malformed addresses before any Sui RPC so a bad param returns a
+    // clean 400 instead of a raw RPC-driven 500.
+    if (!/^0x[0-9a-fA-F]{1,64}$/.test(walletAddress)) {
+      return res.status(400).json({ error: 'invalid address' });
+    }
+    if (!vaultConfigured('mUSDC') && !vaultConfigured('dUSDC')) {
       return res.json({ wallet_address: walletAddress, positions: [], total_value: 0, total_pnl: 0 });
     }
-    const [state, shares] = await Promise.all([readVaultState(), listShares(walletAddress)]);
+    // Read mUSDC state always and dUSDC state only when that rail is configured.
+    // listShares returns receipts from BOTH rails tagged with .currency, so each
+    // position must be valued at its OWN rail's share price.
+    const [musdcState, dusdcState, shares] = await Promise.all([
+      readVaultState(),
+      vaultConfigured('dUSDC') ? readVaultState(resolveVault('dUSDC')) : Promise.resolve(null),
+      listShares(walletAddress),
+    ]);
 
-    const positions = shares.map((s) => {
-      const currentValue = s.shares * state.share_price;
+    const positions = await Promise.all(shares.map(async (s) => {
+      const sharePrice = s.currency === 'dUSDC' && dusdcState ? dusdcState.share_price : musdcState.share_price;
+      const currentValue = s.shares * sharePrice;
       const costBasis = s.principal_usdc;
       const unrealizedPnl = currentValue - costBasis;
+      // Resolve the bundle this position belongs to so the typed FE contract gets
+      // risk_tier / resolution_date / created_at instead of undefined (which the
+      // NaN-guarded UI renders as blank/"unknown"). The on-chain share label is
+      // the bundle id; if no Supabase bundle matches, fall back to sensible
+      // defaults rather than omitting the fields.
+      const label = s.label || 'pelagos-vault';
+      const bundle = await getBundleById(label).catch(() => null);
       return {
         position_id: s.share_id,
         share_id: s.share_id,
-        bundle_id: s.label || 'pelagos-vault',
-        bundle_name: s.label || 'Pelagos Vault',
+        bundle_id: label,
+        bundle_name: bundle?.name || s.label || 'Pelagos Vault',
         bundle_status: 'active',
+        risk_tier: bundle?.risk_tier ?? null,
+        resolution_date: bundle?.resolution_date ?? null,
+        created_at: bundle?.created_at ?? null,
         tokens_held: s.shares,
         entry_price: costBasis > 0 && s.shares > 0 ? costBasis / s.shares : 1,
         deposited_usdc: costBasis,
-        current_nav: state.share_price,
+        current_nav: sharePrice,
         current_value: currentValue,
         unrealized_pnl: unrealizedPnl,
         pnl_percent: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : 0,
       };
-    });
+    }));
 
     const totalValue = positions.reduce((s, p) => s + p.current_value, 0);
     const totalDeposited = positions.reduce((s, p) => s + p.deposited_usdc, 0);
     const totalPnl = totalValue - totalDeposited;
     res.json({
       wallet_address: walletAddress,
+      // vault_id + share_price are the mUSDC rail's (matching VAULT.vaultObjectId).
+      // Positions can span both rails and are valued per-row via current_nav above;
+      // the FE reads per-row, not this top-level price.
       vault_id: VAULT.vaultObjectId,
-      share_price: state.share_price,
+      share_price: musdcState.share_price,
       positions,
       total_value: totalValue,
       total_deposited: totalDeposited,

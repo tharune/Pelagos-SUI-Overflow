@@ -8,6 +8,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <title>Pelagos · Structured Predictions</title>
+        <meta
+          name="description"
+          content="Structured prediction-market products on Sui — a live BTC options chain, volatility desk, event baskets, and principal-protected notes, settled on DeepBook Predict and wallet-signed on testnet."
+        />
+        <meta property="og:title" content="Pelagos · Structured Predictions" />
+        <meta
+          property="og:description"
+          content="A live BTC options chain, volatility desk, event baskets, and principal-protected notes — structured products settled on DeepBook Predict, on Sui."
+        />
+        <meta property="og:type" content="website" />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="Pelagos · Structured Predictions" />
+        <meta
+          name="twitter:description"
+          content="Structured prediction-market products on Sui, settled on DeepBook Predict."
+        />
         <link rel="icon" type="image/svg+xml" href="/pelagos_mark.svg" />
         <link rel="apple-touch-icon" href="/pelagos_mark.svg" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -103,6 +119,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           a { color: inherit; }
           input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
           input[type=range] { accent-color: #4da2ff; }
+
+          /* Respect the user's reduced-motion preference across the whole app
+             (WCAG 2.3.3): collapse animations + transitions for vestibular safety. */
+          @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+              animation-duration: 0.001ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.001ms !important;
+              scroll-behavior: auto !important;
+            }
+          }
 
         `}</style>
       </head>

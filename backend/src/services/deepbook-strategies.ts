@@ -310,11 +310,17 @@ export async function quoteStrategy(args: {
   const pref: ExpiryPref = args.expiryPref ?? 'mid';
   const notionalUsd = Math.max(1, Number(args.notionalUsd) || 100);
 
-  const cacheKey = `${def.id}|${notionalUsd}|${pref}|${args.oracleId ?? ''}`;
+  // Resolve the oracle FIRST, then key the cache on the RESOLVED oracle_id. A
+  // raw, caller-supplied oracle_id is sender-controlled and may be random per
+  // request — keying on it would miss every time and fan out unbounded
+  // devInspect reads. resolveOracle collapses any unknown/expired id onto the
+  // active near/mid/far oracle, so the resolved id is the right cache dimension.
+  const o = await resolveOracle(pref, args.oracleId);
+
+  const cacheKey = `${def.id}|${notionalUsd}|${pref}|${o.oracle_id}`;
   const hit = quoteCache.get(cacheKey);
   if (hit && Date.now() - hit.at < QUOTE_TTL_MS) return hit.quote;
 
-  const o = await resolveOracle(pref, args.oracleId);
   const budgetRaw = BigInt(Math.round(notionalUsd * 10 ** DUSDC_DECIMALS));
 
   // σ = the oracle's live implied move (tenor-aware SVI), floored to the grid so

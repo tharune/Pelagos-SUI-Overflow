@@ -12,7 +12,13 @@
 export type Pt = { x: number; y: number };
 
 function toPts(input: Pt[] | Array<[number, number]>): Pt[] {
-  return input.map((p) => (Array.isArray(p) ? { x: p[0], y: p[1] } : p));
+  // Drop any non-finite point at entry. A single NaN/Infinity x or y would
+  // otherwise emit `C NaN NaN ...` into the SVG `d` attribute and the browser
+  // silently discards the entire path — this module is the single source of
+  // truth for every chart line, so one bad sample must not blank the whole line.
+  return input
+    .map((p) => (Array.isArray(p) ? { x: p[0], y: p[1] } : p))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
 }
 
 /** Monotone tangents for each point given strictly-increasing xs. */
@@ -58,12 +64,17 @@ export function monotonePath(input: Pt[] | Array<[number, number]>): string {
   const ys = pts.map((p) => p.y);
   const m = monotoneTangents(xs, ys);
   const d = [`M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`];
+  // Coerce any non-finite control coordinate back to its endpoint value before
+  // emitting. A degenerate tangent (e.g. from a zero/huge secant) must never
+  // leak `NaN`/`Infinity` into the path string and blank the whole line.
+  const fin = (v: number, fallback: number): number =>
+    Number.isFinite(v) ? v : fallback;
   for (let i = 0; i < n - 1; i++) {
     const h = xs[i + 1] - xs[i];
-    const c1x = xs[i] + h / 3;
-    const c1y = ys[i] + (m[i] * h) / 3;
-    const c2x = xs[i + 1] - h / 3;
-    const c2y = ys[i + 1] - (m[i + 1] * h) / 3;
+    const c1x = fin(xs[i] + h / 3, xs[i]);
+    const c1y = fin(ys[i] + (m[i] * h) / 3, ys[i]);
+    const c2x = fin(xs[i + 1] - h / 3, xs[i + 1]);
+    const c2y = fin(ys[i + 1] - (m[i + 1] * h) / 3, ys[i + 1]);
     d.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${xs[i + 1].toFixed(1)} ${ys[i + 1].toFixed(1)}`);
   }
   return d.join(" ");

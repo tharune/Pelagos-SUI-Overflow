@@ -17,8 +17,6 @@ import { useLiveBaskets, formatYieldPct } from "../_lib/use-live-baskets";
 import { computeBasketStats, quoteTranchesFromStats, type TrancheQuote } from "../tranche/_quote";
 import { useMode, BetaTag } from "../_lib/mode";
 
-type TierFilter = "all" | 90 | 50;
-type WindowFilter = "all" | WindowKey;
 type FeedStatus = "loading" | "ready" | "seed";
 
 type BasketView = Bundle & {
@@ -77,8 +75,6 @@ export default function BasketsPage() {
   const router = useRouter();
   const { mode, setMode } = useMode();
   const basketState = useLiveBaskets();
-  const [tier, setTier] = useState<TierFilter>("all");
-  const [windowFilter, setWindowFilter] = useState<WindowFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { baskets, feedStatus } = useMemo(() => {
@@ -95,18 +91,12 @@ export default function BasketsPage() {
   }, [basketState]);
 
   const filtered = useMemo(() => {
-    return baskets
-      .filter((basket) => {
-        if (tier !== "all" && basket.tier !== tier) return false;
-        if (windowFilter !== "all" && basket.window !== windowFilter) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const tierDiff = TIER_ORDER[a.tier] - TIER_ORDER[b.tier];
-        if (tierDiff !== 0) return tierDiff;
-        return WINDOW_ORDER[a.window] - WINDOW_ORDER[b.window];
-      });
-  }, [baskets, tier, windowFilter]);
+    return [...baskets].sort((a, b) => {
+      const tierDiff = TIER_ORDER[a.tier] - TIER_ORDER[b.tier];
+      if (tierDiff !== 0) return tierDiff;
+      return WINDOW_ORDER[a.window] - WINDOW_ORDER[b.window];
+    });
+  }, [baskets]);
 
   useEffect(() => {
     let nextSelectedId: string | null;
@@ -152,13 +142,6 @@ export default function BasketsPage() {
             />
           ) : feedStatus === "loading" ? (
             <BasketLoading />
-          ) : filtered.length === 0 ? (
-            <BasketEmpty
-              onReset={() => {
-                setTier("all");
-                setWindowFilter("all");
-              }}
-            />
           ) : (
             /* Basic — a clean two-pane terminal: pick a basket, read its detail. */
             <div className="bk-split">
@@ -479,15 +462,6 @@ function BasketLoading() {
     <div className="bk-event-stack">
       <div className="bk-card bk-skeleton" style={{ minHeight: 300 }} />
       <div className="bk-card bk-skeleton" style={{ minHeight: 360 }} />
-    </div>
-  );
-}
-
-function BasketEmpty({ onReset }: { onReset: () => void }) {
-  return (
-    <div className="bk-card bk-empty">
-      <strong>No baskets match the current filters.</strong>
-      <button type="button" onClick={onReset}>Reset filters</button>
     </div>
   );
 }

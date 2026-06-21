@@ -14,21 +14,11 @@ import { bundleRoutes } from './routes/bundles';
 import { basketRoutes } from './routes/baskets';
 import { depositRoutes } from './routes/deposit';
 import { marketRoutes } from './routes/markets';
-import { sseRoutes } from './routes/sse';
 import { docsRoutes } from './routes/docs';
-import { adminRoutes } from './routes/admin';
-import { leaderboardRoutes } from './routes/leaderboard';
-import { demoRoutes } from './routes/demo';
-import { webhookRoutes } from './routes/webhook';
 import { ppnRoutes } from './routes/ppn';
-import { alertRoutes } from './routes/alerts';
-import { mlRoutes } from './routes/ml';
-import { onchainRoutes } from './routes/onchain';
 import { metricsRoutes } from './routes/metrics';
 import { lendingRoutes } from './routes/lending';
 import { warmLendingRate } from './services/lending';
-import portfolioRoutes from './routes/portfolio';
-import vaultRoutes from './routes/vaults';
 import mmRoutes from './routes/mm';
 import { devRoutes } from './routes/dev';
 import { predictRoutes } from './routes/predict';
@@ -40,7 +30,6 @@ import { customBasketRoutes } from './routes/custom-basket';
 import { deepbookRoutes } from './routes/deepbook';
 import { simRoutes } from './routes/sim';
 import { notesRoutes } from './routes/notes';
-import { backtestRoutes } from './routes/backtest';
 import { metricsMiddleware } from './services/metrics';
 import { startMonitorServer } from './monitor/server';
 import { startCronJobs } from './services/cron';
@@ -49,6 +38,12 @@ import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
+
+// Behind Akash ingress (a single reverse proxy), req.ip must resolve from the
+// first X-Forwarded-For hop — otherwise every user shares one IP bucket in the
+// rate limiters and express-rate-limit v7 emits a ValidationError. One hop is
+// correct for a single trusted proxy. Set before the limiters/routes mount.
+app.set('trust proxy', 1);
 
 // CORS
 // FRONTEND_URL may be a single origin ("http://localhost:13100") or a
@@ -141,15 +136,6 @@ const marketLimiter = rateLimit({
   message: { error: 'Too many market requests, please try again later' },
 });
 
-// AI portfolio composer: 10 req/min per IP (Anthropic API calls are expensive)
-const portfolioLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 10,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  message: { error: 'Too many portfolio requests, please try again later' },
-});
-
 // Health check
 app.get('/api/health', async (_req, res) => {
   const services: {
@@ -219,23 +205,12 @@ app.use('/api/custom-baskets', customBasketRoutes);
 app.use('/api/deepbook', deepbookRoutes);
 app.use('/api/sim', simRoutes);
 app.use('/api/notes', notesRoutes);
-app.use('/api/backtest', backtestRoutes);
 app.use('/api/deposit', depositRoutes);
 app.use('/api/markets', marketLimiter, marketRoutes);
-app.use('/api/sse', sseRoutes);
-app.use('/api/leaderboard', leaderboardRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/demo', demoRoutes);
 app.use('/api/docs', docsRoutes);
-app.use('/api/webhook', webhookRoutes);
 app.use('/api/ppn', ppnRoutes);
-app.use('/api/alerts', alertRoutes);
-app.use('/api/ml', mlRoutes);
-app.use('/api/onchain', onchainRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/lending', lendingRoutes);
-app.use('/api/vaults', vaultRoutes);
-app.use('/api/portfolio', portfolioLimiter, portfolioRoutes);
 app.use('/api/dev', devRoutes);
 app.use('/api/predict', predictRoutes);
 app.use('/api/vol', volRoutes);
@@ -247,6 +222,16 @@ app.get('/', (_req, res) => res.redirect('/api/docs'));
 
 // Global error handler (must be after all routes)
 app.use(errorHandler);
+
+// Last-resort safety net for the public surface: log, never crash silently, on an
+// unhandled async error. Every fire-and-forget callsite is individually guarded;
+// this is defense-in-depth. Pair with the platform restart policy + /api/health.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
 
 app.listen(config.port, () => {
   console.log(`Pelagos backend running on port ${config.port}`);

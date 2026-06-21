@@ -298,6 +298,15 @@ export async function fetchEvents(params: {
   return data.map(toPolymarketEvent);
 }
 
+// Resolve the index of the YES outcome. Polymarket does NOT guarantee outcome
+// order is [Yes, No] — match the token whose outcome label is (case-insensitive)
+// 'yes' and read the price at that index; fall back to index 0 if unresolvable.
+function resolveYesIndex(market: PolymarketMarket): number {
+  const tokenIdx = market.tokens?.findIndex((t) => t.outcome?.trim().toLowerCase() === 'yes');
+  if (typeof tokenIdx === 'number' && tokenIdx >= 0) return tokenIdx;
+  return 0;
+}
+
 export async function getMarketProbability(conditionId: string): Promise<number | null> {
   const market = await fetchMarketByConditionId(conditionId);
   if (!market) return null;
@@ -305,7 +314,8 @@ export async function getMarketProbability(conditionId: string): Promise<number 
   const prices = parseOutcomePrices(market.outcomePrices);
   if (prices.length === 0) return null;
 
-  return prices[0]; // first outcome = YES
+  const idx = resolveYesIndex(market);
+  return prices[idx] ?? prices[0]; // YES outcome
 }
 
 export async function searchMarkets(
@@ -470,7 +480,10 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
     })() as number[];
     if (prices.length < 2) continue;
 
-    const yesProb = prices[0];
+    // Polymarket outcome order is not guaranteed [Yes, No]: resolve the YES
+    // index from the tokens' outcome labels, falling back to index 0.
+    const yesIdx = resolveYesIndex(m);
+    const yesProb = prices[yesIdx] ?? prices[0];
     if (!Number.isFinite(yesProb) || yesProb <= 0 || yesProb >= 1) continue;
 
     const wins = windowsFor(m.end_date_iso);
@@ -482,8 +495,10 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
       : 0;
 
     // Check both YES and NO sides; pick the first basket that accepts it.
+    // Each side carries its OWN signed daily change — the NO side moves
+    // opposite the YES side, so a NO leg must store the negated change.
     const sides: [number, number][] = [[yesProb, dailyAbs], [1 - yesProb, -dailyAbs]];
-    for (const [prob] of sides) {
+    for (const [prob, sideDailyAbs] of sides) {
       const tier = tierFor(prob);
       if (!tier) continue;
 
@@ -506,7 +521,7 @@ export async function getPolymarketBasketNAVs(): Promise<Map<string, BasketNAVRe
           eventId: m.event_id,
           probability: prob,
           volumeUsd: vol,
-          dailyChangePct: dailyAbs,
+          dailyChangePct: sideDailyAbs,
         });
         break; // place this market in one basket only
       }

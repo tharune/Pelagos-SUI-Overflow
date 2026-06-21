@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { requireAdmin } from '../middleware/requireAdmin';
 import {
   buildDistributionLaunchPlan,
   discoverDistributionCandidates,
@@ -122,8 +123,10 @@ router.get('/continuous/markets', async (_req, res) => {
   }
 });
 
-/** Add user-supplied liquidity to a market's pool (deepens the AMM backing). */
-router.post('/continuous/seed-liquidity', (req, res) => {
+/** Add user-supplied liquidity to a market's pool (deepens the AMM backing).
+ *  Admin-gated: this mutates the persisted pool backing every OTHER open/close
+ *  position quotes its slippage against, so it must not be anonymous. */
+router.post('/continuous/seed-liquidity', requireAdmin, (req, res) => {
   try {
     const marketId = String(req.body?.market_id ?? '');
     if (!marketId) throw new Error('market_id is required');
@@ -133,8 +136,10 @@ router.post('/continuous/seed-liquidity', (req, res) => {
   }
 });
 
-/** Resync every pool's backing to live depth (clears cached/seeded liquidity). */
-router.post('/continuous/seed-all', (_req, res) => {
+/** Resync every pool's backing to live depth (clears cached/seeded liquidity).
+ *  Admin-gated: resetting backing/k mid-flight corrupts the slippage charged on
+ *  every open position's close, so it must not be anonymous. */
+router.post('/continuous/seed-all', requireAdmin, (_req, res) => {
   try {
     res.json(resetPoolsToLive());
   } catch (err) {

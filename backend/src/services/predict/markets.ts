@@ -101,43 +101,47 @@ export async function buildMarketsDepth(underlying = 'BTC'): Promise<MarketsDept
     .sort((a, b) => a.expiry - b.expiry)
     .slice(0, MAX_MARKETS);
 
-  const markets: MarketRow[] = [];
-  for (const o of active) {
-    const [priceRes, sviRes] = await Promise.all([
-      predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
-      predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
-    ]);
-    if (!priceRes || !sviRes) continue; // skip: missing forward/SVI
-    const fwdRaw = forwardFromTick(priceRes);
-    const params = decodeSvi(sviRes);
-    if (fwdRaw === null || !params) continue;
+  // Each row is an independent price+SVI round-trip; fan them out concurrently and
+  // preserve the (expiry-sorted) ordering by mapping then filtering nulls.
+  const built = await Promise.all(
+    active.map(async (o): Promise<MarketRow | null> => {
+      const [priceRes, sviRes] = await Promise.all([
+        predictServer.oraclePriceLatest(o.oracle_id).catch(() => null),
+        predictServer.oracleSviLatest(o.oracle_id).catch(() => null),
+      ]);
+      if (!priceRes || !sviRes) return null; // skip: missing forward/SVI
+      const fwdRaw = forwardFromTick(priceRes);
+      const params = decodeSvi(sviRes);
+      if (fwdRaw === null || !params) return null;
 
-    const forwardUsd = fwdRaw / PRICE_SCALE;
-    const tYears = (o.expiry - now) / YEAR_MS;
-    if (!(tYears > 0)) continue;
+      const forwardUsd = fwdRaw / PRICE_SCALE;
+      const tYears = (o.expiry - now) / YEAR_MS;
+      if (!(tYears > 0)) return null;
 
-    const atmIv = sviImpliedVol(params, 0, tYears); // k = 0
-    // SVI smile skew: iv at ln(0.9) (−10%) minus iv at ln(1.1) (+10%), in vol pts.
-    const ivDown = sviImpliedVol(params, Math.log(1 - SKEW_MONEYNESS), tYears);
-    const ivUp = sviImpliedVol(params, Math.log(1 + SKEW_MONEYNESS), tYears);
-    const skew = ivDown - ivUp;
-    // ATM binary-up = N(d2) at K=forward => d2 = -0.5·iv·√T; P(settle > forward).
-    const sqrtT = Math.sqrt(tYears);
-    const d2Atm = atmIv > 0 && sqrtT > 0 ? -0.5 * atmIv * sqrtT : 0;
-    const binaryUpAtm = normalCdf(d2Atm);
+      const atmIv = sviImpliedVol(params, 0, tYears); // k = 0
+      // SVI smile skew: iv at ln(0.9) (−10%) minus iv at ln(1.1) (+10%), in vol pts.
+      const ivDown = sviImpliedVol(params, Math.log(1 - SKEW_MONEYNESS), tYears);
+      const ivUp = sviImpliedVol(params, Math.log(1 + SKEW_MONEYNESS), tYears);
+      const skew = ivDown - ivUp;
+      // ATM binary-up = N(d2) at K=forward => d2 = -0.5·iv·√T; P(settle > forward).
+      const sqrtT = Math.sqrt(tYears);
+      const d2Atm = atmIv > 0 && sqrtT > 0 ? -0.5 * atmIv * sqrtT : 0;
+      const binaryUpAtm = normalCdf(d2Atm);
 
-    markets.push({
-      oracle_id: o.oracle_id,
-      expiry: o.expiry,
-      tenor_label: tenorLabel(o.expiry - now),
-      forward_usd: forwardUsd,
-      atm_iv: atmIv,
-      skew,
-      binary_up_atm: binaryUpAtm,
-      min_strike_usd: o.min_strike / PRICE_SCALE,
-      tick_size_usd: o.tick_size / PRICE_SCALE,
-    });
-  }
+      return {
+        oracle_id: o.oracle_id,
+        expiry: o.expiry,
+        tenor_label: tenorLabel(o.expiry - now),
+        forward_usd: forwardUsd,
+        atm_iv: atmIv,
+        skew,
+        binary_up_atm: binaryUpAtm,
+        min_strike_usd: o.min_strike / PRICE_SCALE,
+        tick_size_usd: o.tick_size / PRICE_SCALE,
+      };
+    }),
+  );
+  const markets: MarketRow[] = built.filter((r): r is MarketRow => r !== null);
 
   const num = (k: string): number => {
     const n = Number((vaultRaw as Record<string, unknown>)[k]);

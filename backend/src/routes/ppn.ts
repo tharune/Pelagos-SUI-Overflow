@@ -18,6 +18,7 @@ import {
   listShares,
   vaultConfigured,
 } from '../services/vault';
+import { resolveVault } from '../services/vault/config';
 import { quoteTranches, basketSigmaFromLegs } from '../services/tranching';
 import { allocateNote } from '../services/ppn-allocator';
 
@@ -235,7 +236,7 @@ router.post('/onchain/confirm', async (req: Request, res: Response) => {
 /** redeem / divest / close all build a real vault redeem of the wallet's
  *  matching share receipt. */
 async function prepareRedeemHandler(req: Request, res: Response) {
-  if (!vaultConfigured()) return notConfigured(res);
+  if (!vaultConfigured('mUSDC') && !vaultConfigured('dUSDC')) return notConfigured(res);
   const { wallet_address, bundle_id, tranche_kind, share_id } = req.body as {
     wallet_address?: string;
     bundle_id?: string;
@@ -262,7 +263,7 @@ async function prepareRedeemHandler(req: Request, res: Response) {
     bundle_id: bundle_id ?? labelBundle ?? null,
     wallet_address,
     share_id: prep.share_id,
-    principal_usdc: prep.economics.shares,
+    principal_usdc: prep.economics.gross_usdc,
     strategy_fee_usdc: prep.economics.fee_usdc,
     expected_proceeds_usdc: prep.economics.net_usdc,
     sui_market_id: prep.vault_id,
@@ -440,22 +441,32 @@ router.post('/tranche/sell/rfq', async (req: Request, res: Response) => {
 router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    if (!vaultConfigured()) {
+    // Reject malformed addresses before any Sui RPC so a bad param returns a
+    // clean 400 instead of a raw RPC-driven 500.
+    if (!/^0x[0-9a-fA-F]{1,64}$/.test(walletAddress)) {
+      return res.status(400).json({ error: 'invalid address' });
+    }
+    if (!vaultConfigured('mUSDC') && !vaultConfigured('dUSDC')) {
       return res.json({ wallet_address: walletAddress, vaults: [], summary: { total_vaults: 0, total_principal: 0, total_value: 0, principal_protected: true } });
     }
-    const [state, shares, dbVaults] = await Promise.all([
+    const [musdcState, dusdcState, shares, dbVaults] = await Promise.all([
       readVaultState(),
+      vaultConfigured('dUSDC') ? readVaultState(resolveVault('dUSDC')) : Promise.resolve(null),
       listShares(walletAddress),
       getPPNVaultsByWallet(walletAddress).catch(() => [] as Awaited<ReturnType<typeof getPPNVaultsByWallet>>),
     ]);
     const ppnShares = shares.filter((s) => s.label.startsWith('ppn:'));
     const DAY = 86_400_000;
     const now = Date.now();
-    const rows = ppnShares.map((s) => {
+    const rows = await Promise.all(ppnShares.map(async (s) => {
       const parts = s.label.split(':');
       const bundleId = parts[2] ?? 'pelagos-vault';
       const trancheKind = parts[1] && parts[1] !== 'note' ? parts[1] : null;
-      const value = s.shares * state.share_price;
+      // Value each share at the share price of the rail that issued it. listShares
+      // tags every receipt with .currency; a dUSDC position must NOT be valued at
+      // the mUSDC share price.
+      const price = s.currency === 'dUSDC' && dusdcState ? dusdcState.share_price : musdcState.share_price;
+      const value = s.shares * price;
       // Recover the note's term / apy / created-at from the matching Supabase
       // vault row. The on-chain share carries principal but no maturity
       // metadata, so without this the portfolio (and its NaN-guarded UI) shows
@@ -465,12 +476,18 @@ router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
       );
       const createdMs = dbV?.created_at ? new Date(dbV.created_at).getTime() : NaN;
       const maturityMs = dbV?.maturity_date ? new Date(dbV.maturity_date).getTime() : NaN;
+      // Resolve a human bundle name from the Supabase bundle row; fall back to the
+      // raw bundle id so on-chain-only deploys still render a label, not blank.
+      const bundle = await getBundleById(bundleId).catch(() => null);
       return {
         share_id: s.share_id,
         vault_id: s.share_id,
         bundle_id: bundleId,
+        bundle_name: bundle?.name ?? bundleId,
         tranche_kind: trancheKind,
         principal_usdc: s.principal_usdc,
+        // The FE reads yield_deployed_usdc as the principal put to work in the note.
+        yield_deployed_usdc: s.principal_usdc,
         current_value: value,
         accrued_yield: value - s.principal_usdc,
         status: 'active',
@@ -478,14 +495,18 @@ router.get('/portfolio/:walletAddress', async (req: Request, res: Response) => {
         maturity_date: dbV?.maturity_date ?? null,
         days_elapsed: Number.isFinite(createdMs) ? Math.max(0, (now - createdMs) / DAY) : 0,
         days_remaining: Number.isFinite(maturityMs) ? Math.max(0, (maturityMs - now) / DAY) : 0,
-        estimated_apy: dbV?.estimated_apy ?? null,
+        // Default to the createPPNVault note APY (8) when no Supabase row matches,
+        // so on-chain-only deploys don't collapse every APY to 0%.
+        estimated_apy: dbV?.estimated_apy ?? 8,
       };
-    });
+    }));
     const totalPrincipal = rows.reduce((sum, r) => sum + r.principal_usdc, 0);
     const totalValue = rows.reduce((sum, r) => sum + r.current_value, 0);
     res.json({
       wallet_address: walletAddress,
-      share_price: state.share_price,
+      // No top-level share_price: positions can span both rails (mUSDC + dUSDC),
+      // so a single share price is meaningless. Each row is valued at its own
+      // rail's price above. The FE reads per-row + summary, never this field.
       vaults: rows,
       summary: {
         total_vaults: rows.length,

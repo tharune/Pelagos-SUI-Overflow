@@ -6,14 +6,17 @@ const router = Router();
 /**
  * GET /api/options/chain?underlying=BTC
  *
- * Live European options CHAIN synthesized off the DeepBook Predict SVI vol
- * surface. For each active expiry we price a CALL + PUT at every strike on a
- * 0.8..1.2 moneyness grid using Black-76 on the oracle's live on-chain forward
- * and the SVI smile IV at that strike, with full analytic greeks. Each strike is
- * marked `tradeable` when it snaps onto the oracle's on-chain strike grid, so the
- * UI can route a real binary/range order to Predict there. The `source` field
- * documents that premia are Black-76 *derived* from the live surface (real IVs,
- * on-chain forward) — not exchange-quoted option prices.
+ * Live BTC options CHAIN priced on the REAL DeepBook Predict range liquidity (not
+ * a model). For each active expiry we lay strikes on a ±3σ grid (scaled by the
+ * implied move, snapped to the oracle's on-chain grid) and price a CALL [K, far]
+ * and PUT [floor, K] range leg at 1 contract in ONE batched on-chain devInspect:
+ * ask = mint_cost, bid = redeem_payout, mid = (bid+ask)/2. The IV column is the
+ * oracle's live SVI smile (context only) and the greeks are the digital risk
+ * sensitivities off that surface, bounded for display. Each strike is `tradeable`
+ * when its live ask sits inside the protocol's mintable [2%,98%] window, so the UI
+ * can route a real range order to Predict there. The `source` field
+ * ('deepbook-predict-range-onchain') documents that premia are the protocol's own
+ * range prices — NOT Black-76 and NOT exchange-quoted option prices.
  */
 router.get('/chain', async (req: Request, res: Response) => {
   try {

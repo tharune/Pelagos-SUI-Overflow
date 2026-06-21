@@ -27,6 +27,29 @@ function parseExpiryPref(v: unknown): ExpiryPref | undefined {
   return undefined;
 }
 
+// Snap a requested notional to a small bucket set BEFORE it reaches quoteStrategy,
+// which uses notionalUsd in its 8s quote-cache key + drives on-chain devInspect
+// fan-out. An attacker passing arbitrary/fractional notionals would otherwise bust
+// the cache on every request and force unbounded devInspect calls. Buckets keep
+// the quote economically meaningful while collapsing the key space.
+const NOTIONAL_BUCKETS = [10, 100, 1000, 10_000, 100_000];
+function bucketNotionalUsd(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 100;
+  const clamped = Math.min(NOTIONAL_BUCKETS[NOTIONAL_BUCKETS.length - 1], Math.max(NOTIONAL_BUCKETS[0], n));
+  // Nearest bucket in log space (buckets are geometric).
+  let best = NOTIONAL_BUCKETS[0];
+  let bestDist = Infinity;
+  for (const b of NOTIONAL_BUCKETS) {
+    const d = Math.abs(Math.log(clamped) - Math.log(b));
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
 /** GET /api/deepbook/strategies — the prebuilt strategy catalogue. */
 router.get('/strategies', (_req: Request, res: Response) => {
   try {
@@ -59,7 +82,7 @@ router.post('/quote', async (req: Request, res: Response) => {
     if (!strategyId) {
       return res.status(400).json({ error: 'strategy_id is required' });
     }
-    const notionalUsd = Math.max(1, Number(body.notional_usd ?? body.notional ?? 100));
+    const notionalUsd = bucketNotionalUsd(body.notional_usd ?? body.notional ?? 100);
     const out = await quoteStrategy({
       strategyId,
       notionalUsd,
@@ -114,13 +137,20 @@ router.get('/distribution', async (_req: Request, res: Response) => {
     const out = await quoteStrategy({ strategyId: 'range-plateau', notionalUsd: 100, expiryPref: 'far' });
     const buckets = ((out.strip?.buckets ?? []) as DistBucket[]).filter((b) => b.tradeable && Number(b.quantity) > 0);
     const raw = buckets.map((b) => {
-      const qty = Number(b.quantity) / 1e6;
-      const cost = Number(b.mint_cost_raw) / 1e6;
+      const qtyRaw = Number(b.quantity);
+      const costRaw = Number(b.mint_cost_raw);
+      // Coerce defensively: a non-finite qty/cost (malformed on-chain field) must
+      // NOT propagate NaN into prob — NaN is truthy, so a NaN sum would slip past
+      // a `|| 1` guard and blank every band, vanishing the landing hero bars.
+      const qty = Number.isFinite(qtyRaw) ? qtyRaw / 1e6 : 0;
+      const cost = Number.isFinite(costRaw) ? costRaw / 1e6 : 0;
       // For a $1 binary, per-contract cost ≈ P(BTC settles in this band).
-      return { lower_usd: b.lower_usd, higher_usd: b.higher_usd, prob: qty > 0 ? Math.max(0, cost / qty) : 0 };
+      const prob = qty > 0 ? Math.max(0, cost / qty) : 0;
+      return { lower_usd: b.lower_usd, higher_usd: b.higher_usd, prob: Number.isFinite(prob) ? prob : 0 };
     });
-    const sum = raw.reduce((a, b) => a + b.prob, 0) || 1;
-    const bands = raw.map((b) => ({ ...b, prob: b.prob / sum }));
+    const sum = raw.reduce((a, b) => a + b.prob, 0);
+    const denom = Number.isFinite(sum) && sum > 0 ? sum : 1;
+    const bands = raw.map((b) => ({ ...b, prob: b.prob / denom }));
     res.json({
       source: out.source,
       oracle_id: out.oracle_id,

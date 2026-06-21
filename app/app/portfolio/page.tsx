@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // Portfolio — a unified position + P&L view across every product (baskets, risk
 // slices, protected notes, distribution, structured sim positions, lending),
-// tracking mUSDC + dUSDC at 1:1 USD, plus a portfolio-driven strategy backtest.
+// tracking mUSDC + dUSDC at 1:1 USD.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -24,7 +24,6 @@ import {
   clearVirtualPositionsByUiBundleId,
   type GroupedVirtualPosition,
 } from "../_lib/virtual-positions";
-import { StrategyBacktestPanel, type PortfolioMix } from "../_components/strategy-backtest-panel";
 import { History } from "./_history";
 import {
   fetchContinuousPositions,
@@ -33,7 +32,7 @@ import {
 import { useLendingSnapshot } from "../_lib/lending-client";
 import { fetchSimPositions, simSettle, type SimPosition } from "../_lib/sim-client";
 
-type View = "positions" | "backtest" | "history";
+type View = "positions" | "history";
 
 export default function PortfolioPage() {
   const { mode } = useMode();
@@ -151,21 +150,6 @@ export default function PortfolioPage() {
     : 0;
   const onchainBasketPnl = 0;
 
-  // Map live holdings onto backtestable strategy classes (value-weighted) so the
-  // Backtests tab can replay "your portfolio" on real history.
-  const portfolioMix: PortfolioMix = React.useMemo(() => {
-    const simLongVol = openSimPositions.filter((p) => p.product !== "option").reduce((s, p) => s + p.premium_usd, 0);
-    const simDirectional = openSimPositions.filter((p) => p.product === "option").reduce((s, p) => s + p.premium_usd, 0);
-    return [
-      // Convex / long-gamma sleeve: vol strips, principal-protected notes, μ/σ distributions.
-      { id: "long-vol-straddle", weight: simLongVol + effectivePpnValue + distValue, label: "vol strips, notes & distributions" },
-      // Carry / range sleeve: risk slices earn a spread and are mostly range-bound.
-      { id: "short-vol-condor", weight: effectiveTrancheValue, label: "risk slices · carry" },
-      { id: "btc-momentum", weight: simDirectional, label: "directional options" },
-      { id: "event-basket", weight: onchainBasketValue, label: "event baskets" },
-    ].filter((m) => m.weight > 0);
-  }, [openSimPositions, effectivePpnValue, effectiveTrancheValue, distValue, onchainBasketValue]);
-
   // Top-line value + P&L. Every term is already 0 when disconnected (walletReady
   // gating), so the headline collapses to 0 without a separate guard.
   const displayTotal = walletReady
@@ -223,6 +207,18 @@ export default function PortfolioPage() {
     }
   }, [hydratePortfolio, usdc, dusdc]);
 
+  // On an A->B account switch the address changes but `walletReady` stays true,
+  // so account A's reducer state + local position lists would flash through the
+  // (still-true) walletReady gates until hydratePortfolio resolves for B. Clear
+  // them synchronously the instant the address changes so the stale account
+  // never renders. The disconnect path (address -> undefined) is already safe
+  // via walletReady gating, and this clear is harmless there too.
+  useEffect(() => {
+    dispatch({ type: "reset" });
+    setDistPositions([]);
+    setSimPositions([]);
+  }, [appWalletAddress, dispatch]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -256,6 +252,12 @@ export default function PortfolioPage() {
     });
     setRedeemBusy(bundleId);
     try {
+      // TODO(settlement-currency): pass `currency: <position's settlement currency>`
+      // so a dUSDC-settled basket deposit redeems against the dUSDC vault. The
+      // basket position objects (VirtualPosition / BasketPosition / on-chain PBU
+      // balance) do not currently persist the deposit currency, so we cannot
+      // determine it here and fall back to the mUSDC default. Thread it once the
+      // position carries its settlement currency (recorded at deposit time).
       await redeemFromBundle({ wallet: walletSigner, bundleId, amountTokens: tokens });
       clearVirtualPositionsByUiBundleId(appWalletAddress, bundleId, uiBundleId);
       await hydratePortfolio();
@@ -289,6 +291,12 @@ export default function PortfolioPage() {
     });
     setRedeemBusy(rowKey);
     try {
+      // TODO(settlement-currency): pass `currency: <position's settlement currency>`
+      // so a dUSDC-settled note/tranche redeems against the dUSDC vault. The PPN
+      // portfolio rows (PpnVault / TranchePosition, hydrated from /api/ppn/portfolio)
+      // do not currently expose the settlement currency, so we cannot determine it
+      // here and fall back to the mUSDC default. Thread it once the portfolio entry
+      // carries its settlement currency (recorded at open time).
       const ids = opts.vaultIds?.filter(Boolean) ?? [];
       if (ids.length > 0) {
         for (const vaultId of ids) {
@@ -353,7 +361,7 @@ export default function PortfolioPage() {
     { id: "ppn", label: "Protected Notes", description: "Principal-protected notes", value: effectivePpnValue + ppnAccruedYield, color: C.violet, href: "/app/ppn" },
     { id: "distribution", label: "Distribution Markets", description: "Continuous μ/σ · collateral at risk", value: distValue, color: C.coral, href: "/app/distribution" },
     ...(simValue > 0
-      ? [{ id: "structured", label: "Structured Positions", description: "Strips, options & vol · Pelagos USDC", value: simValue, color: C.green }]
+      ? [{ id: "structured", label: "Structured Positions", description: "Strips, options & vol · mUSDC", value: simValue, color: C.green }]
       : []),
     { id: "lending", label: "Lending", description: "Sui USDC market rate", value: walletReady ? totals.lendValue : 0, color: C.blue, metaOverride: lendingApyLabel },
   ];
@@ -464,23 +472,20 @@ export default function PortfolioPage() {
         <div className="pf-head" style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 20, marginBottom: 22, paddingBottom: 16, borderBottom: `0.5px solid ${C.border}` }}>
           <div>
             <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: "0.14em", color: C.tealLight, fontWeight: 700, marginBottom: 8, textTransform: "uppercase" }}>
-              {view === "positions" ? "Account" : view === "backtest" ? "Strategy lab" : "Ledger"}
+              {view === "positions" ? "Account" : "Ledger"}
             </div>
             <h1 style={{ margin: 0, color: C.textPrimary, fontFamily: FD, fontSize: 30, lineHeight: 1.05, letterSpacing: "-0.02em", fontWeight: 600, display: "flex", alignItems: "center", gap: 12 }}>
-              {view === "positions" ? "Portfolio" : view === "backtest" ? "Backtests" : "Activity"}
+              {view === "positions" ? "Portfolio" : "Activity"}
             </h1>
             <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: FS, marginTop: 8, maxWidth: 680, lineHeight: 1.55 }}>
               {view === "positions"
                 ? "Your holdings, live mark-to-market value, and a clean P&L summary."
-                : view === "backtest"
-                  ? "Replay each strategy class against real Coinbase / Polymarket history — a transparent proxy, not a forecast."
-                  : "A chronological ledger of buys, exits, and note actions."}
+                : "A chronological ledger of buys, exits, and note actions."}
             </div>
           </div>
           <div className="pf-tabs">
             {([
               { id: "positions", label: "Holdings" },
-              { id: "backtest", label: "Backtests" },
               { id: "history", label: "History" },
             ] as const).map((t) => (
               <button
@@ -495,9 +500,7 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        {view === "backtest" ? (
-          <StrategyBacktestPanel portfolioMix={portfolioMix} />
-        ) : view === "history" ? (
+        {view === "history" ? (
           <History walletAddress={appWalletAddress} connected={walletReady} />
         ) : (
           <>
@@ -695,7 +698,6 @@ export default function PortfolioPage() {
                 const liveMatchById = basketState.status === "ok" ? basketState.baskets.find((b) => b.id === labelId) : null;
                 const liveMaturityMs = liveMatchById?.daysLeft != null ? Date.now() + liveMatchById.daysLeft * 86_400_000 : null;
                 const effectiveMaturityMs = liveMaturityMs ?? maturityAt ?? null;
-                const matured = status === "resolved" || (effectiveMaturityMs != null && effectiveMaturityMs <= renderNow);
                 const maturityDate = liveMatchById?.date
                   ? liveMatchById.date
                   : maturityAt
@@ -704,6 +706,14 @@ export default function PortfolioPage() {
                         return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
                       })()
                     : null;
+                // Anchor MATURED/countdown to the SAME local-midnight instant the
+                // DATE label renders, so a wallet west of UTC can't show
+                // "MATURES JUL 15" alongside "MATURED" (the raw UTC instant falls
+                // on the prior local evening). Falls back to the raw instant when
+                // the label is a pre-formatted string (live baskets carry daysLeft).
+                const localMaturityMs =
+                  maturityDate instanceof Date ? maturityDate.getTime() : effectiveMaturityMs;
+                const matured = status === "resolved" || (localMaturityMs != null && localMaturityMs <= renderNow);
                 const maturityLabel =
                   typeof maturityDate === "string"
                     ? maturityDate
@@ -716,8 +726,8 @@ export default function PortfolioPage() {
                 const daysLeftMs =
                   liveMatchById?.daysLeft != null
                     ? liveMatchById.daysLeft * 86_400_000
-                    : maturityAt != null
-                      ? Math.max(0, maturityAt - renderNow)
+                    : localMaturityMs != null
+                      ? Math.max(0, localMaturityMs - renderNow)
                       : null;
                 const closesInLabel =
                   daysLeftMs == null
@@ -1021,7 +1031,7 @@ export default function PortfolioPage() {
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `0.5px solid ${C.border}` }}>
-                        <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · PELAGOS USDC</div>
+                        <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FM, letterSpacing: "0.06em" }}>OPEN · mUSDC</div>
                         <button onClick={() => settleSimPosition(p.sim_id)} disabled={simBusy === p.sim_id} style={{ padding: "7px 16px", fontSize: 12, fontFamily: FD, fontWeight: 500, letterSpacing: "0.02em", borderRadius: 8, border: `0.5px solid ${C.blue}`, background: `${C.blue}24`, color: C.blue, cursor: simBusy === p.sim_id ? "default" : "pointer", opacity: simBusy === p.sim_id ? 0.6 : 1 }}>{simBusy === p.sim_id ? "Settling…" : "Settle →"}</button>
                       </div>
                     </div>

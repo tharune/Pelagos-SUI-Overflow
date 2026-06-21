@@ -1141,7 +1141,11 @@ export default function HomePage() {
 
           /* ---- closing CTA (large bordered panel, fills the width) ---- */
           .lp-cta { text-align: center; }
-          .lp-cta-panel { border: 0.5px solid ${C.border}; border-radius: 24px; background: radial-gradient(130% 150% at 50% 0%, ${C.tealLight}10, transparent 58%), ${C.panelGradient}; padding: 92px 64px 96px; position: relative; overflow: hidden; box-shadow: 0 34px 90px rgba(0,0,0,0.32); }
+          /* Quiet, evenly-blended surface — a hair above the page colour with a
+             soft even hairline and nothing else. No glow, no accent line, no
+             drop shadow: it reads as a calm contained region, not a card that
+             pops off the page. Uniform fill means every edge stays clean. */
+          .lp-cta-panel { position: relative; border: 1px solid ${C.border}; border-radius: 24px; background: ${C.surface}; padding: 92px 64px 96px; overflow: hidden; }
           .lp-cta-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
           .lp-cta-inner h2 { margin: 16px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 54px; line-height: 1.04; letter-spacing: -0.038em; font-weight: 600; font-feature-settings: "ss01"; text-wrap: balance; }
           .lp-cta-inner p { margin: 22px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 16.5px; line-height: 1.6; max-width: 560px; text-wrap: pretty; }

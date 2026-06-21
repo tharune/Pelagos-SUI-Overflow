@@ -104,7 +104,7 @@ export interface DepositPrepareResponse {
   /** base64 transaction bytes for the wallet to sign (non-custodial flow). */
   tx_bytes?: string;
   sender?: string;
-  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
+  dry_run?: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
 export interface DepositConfirmResponse {
@@ -131,7 +131,7 @@ export interface RedeemPrepareResponse {
   transaction_digest?: string;
   tx_bytes?: string;
   sender?: string;
-  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
+  dry_run?: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
 export interface RedeemConfirmResponse {
@@ -201,6 +201,11 @@ export async function confirmDeposit(args: {
   feeUsdc: number;
 }): Promise<DepositConfirmResponse> {
   const uuid = await resolveBundleUuid(args.bundleId);
+  // `tokens_minted` / `issue_price` / `fee_usdc` are sent as ADVISORY values
+  // (computed from the /prepare quote for optimistic UI continuity only). The
+  // backend treats them as hints and re-derives the authoritative figures from
+  // the on-chain transaction effects of `signature` — nothing trust-bearing
+  // here depends on the echoed numbers. (Backend enforcement is a separate fix.)
   return postJson<DepositConfirmResponse>("/api/deposit/confirm", {
     bundle_id: uuid,
     wallet_address: args.walletAddress,
@@ -216,11 +221,15 @@ export async function prepareRedeem(args: {
   bundleId: string;
   walletAddress: string;
   amountTokens?: number;
+  /** Settlement currency of the position — routes to the mUSDC or dUSDC vault.
+   *  Must match the currency the deposit was opened with. Defaults to mUSDC. */
+  currency?: "mUSDC" | "dUSDC";
 }): Promise<RedeemPrepareResponse> {
   const uuid = await resolveBundleUuid(args.bundleId);
   return postJson<RedeemPrepareResponse>("/api/deposit/redeem/prepare", {
     bundle_id: uuid,
     wallet_address: args.walletAddress,
+    currency: args.currency ?? "mUSDC",
     ...(args.amountTokens != null ? { amount_tokens: args.amountTokens } : {}),
   });
 }
@@ -321,6 +330,9 @@ export async function redeemFromBundle(args: {
   wallet: WalletSigner;
   bundleId: string;
   amountTokens?: number;
+  /** Settlement currency of the position — routes to the mUSDC or dUSDC vault.
+   *  Must match the currency the deposit was opened with. Defaults to mUSDC. */
+  currency?: "mUSDC" | "dUSDC";
   confirmationTimeoutMs?: number;
   onStage?: (stage: "preparing" | "signing" | "confirming" | "persisting") => void;
 }): Promise<{
@@ -332,7 +344,7 @@ export async function redeemFromBundle(args: {
   const owner = requireWallet(wallet);
 
   args.onStage?.("preparing");
-  const prepare = await prepareRedeem({ bundleId, walletAddress: owner, amountTokens: args.amountTokens });
+  const prepare = await prepareRedeem({ bundleId, walletAddress: owner, amountTokens: args.amountTokens, currency: args.currency });
   if (!prepare.tx_bytes) {
     throw new DepositError("No redeemable on-chain position for this wallet.", 404, prepare);
   }

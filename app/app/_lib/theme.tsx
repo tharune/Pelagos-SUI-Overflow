@@ -120,8 +120,9 @@ export function useTheme(): ThemeContextValue {
  * Inline bootstrap script for the root layout. Applied BEFORE React renders
  * so that `data-theme` is correct on the very first paint — no flash.
  *
- * Intentionally tiny; reads localStorage, falls back to the OS preference,
- * sets the attribute, done.
+ * Intentionally tiny; reads localStorage (and a ?theme= override), and
+ * otherwise defaults to dark. Pelagos is dark-by-default — we do NOT follow
+ * the OS preference, so there is no matchMedia branch here.
  */
 export const THEME_BOOTSTRAP_SCRIPT = `
 (function(){try{
@@ -130,8 +131,7 @@ export const THEME_BOOTSTRAP_SCRIPT = `
   try { t = localStorage.getItem(k); } catch(e) {}
   try { var u = new URLSearchParams(location.search).get('theme'); if (u === 'light' || u === 'dark') t = u; } catch(e) {}
   if (t !== 'light' && t !== 'dark') {
-    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    t = prefersDark ? 'dark' : 'dark';
+    t = 'dark';
   }
   document.documentElement.setAttribute('data-theme', t);
 }catch(e){document.documentElement.setAttribute('data-theme','dark');}})();

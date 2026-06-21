@@ -1314,7 +1314,9 @@ function TrancheBuyPanel({
         createdAt: Date.now(),
         bundleName: bundle.id,
       });
-      void usdc.refresh();
+      // Refresh the rail that was actually charged so the balance/gate isn't
+      // stale for a dUSDC trade (the buy ticket can settle in either currency).
+      void (currency === "mUSDC" ? usdc.refresh() : dusdc.refresh());
       // Re-hydrate from the backend so the portfolio's tranche list
       // picks up the freshly-confirmed note without a tab switch or
       // reload. The optimistic `tranche/deposit` dispatch can't be
@@ -1383,6 +1385,13 @@ function TrancheBuyPanel({
       let lastDigest: string | null = null;
       let proceeds = 0;
       for (const q of executable) {
+        // TODO(settlement-currency): pass `currency: <held tranche's settlement
+        // currency>` so a dUSDC-settled tranche redeems against the dUSDC vault.
+        // The RFQ quote (TrancheSellRfqQuote) does not expose the settlement
+        // currency, and the in-component `currency` state drives the OPEN ticket
+        // (not necessarily what this held lot was opened with), so we cannot
+        // determine it here and fall back to the mUSDC default. Thread it once
+        // the RFQ/position carries its settlement currency.
         const res = q.matured
           ? await ppnRedeem({ wallet, vaultId: q.vault_id })
           : await ppnCloseEarly({ wallet, vaultId: q.vault_id });
@@ -1404,7 +1413,11 @@ function TrancheBuyPanel({
       // Surface the on-chain sell digest so the explorer link renders after tx.
       setTxStage("done");
       setTxSignature(lastDigest);
+      // The held lot's settlement currency isn't tracked on the RFQ quote (see
+      // the TODO above), so refresh both rails — whichever vault paid out is
+      // reflected without guessing the wrong one.
       void usdc.refresh();
+      void dusdc.refresh();
     } catch (err) {
       setSellError(err instanceof PpnError ? err.message : friendlyWalletError(err));
     } finally {
@@ -1624,7 +1637,7 @@ function TrancheBuyPanel({
                       textTransform: "none",
                       cursor: "pointer",
                     }}
-                    title={`Max tradeable: ${Math.min(liveUsdc, capacityUsdc).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC`}
+                    title={`Max tradeable: ${Math.min(liveUsdc, capacityUsdc).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency}`}
                   >
                     MAX
                   </button>
@@ -1663,7 +1676,7 @@ function TrancheBuyPanel({
                 fontWeight: 400,
               }}
             >
-              USDC
+              {currency}
             </span>
           </div>
         </div>
@@ -1901,6 +1914,7 @@ function TrancheBuyPanel({
               position: "fixed",
               inset: 0,
               background: "rgba(2, 6, 12, 0.78)",
+              WebkitBackdropFilter: "blur(3px)",
               backdropFilter: "blur(3px)",
               zIndex: 60,
               display: "flex",
@@ -2013,7 +2027,7 @@ function TrancheBuyPanel({
                               ${q.indicative_usdc.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                               {q.indicative_price_pct != null && (
                                 <span style={{ color: C.textMuted, marginLeft: 4 }}>
-                                  · {(q.indicative_price_pct * 100).toFixed(1)}% FV
+                                  · {q.indicative_price_pct.toFixed(1)}% of face
                                 </span>
                               )}
                             </div>

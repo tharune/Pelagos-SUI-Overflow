@@ -69,6 +69,9 @@ export interface OptionQuote {
   vega: number;
   theta: number;
   tradeable: boolean; // ask inside the protocol's [2%,98%] mintable window
+  /** true only when the leg got a live on-chain price; false = unpriced (ok:false),
+   *  so the FE can render "— / no quote" instead of a misleading real-looking $0. */
+  quoted: boolean;
   /** raw on-chain band so the UI can route a real order at this strike/side. */
   lower_strike: string;
   higher_strike: string;
@@ -315,7 +318,8 @@ async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
         const ask = Math.min(1, Math.max(0, askRaw));
         const bid = Math.min(ask, Math.max(0, bidRaw));
         const mid = ask > 0 || bid > 0 ? (ask + bid) / 2 : 0;
-        const tradeable = !!(p && p.ok) && ask >= MIN_MINTABLE && ask <= MAX_MINTABLE;
+        const quoted = !!(p && p.ok);
+        const tradeable = quoted && ask >= MIN_MINTABLE && ask <= MAX_MINTABLE;
         return {
           mid: Number(mid.toFixed(4)),
           bid: Number(bid.toFixed(4)),
@@ -326,6 +330,7 @@ async function buildOptionsChain(underlying = 'BTC'): Promise<OptionsChain> {
           vega: Number(g.vega.toFixed(4)),
           theta: Number(g.theta.toFixed(4)),
           tradeable,
+          quoted,
           lower_strike: lower,
           higher_strike: higher,
         };

@@ -167,10 +167,9 @@ export interface OrderQuote {
   warehouseFraction: number;
 }
 
-const PROFILE_STRESS_MULT: Record<90 | 70 | 50, number> = {
-  90: 0.9,  // ~95 confidence
-  70: 1.15, // ~50 confidence
-  50: 1.4,  // ~5 confidence
+const PROFILE_STRESS_MULT: Record<90 | 50, number> = {
+  90: 0.9, // ~95 confidence
+  50: 1.4, // ~5 confidence
 };
 
 // ---------------------------------------------------------------------------
@@ -427,10 +426,21 @@ export function computeBasketStats(
   daysLeft: number,
   tier: 90 | 50,
 ): BasketStats {
+  // Detect a roster that carries no real weight up front: if every leg's
+  // weight is 0 (or absent), the normalisation `|| 1` below would silently
+  // collapse mu→0 and emit a PHANTOM quote (nav clamped to 0.001, sigma to
+  // 0.003) for a basket that is actually unpriceable. Route it to the same
+  // synthetic tier-typical-dispersion fallback as the empty-roster case so
+  // the page shows honest placeholder stats rather than a fabricated price.
+  const weightSum = (markets ?? []).reduce(
+    (a, m) => a + Math.max(0, m.weight),
+    0,
+  );
+
   // Defensive: if no legs given, fall back to a tier-typical dispersion.
   // This matches the worst-case σ the live pipeline produces for a
   // basket with MIN_BASKET_LEGS near-equal legs at that NAV.
-  if (!markets || markets.length === 0) {
+  if (!markets || markets.length === 0 || weightSum <= 0) {
     const p = Math.max(0.01, Math.min(0.99, nav));
     const sigma = Math.sqrt((p * (1 - p)) / Math.max(1, totalLegs));
     return {
@@ -888,10 +898,15 @@ function priceOneTranche(
   // (services/tranching.ts MAX_EXPECTED_YIELD_PCT) so the buy panel and the
   // composer never show divergent headline APYs.
   const MAX_EXPECTED_YIELD_PCT = 300;
+  // Lottery cap clamps YTM to a multiple of the MEAN return. Floor the mean
+  // at 0 before scaling: a negative mean (fair < ask, possible after the
+  // discount floor binds) would otherwise make `CAP × mean` MORE negative and
+  // invert the cap, dragging the headline below the honest mean instead of
+  // bounding it above. `CAP × max(0, mean)` keeps the cap a genuine ceiling.
   const expectedApyPct = Math.min(
     MAX_EXPECTED_YIELD_PCT,
     ytmApyPct,
-    Math.max(meanApyTrueTau, LOTTERY_UPSIDE_CAP * meanApyTrueTau),
+    Math.max(meanApyTrueTau, LOTTERY_UPSIDE_CAP * Math.max(0, meanApyTrueTau)),
   );
   // `expectedReturnApyPct` is the MEAN-based risk-neutral expected
   // annualised return on the TRUE horizon (no 30-day floor). Shown
@@ -1127,7 +1142,7 @@ export function quoteTrancheOrder(
     ? Math.max(1 / 365, ctx.stats.daysLeft / 365)
     : 0.25;
   const profileStressModel = ctx?.stats
-    ? PROFILE_STRESS_MULT[ctx.stats.tier]
+    ? PROFILE_STRESS_MULT[ctx.stats.tier] ?? 1
     : 1;
   const sigmaStressModel = ctx?.stats
     ? Math.max(0.7, Math.min(1.8, 0.6 + 12 * Math.max(0, ctx.stats.sigma)))

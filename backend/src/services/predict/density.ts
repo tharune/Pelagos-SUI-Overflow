@@ -30,6 +30,11 @@ import { previewTrade } from './index';
 const PRICE_SCALE = 1_000_000_000; // 1e9 strike / forward / SVI fixed-point
 const YEAR_MS = 365.25 * 24 * 3600 * 1000;
 
+// The previewTrade cross-check below is a per-trade-preview diagnostic. It is
+// high-volume and only useful when debugging the SVI/preview reconciliation, so
+// gate it behind LOG_LEVEL=debug to keep production (Akash) logs clean.
+const DEBUG_LOGS = process.env.LOG_LEVEL === 'debug';
+
 export interface ImpliedDensity {
   oracle_id: string;
   expiry: number;
@@ -113,7 +118,11 @@ export async function buildImpliedDensity(
   // 3) Strike grid — span ±~4.5σ of the tenor's own implied move (capped at the
   // requested spanPct), so short-dated tenors fill the grid as a proper bell
   // instead of collapsing to a spike on a too-wide fixed window.
-  const n = Math.max(11, Math.floor(steps));
+  // Clamp `steps` defensively: a non-numeric value (e.g. ?steps=abc) would yield
+  // NaN -> new Array(NaN) (RangeError -> opaque 500), and a huge value (1e9) would
+  // allocate gigantic arrays. Floor to a sane [11, 401] window, default on NaN.
+  const stepsNum = Number(steps);
+  const n = Number.isFinite(stepsNum) ? Math.min(401, Math.max(11, Math.floor(stepsNum))) : 121;
   const sigmaFrac = Math.max(atmIv * sqrtT, 1e-6);
   const span = Math.min(spanPct, Math.min(0.4, Math.max(0.02, 4.5 * sigmaFrac)));
   const lo = forwardUsd * (1 - span);
@@ -226,5 +235,7 @@ async function crossCheckPreviewTrade(
           : ' previewTrade=n/a'),
     );
   }
-  console.log(`[density] previewTrade cross-check ${oracle.oracle_id.slice(0, 10)}…: ${lines.join('  ')}`);
+  if (DEBUG_LOGS) {
+    console.log(`[density] previewTrade cross-check ${oracle.oracle_id.slice(0, 10)}…: ${lines.join('  ')}`);
+  }
 }

@@ -49,7 +49,7 @@ export interface StripQuote {
 export interface PreparedTx {
   tx_bytes: string;
   sender: string;
-  dry_run: { ok: boolean; status: string; error?: string };
+  dry_run: { ok: boolean | null; status: string; error?: string };
 }
 
 export interface PpnQuote {
@@ -78,49 +78,6 @@ export interface BasketRecipe {
   description: string;
   sigma_pct: number;
   n: number;
-}
-
-/** Indexer-replay backtest — the simulation results for the vault strategy.
- *  house{} is the headline winning side (PLP counterparty earning the spread). */
-export interface BacktestReport {
-  generated_at: string;
-  method: string;
-  server: string;
-  params: { sample_requested: number; n_buckets: number; sigma_source: string; sigma_frac_of_forward: number | null; span_sigma: number; price_limit_per_oracle: number };
-  universe: { settled_btc_with_settlement_price: number };
-  epochs: number;
-  skipped_no_history: number;
-  buyer: {
-    hit_rate: number;
-    mean_epoch_return: number;
-    stdev_epoch_return: number;
-    sharpe_per_epoch: number;
-    final_rolled_return: number;
-    max_drawdown: number;
-    equity_curve: number[];
-    cum_return_curve: number[]; // fixed-stake cumulative P&L, starts at 0
-  };
-  house: {
-    mean_epoch_return: number;
-    stdev_epoch_return: number;
-    sharpe_per_epoch: number;
-    final_rolled_return: number;
-    max_drawdown: number;
-    equity_curve: number[];
-    cum_return_curve: number[]; // fixed-stake cumulative P&L, starts at 0
-    cum_final_return: number;
-    avg_spread_captured_usd: number;
-  };
-  spread: { avg_round_trip_usd: number; avg_frac_of_cost: number; avg_entry_cost_usd: number };
-  // implied (SVI ATM near activation) vs realized vol; vol_risk_premium > 0 => house edge.
-  vol: {
-    avg_implied_iv: number;
-    avg_realized_iv: number;
-    vol_risk_premium: number;
-    scatter: Array<{ implied_iv: number; realized_iv: number }>;
-  };
-  calibration: { bins: Array<{ p_mid: number; p_predicted_avg: number; freq_realized: number; n: number }>; brier: number };
-  sample_epochs: Array<{ forward_usd: number; settlement_usd: number; cost_usd: number; payout_usd: number; hit: boolean }>;
 }
 
 /** Live SVI implied-vol surface (BTC-only on testnet) — exact backend shape. */
@@ -207,7 +164,6 @@ export const ppnQuote = (b: { asset?: string; oracle_id?: string; budget_usd: nu
   post<PpnQuote>("/api/predict/ppn/quote", b);
 export const trancheQuote = (b: { asset?: string; oracle_id?: string; budget_usd: number; sigma_usd?: number; n?: number; sender?: string }) =>
   post<{ tranches: TrancheProfile[]; oracle_id: string; expiry: string; forward_usd: number }>("/api/predict/tranche/quote", b);
-export const fetchBacktest = () => get<BacktestReport>("/api/predict/backtest");
 export const fetchVolSurface = (underlying = "BTC") =>
   get<VolSurface>(`/api/predict/vol-surface?underlying=${underlying}`);
 export const fetchDensity = (oracleId?: string) =>

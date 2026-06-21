@@ -39,14 +39,14 @@ export interface VaultState {
   share_price: number;
 }
 
-function toRaw(displayAmount: number): bigint {
+function toRaw(displayAmount: number, decimals: number = VAULT.usdcDecimals): bigint {
   // amount is in display USDC; scale by decimals with rounding.
-  const scaled = Math.round(displayAmount * 10 ** VAULT.usdcDecimals);
+  const scaled = Math.round(displayAmount * 10 ** decimals);
   return BigInt(scaled);
 }
 
-function fromRaw(raw: bigint | string | number): number {
-  return Number(BigInt(raw)) / 10 ** VAULT.usdcDecimals;
+function fromRaw(raw: bigint | string | number, decimals: number = VAULT.usdcDecimals): number {
+  return Number(BigInt(raw)) / 10 ** decimals;
 }
 
 function ensureConfigured(currency?: VaultCurrency): void {
@@ -67,9 +67,10 @@ const VAULT_STATE_TTL_MS = 10_000;
 
 /** Read live vault accounting via devInspect of the view functions. Defaults to
  *  the mUSDC vault; pass a resolved descriptor to read the dUSDC vault. */
-export async function readVaultState(vault?: { vaultObjectId: string; usdcType: string }): Promise<VaultState> {
+export async function readVaultState(vault?: { vaultObjectId: string; usdcType: string; usdcDecimals?: number }): Promise<VaultState> {
   const vaultObjectId = vault?.vaultObjectId ?? VAULT.vaultObjectId;
   const usdcType = vault?.usdcType ?? VAULT.usdcType;
+  const decimals = vault?.usdcDecimals ?? VAULT.usdcDecimals;
   if (!VAULT.packageId || !vaultObjectId) {
     throw new Error('Vault not configured. Set VAULT_PACKAGE_ID + VAULT_OBJECT_ID in the backend env.');
   }
@@ -100,7 +101,7 @@ export async function readVaultState(vault?: { vaultObjectId: string; usdcType: 
   const accruedFees = u64At(2);
   const depositFeeBps = Number(u64At(3));
   const redeemFeeBps = Number(u64At(4));
-  const sharePrice = totalShares === 0n ? 1 : fromRaw(totalAssets) / (Number(totalShares) / 10 ** VAULT.usdcDecimals);
+  const sharePrice = totalShares === 0n ? 1 : fromRaw(totalAssets, decimals) / (Number(totalShares) / 10 ** decimals);
 
   const state: VaultState = {
     total_assets_raw: totalAssets.toString(),
@@ -126,7 +127,11 @@ export interface DepositEconomics {
   deposit_fee_bps: number;
 }
 
-function computeDeposit(grossRaw: bigint, state: VaultState): DepositEconomics {
+function computeDeposit(
+  grossRaw: bigint,
+  state: VaultState,
+  decimals: number = VAULT.usdcDecimals,
+): DepositEconomics {
   const feeRaw = (grossRaw * BigInt(state.deposit_fee_bps)) / BPS_DENOM;
   const netRaw = grossRaw - feeRaw;
   const totalShares = BigInt(state.total_shares);
@@ -134,10 +139,10 @@ function computeDeposit(grossRaw: bigint, state: VaultState): DepositEconomics {
   const sharesRaw =
     totalShares === 0n || assets === 0n ? netRaw : (netRaw * totalShares) / assets;
   return {
-    gross_usdc: fromRaw(grossRaw),
-    fee_usdc: fromRaw(feeRaw),
-    net_usdc: fromRaw(netRaw),
-    expected_shares: Number(sharesRaw) / 10 ** VAULT.usdcDecimals,
+    gross_usdc: fromRaw(grossRaw, decimals),
+    fee_usdc: fromRaw(feeRaw, decimals),
+    net_usdc: fromRaw(netRaw, decimals),
+    expected_shares: Number(sharesRaw) / 10 ** decimals,
     share_price: state.share_price,
     deposit_fee_bps: state.deposit_fee_bps,
   };
@@ -146,7 +151,9 @@ function computeDeposit(grossRaw: bigint, state: VaultState): DepositEconomics {
 export interface PreparedTx {
   tx_bytes: string;
   sender: string;
-  dry_run: { ok: boolean; status: string; gas_used?: string; error?: string };
+  // `ok` is null for the 'skipped' (no server-side dry-run) case so the FE never
+  // reads a skipped prepare as a passing dry-run; boolean only when actually run.
+  dry_run: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
 async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
@@ -163,7 +170,7 @@ async function buildAndDryRun(tx: Transaction, sender: string): Promise<Prepared
   // for a gas/validity preview the wallet re-computes itself at sign time. The
   // prepare is now near-instant (just local serialization).
   const serialized = await tx.toJSON();
-  return { tx_bytes: serialized, sender, dry_run: { ok: true, status: 'skipped' } };
+  return { tx_bytes: serialized, sender, dry_run: { ok: null, status: 'skipped' } };
 }
 
 /**
@@ -181,19 +188,19 @@ export async function prepareDeposit(args: {
   ensureConfigured(args.currency);
   const vault = resolveVault(args.currency);
   const client = getSuiClient();
-  const grossRaw = toRaw(args.amount_usdc);
+  const grossRaw = toRaw(args.amount_usdc, vault.usdcDecimals);
   if (grossRaw <= 0n) throw new Error('amount_usdc must be positive');
 
   const { data: coins } = await client.getCoins({ owner: args.owner, coinType: vault.usdcType });
   const total = coins.reduce((s, c) => s + BigInt(c.balance), 0n);
   if (total < grossRaw) {
     throw new Error(
-      `Insufficient ${vault.label} for ${args.owner}: holds ${fromRaw(total)}, needs ${fromRaw(grossRaw)}.`,
+      `Insufficient ${vault.label} for ${args.owner}: holds ${fromRaw(total, vault.usdcDecimals)}, needs ${fromRaw(grossRaw, vault.usdcDecimals)}.`,
     );
   }
 
   const state = await readVaultState(vault);
-  const economics = computeDeposit(grossRaw, state);
+  const economics = computeDeposit(grossRaw, state, vault.usdcDecimals);
 
   const tx = new Transaction();
   const ids = coins.map((c) => c.coinObjectId);
@@ -218,41 +225,55 @@ export interface VaultShareInfo {
   shares: number;
   principal_usdc: number;
   label: string;
+  /** Settlement rail that issued this share (which vault to redeem against). */
+  currency: VaultCurrency;
+  vault_id: string;
 }
 
-/** List a wallet's `VaultShare<MOCK_USDC>` receipts. */
-export async function listShares(owner: string): Promise<VaultShareInfo[]> {
-  ensureConfigured();
+/**
+ * List a wallet's vault share receipts. By default returns BOTH rails (mUSDC and
+ * dUSDC), each tagged with its settlement currency + issuing vault so a redeem can
+ * target the correct vault; pass `currency` to scope to one rail. An unconfigured
+ * rail is skipped rather than throwing.
+ */
+export async function listShares(owner: string, currency?: VaultCurrency): Promise<VaultShareInfo[]> {
+  const rails: VaultCurrency[] = currency ? [currency] : ['mUSDC', 'dUSDC'];
   const client = getSuiClient();
   const out: VaultShareInfo[] = [];
-  let cursor: string | null | undefined = undefined;
-  do {
-    const page = await client.getOwnedObjects({
-      owner,
-      filter: { StructType: shareType() },
-      options: { showContent: true },
-      cursor: cursor ?? undefined,
-    });
-    for (const o of page.data) {
-      const content = o.data?.content;
-      if (!content || content.dataType !== 'moveObject') continue;
-      const f = content.fields as Record<string, unknown>;
-      const labelRaw = f.label;
-      let label = '';
-      if (Array.isArray(labelRaw)) {
-        label = new TextDecoder().decode(Uint8Array.from(labelRaw as number[]));
-      } else if (typeof labelRaw === 'string') {
-        label = labelRaw;
-      }
-      out.push({
-        share_id: o.data?.objectId ?? '',
-        shares: Number(BigInt((f.shares as string) ?? '0')) / 10 ** VAULT.usdcDecimals,
-        principal_usdc: fromRaw((f.principal as string) ?? '0'),
-        label,
+  for (const rail of rails) {
+    if (!vaultConfigured(rail)) continue;
+    const vault = resolveVault(rail);
+    let cursor: string | null | undefined = undefined;
+    do {
+      const page = await client.getOwnedObjects({
+        owner,
+        filter: { StructType: shareTypeFor(vault.usdcType) },
+        options: { showContent: true },
+        cursor: cursor ?? undefined,
       });
-    }
-    cursor = page.hasNextPage ? page.nextCursor : null;
-  } while (cursor);
+      for (const o of page.data) {
+        const content = o.data?.content;
+        if (!content || content.dataType !== 'moveObject') continue;
+        const f = content.fields as Record<string, unknown>;
+        const labelRaw = f.label;
+        let label = '';
+        if (Array.isArray(labelRaw)) {
+          label = new TextDecoder().decode(Uint8Array.from(labelRaw as number[]));
+        } else if (typeof labelRaw === 'string') {
+          label = labelRaw;
+        }
+        out.push({
+          share_id: o.data?.objectId ?? '',
+          shares: Number(BigInt((f.shares as string) ?? '0')) / 10 ** vault.usdcDecimals,
+          principal_usdc: Number(BigInt((f.principal as string) ?? '0')) / 10 ** vault.usdcDecimals,
+          label,
+          currency: rail,
+          vault_id: vault.vaultObjectId,
+        });
+      }
+      cursor = page.hasNextPage ? page.nextCursor : null;
+    } while (cursor);
+  }
   return out;
 }
 
@@ -272,11 +293,13 @@ export async function prepareRedeem(args: {
   owner: string;
   share_id?: string;
   label?: string;
+  currency?: VaultCurrency;
 }): Promise<
-  PreparedTx & { economics: RedeemEconomics; vault_id: string; share_id: string; label: string }
+  PreparedTx & { economics: RedeemEconomics; vault_id: string; share_id: string; label: string; currency: VaultCurrency }
 > {
-  ensureConfigured();
-  const shares = await listShares(args.owner);
+  // Scope to the requested rail if given; otherwise search both so a share_id /
+  // label resolves regardless of settlement coin.
+  const shares = await listShares(args.owner, args.currency);
   if (shares.length === 0) throw new Error(`No vault positions for ${args.owner}`);
 
   let target = args.share_id
@@ -289,10 +312,18 @@ export async function prepareRedeem(args: {
     target = [...shares].sort((a, b) => b.shares - a.shares)[0];
   }
 
-  const state = await readVaultState();
+  // Authoritative: redeem against the vault that ACTUALLY issued this share (its
+  // own tagged currency), so a dUSDC position never hits the mUSDC vault.
+  const currency = target.currency;
+  ensureConfigured(currency);
+  const vault = resolveVault(currency);
+  const dec = vault.usdcDecimals;
+  const toUsd = (raw: bigint) => Number(raw) / 10 ** dec;
+
+  const state = await readVaultState(vault);
   const totalShares = BigInt(state.total_shares);
   const assets = BigInt(state.total_assets_raw);
-  const shareRaw = BigInt(Math.round(target.shares * 10 ** VAULT.usdcDecimals));
+  const shareRaw = BigInt(Math.round(target.shares * 10 ** dec));
   const grossOutRaw = totalShares === 0n ? 0n : (shareRaw * assets) / totalShares;
   const feeRaw = (grossOutRaw * BigInt(state.redeem_fee_bps)) / BPS_DENOM;
   const netOutRaw = grossOutRaw - feeRaw;
@@ -300,8 +331,8 @@ export async function prepareRedeem(args: {
   const tx = new Transaction();
   tx.moveCall({
     target: vaultTarget('redeem'),
-    typeArguments: [VAULT.usdcType],
-    arguments: [tx.object(VAULT.vaultObjectId), tx.object(target.share_id)],
+    typeArguments: [vault.usdcType],
+    arguments: [tx.object(vault.vaultObjectId), tx.object(target.share_id)],
   });
 
   const prepared = await buildAndDryRun(tx, args.owner);
@@ -309,14 +340,15 @@ export async function prepareRedeem(args: {
     ...prepared,
     economics: {
       shares: target.shares,
-      gross_usdc: fromRaw(grossOutRaw),
-      fee_usdc: fromRaw(feeRaw),
-      net_usdc: fromRaw(netOutRaw),
+      gross_usdc: toUsd(grossOutRaw),
+      fee_usdc: toUsd(feeRaw),
+      net_usdc: toUsd(netOutRaw),
       redeem_fee_bps: state.redeem_fee_bps,
     },
-    vault_id: VAULT.vaultObjectId,
+    vault_id: vault.vaultObjectId,
     share_id: target.share_id,
     label: target.label,
+    currency,
   };
 }
 
@@ -329,10 +361,19 @@ export interface DigestConfirmation {
   usdc_delta?: number;
 }
 
-/** Verify a digest on-chain and surface the vault event + the owner's mUSDC delta. */
+/**
+ * Verify a digest on-chain and surface the vault event + the owner's USDC delta.
+ *
+ * The payout delta is computed against the settlement coin of the redeemed
+ * rail. When `currency` is omitted we default to mUSDC (identical to the prior
+ * behavior). If a currency isn't passed, we additionally try to infer the rail
+ * from the redeemed `VaultShare<T>` type tag in the tx events, so a dUSDC redeem
+ * still reports the correct payout instead of a null/wrong mUSDC delta.
+ */
 export async function confirmDigest(
   digest: string,
   owner?: string,
+  currency?: VaultCurrency,
 ): Promise<DigestConfirmation> {
   const client = getSuiClient();
   try {
@@ -344,18 +385,33 @@ export async function confirmDigest(
       options: { showEffects: true, showEvents: true, showBalanceChanges: true },
     });
     const status = tx.effects?.status.status ?? 'unknown';
-    const ev = (tx.events ?? []).find((e) => e.type.includes('::vault::'));
+    const events = tx.events ?? [];
+    const ev = events.find((e) => e.type.includes('::vault::'));
+    // Resolve the rail: explicit `currency` wins; otherwise infer the settlement
+    // coin from the redeemed VaultShare<T> type tag in the event types, falling
+    // back to mUSDC. This keeps the owner-delta + decimals matched to the rail.
+    let resolved = currency ? resolveVault(currency) : null;
+    if (!resolved) {
+      const shareEvent = events.find((e) => /::vault::VaultShare<[^>]+>/.test(e.type));
+      const inner = shareEvent?.type.match(/::vault::VaultShare<([^>]+)>/)?.[1];
+      if (inner) {
+        const dusdc = resolveVault('dUSDC');
+        resolved = inner === dusdc.usdcType ? dusdc : resolveVault('mUSDC');
+      }
+    }
+    const coinType = resolved?.usdcType ?? VAULT.usdcType;
+    const coinDecimals = resolved?.usdcDecimals ?? VAULT.usdcDecimals;
     let delta: number | undefined;
     if (owner) {
       const bc = (tx.balanceChanges ?? []).find(
         (c) =>
-          c.coinType === VAULT.usdcType &&
+          c.coinType === coinType &&
           typeof c.owner === 'object' &&
           c.owner !== null &&
           'AddressOwner' in c.owner &&
           (c.owner as { AddressOwner: string }).AddressOwner === owner,
       );
-      if (bc) delta = fromRaw(BigInt(bc.amount));
+      if (bc) delta = Number(BigInt(bc.amount)) / 10 ** coinDecimals;
     }
     return {
       ok: status === 'success',

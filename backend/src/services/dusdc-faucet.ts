@@ -24,10 +24,15 @@ const MAX_GRANT_UI = Number(process.env.DUSDC_GRANT_MAX_UI ?? 25);
 // (faucet-gated); SUI is gas so the user can actually sign their first tx.
 const DUSDC_GRANT_UI = Math.min(25, MAX_GRANT_UI);
 const MUSDC_GRANT_UI = Number(process.env.MUSDC_GRANT_UI ?? 10_000);
-// 0.6 SUI — enough for the gas-heavy DeepBook Predict (dUSDC) rail, which needs a
-// manager-create plus a multi-leg trade. The old 0.05 SUI covered the cheap mUSDC
-// vault/sim rail but left dUSDC users unable to sign the Predict trade.
-const SUI_GRANT_MIST = BigInt(process.env.SUI_GRANT_MIST ?? 600_000_000); // 0.6 SUI
+// 0.4 SUI. The heavy dUSDC DeepBook Predict opens (multi-leg strips/baskets) now
+// pin an explicit gas budget (PREDICT_OPEN_GAS_BUDGET_MIST, see structured.ts), so
+// the wallet no longer reserves the full ~1.2-1.7 SUI auto-estimate — 0.4 SUI
+// covers create_manager + the pinned open + a redeem with headroom, while the
+// cheap mUSDC vault rail uses a fraction of it. Override with SUI_GRANT_MIST.
+// NOTE: validate the pinned budget against a funded multi-leg dUSDC open before
+// relying on the heaviest products; if they fail insufficient-gas, raise both
+// PREDICT_OPEN_GAS_BUDGET_MIST and this grant.
+const SUI_GRANT_MIST = BigInt(process.env.SUI_GRANT_MIST ?? 400_000_000); // 0.4 SUI
 
 export interface TestFundsGrant {
   digest: string;
@@ -37,10 +42,31 @@ export interface TestFundsGrant {
   explorer_url: string;
 }
 
+// Serialize ALL operator-signed dispenses through a single in-process promise
+// chain. Each dispense reads the operator's primary coin (getCoins → merge →
+// split → signAndExecute); running two concurrently against DIFFERENT recipients
+// would have them both build on the SAME stale coin version, so the second tx
+// aborts with an object-version conflict. The queue forces them one-at-a-time so
+// each sees the previous tx's committed coin state.
+let opQueue: Promise<unknown> = Promise.resolve();
+function enqueueOp<T>(op: () => Promise<T>): Promise<T> {
+  const run = opQueue.then(op, op);
+  // Keep the chain alive even if a dispense rejects (swallow only for the gate,
+  // the real result/error still propagates to the caller via `run`).
+  opQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /** Mint mUSDC + transfer dUSDC + transfer the SUI gas grant to `recipient` in ONE
  *  operator-signed PTB. Atomic, one digest, one fee. */
 export async function dispenseTestFunds(recipient: string): Promise<TestFundsGrant> {
   if (!/^0x[0-9a-fA-F]{1,64}$/.test(recipient)) throw new Error('recipient (0x...) is required');
+  // Serialized through the operator queue: this PTB mints/splits from the
+  // operator's primary mUSDC/dUSDC/gas coins, which must not race another dispense.
+  return enqueueOp(async () => {
   const client = getSuiClient();
   const signer = getSigner();
   const operator = signerAddress();
@@ -78,6 +104,7 @@ export async function dispenseTestFunds(recipient: string): Promise<TestFundsGra
     sui: Number(SUI_GRANT_MIST) / 1e9,
     explorer_url: `https://suiscan.xyz/${process.env.SUI_NETWORK ?? 'testnet'}/tx/${res.digest}`,
   };
+  });
 }
 
 export async function dusdcBalance(owner: string): Promise<number> {
@@ -101,6 +128,9 @@ export async function dispenseDusdc(recipient: string, displayAmount: number): P
   const want = Math.min(Math.max(0, displayAmount), MAX_GRANT_UI);
   if (want <= 0) throw new Error('amount must be positive');
 
+  // Serialized through the operator queue: same operator dUSDC float as
+  // dispenseTestFunds, so concurrent dispenses must not race the primary coin.
+  return enqueueOp(async () => {
   const client = getSuiClient();
   const signer = getSigner();
   const operator = signerAddress();
@@ -148,4 +178,5 @@ export async function dispenseDusdc(recipient: string, displayAmount: number): P
     explorer_url: `https://suiscan.xyz/${process.env.SUI_NETWORK ?? 'testnet'}/tx/${res.digest}`,
     operator_remaining: (Number(total) - Number(amountRaw)) / 10 ** DECIMALS,
   };
+  });
 }

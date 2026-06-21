@@ -11,6 +11,7 @@
  *   GET  /positions/:owner — list a wallet's sim positions.
  */
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   prepareSimOpen,
   confirmSimOpen,
@@ -21,6 +22,19 @@ import {
 } from '../services/sim-settlement';
 
 const router = Router();
+
+// /settle drives an OPERATOR-signed mUSDC mint (services/sim-settlement →
+// mintMockUsdc). The mint recipient + amount are NOT attacker-controlled (they
+// come from the recorded position's owner + economics, and settle is idempotent),
+// but the operator still pays gas on the first settle of any position. Throttle
+// per-IP so an anonymous caller can't spam operator-signed mints / drain gas.
+const settleLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many settlement requests, please try again later' },
+});
 
 const PRODUCTS: SimProduct[] = ['strip', 'option', 'vol', 'dist'];
 
@@ -81,7 +95,7 @@ router.post('/confirm', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/settle', async (req: Request, res: Response) => {
+router.post('/settle', settleLimiter, async (req: Request, res: Response) => {
   try {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const simId = String(b.sim_id ?? '');

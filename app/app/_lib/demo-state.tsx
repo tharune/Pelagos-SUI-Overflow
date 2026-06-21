@@ -173,6 +173,13 @@ type Action =
       bundleId: string;
       kind: TrancheKind;
       payoutUsdc: number;
+      /**
+       * Tokens redeemed. Optional so legacy callers that always redeemed the
+       * whole position keep working — when omitted we burn the entire row
+       * (the previous behaviour). When provided we decrement and only drop the
+       * row once it's drained, mirroring `basket/redeem`.
+       */
+      qty?: number;
     }
   | { type: "ppn/open"; id?: string; bundleId: string; usdcAmount: number; apy: number; maturityDays: number; createdAt?: number }
   | { type: "ppn/close"; vaultId: string; payoutUsdc: number }
@@ -352,6 +359,25 @@ function reducer(state: SandboxState, action: Action): SandboxState {
       );
       if (idx < 0) return state;
       if (action.payoutUsdc < 0) return state;
+      const pos = state.tranchePositions[idx];
+      // Partial redeem support, mirroring `basket/redeem`: when `qty` is
+      // provided, decrement and only drop the row once it's drained; when
+      // omitted (legacy callers), burn the whole row as before.
+      if (action.qty != null) {
+        if (action.qty <= 0 || action.qty > pos.qty + 1e-9) return state;
+        const nextQty = Math.max(0, pos.qty - action.qty);
+        const nextPositions =
+          nextQty <= 1e-9
+            ? state.tranchePositions.filter((_, i) => i !== idx)
+            : state.tranchePositions.map((p, i) =>
+                i === idx ? { ...p, qty: nextQty } : p,
+              );
+        return {
+          ...state,
+          usdc: state.usdc + action.payoutUsdc,
+          tranchePositions: nextPositions,
+        };
+      }
       return {
         ...state,
         usdc: state.usdc + action.payoutUsdc,
@@ -476,7 +502,11 @@ export function SandboxProvider({ children }: { children: React.ReactNode }) {
   const totals = useMemo(() => {
     const basketValue = state.basketPositions.reduce((s, p) => {
       const b = bundleById(p.bundleId);
-      const nav = b?.nav ?? p.navHint ?? 0;
+      const nav = b?.nav ?? p.navHint;
+      // Skip a position whose NAV hasn't hydrated yet (no seed match AND no
+      // navHint) — exactly as `unrealizedPnl` does below. Valuing it at nav=0
+      // would understate total value while PnL ignored it, desyncing the two.
+      if (nav == null) return s;
       return s + p.qty * nav;
     }, 0);
     const trancheValue = state.tranchePositions.reduce((s, p) => s + p.qty * p.avgCost, 0);

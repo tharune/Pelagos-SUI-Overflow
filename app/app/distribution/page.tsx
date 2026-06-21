@@ -146,15 +146,17 @@ function BasicOptionsChain() {
   const selHigher = selQuote?.higher_strike;
   const selOracle = selExp?.oracle_id;
   useEffect(() => {
-    if (!selOracle || !selExp || !selLower || !selHigher || !selQuote?.tradeable) { setDepth(null); return; }
+    // The depth/risk cap only binds the dUSDC (DeepBook Predict pool) rail —
+    // mUSDC settles on our own Vault and isn't bounded by pool liquidity, so
+    // skip the fetch entirely (and clear any stale cap) when on mUSDC.
+    if (currency !== "dUSDC" || !selOracle || !selExp || !selLower || !selHigher || !selQuote?.tradeable) { setDepth(null); return; }
     let alive = true;
     setDepth(null);
     fetchBandDepth({ oracle_id: selOracle, expiry: selExp.expiry, lower: selLower, higher: selHigher })
       .then((d) => { if (alive) setDepth(d); })
       .catch(() => { if (alive) setDepth(null); });
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selOracle, selLower, selHigher]);
+  }, [currency, selOracle, selExp?.expiry, selLower, selHigher, selQuote?.tradeable]);
 
   const pickStrike = useCallback((strikeIdx: number, side: Side) => {
     // Guard: never select an infeasible (non-mintable) strike, even if a stray
@@ -223,6 +225,7 @@ function BasicOptionsChain() {
         setStage("Confirming…");
         await simConfirm(prep.sim_id, digest);
         setResult({ digest });
+        musdc.refresh();
         return;
       }
       setStage("Preparing manager…");
@@ -286,10 +289,10 @@ function BasicOptionsChain() {
           {/* ---- expiry selector ---- */}
           <div className="oc-exps">
             {chain
-              ? chain.expiries.map((e, i) => {
+              ? (chain.expiries ?? []).map((e, i) => {
                   const on = i === expIdx;
                   return (
-                    <button key={e.oracle_id} className={`oc-pill${on ? " on" : ""}`} onClick={() => selectExpiry(i)}>
+                    <button key={e.oracle_id} className={`oc-pill${on ? " on" : ""}`} aria-pressed={on} aria-label={`Expiry ${e.tenor_label}`} onClick={() => selectExpiry(i)}>
                       {e.tenor_label}
                     </button>
                   );
@@ -313,13 +316,13 @@ function BasicOptionsChain() {
               </div>
               <div className="oc-rows">
                 {exp ? (
-                  exp.strikes.map((s, i) => {
+                  (exp.strikes ?? []).map((s, i) => {
                     const isAtm = i === atmIdx;
                     const callSelected = sel?.expiryIdx === expIdx && sel?.strikeIdx === i && sel?.side === "call";
                     const putSelected = sel?.expiryIdx === expIdx && sel?.strikeIdx === i && sel?.side === "put";
                     return (
                       <div className={`oc-row${isAtm ? " atm" : ""}`} key={s.strike}>
-                        <SideCells q={s.call} side="call" selected={callSelected} onClick={() => pickStrike(i, "call")} />
+                        <SideCells q={s.call} side="call" strike={s.strike} selected={callSelected} onClick={() => pickStrike(i, "call")} />
                         <button
                           className={`oc-k${isAtm ? " atm" : ""}`}
                           onClick={() => {
@@ -338,7 +341,7 @@ function BasicOptionsChain() {
                           {strikeFmt(s.strike)}
                           {isAtm && <i>ATM</i>}
                         </button>
-                        <SideCells q={s.put} side="put" selected={putSelected} onClick={() => pickStrike(i, "put")} />
+                        <SideCells q={s.put} side="put" strike={s.strike} selected={putSelected} onClick={() => pickStrike(i, "put")} />
                       </div>
                     );
                   })
@@ -371,7 +374,7 @@ function BasicOptionsChain() {
                       </div>
                     ))}
                   </div>
-                  <p className="oc-empty-note">Premiums are real range-option prices, quoted 0–1 per $1 contract — settle in dUSDC or mUSDC.</p>
+                  <p className="oc-empty-note">Premiums are real range-option prices, quoted 0–1 per $1 contract — settle in dUSDC or mUSDC (demo token, same contracts).</p>
                 </div>
               ) : (
                 <>
@@ -414,7 +417,7 @@ function BasicOptionsChain() {
                     {wallet.connected && <Info k="Balance" v={`${(currency === "mUSDC" ? musdc.uiAmount : usdc.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency}`} />}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 8 }}>
                       <span style={{ fontFamily: FM, fontSize: 11, color: C.textMuted }}>Settle in</span>
-                      <CurrencySelect value={currency} onChange={setCurrency} />
+                      <CurrencySelect value={currency} onChange={(c) => { setCurrency(c); setResult(null); setOpenErr(null); }} />
                     </div>
                   </div>
 
@@ -428,7 +431,7 @@ function BasicOptionsChain() {
                           )}
                         </div>
                         <div className="oc-budget-in">
-                          <input inputMode="numeric" value={contracts} onChange={(e) => setContracts(e.target.value.replace(/[^0-9]/g, ""))} placeholder="1" />
+                          <input inputMode="numeric" aria-label="Number of contracts" value={contracts} onChange={(e) => { setContracts(e.target.value.replace(/[^0-9]/g, "")); setResult(null); setOpenErr(null); }} placeholder="1" />
                           <span>× $1 payout</span>
                         </div>
                       </div>
@@ -440,12 +443,12 @@ function BasicOptionsChain() {
                       {!wallet.connected ? (
                         <ConnectModal trigger={<button className="oc-open">Connect a wallet to trade</button>} />
                       ) : (
-                        <button className="oc-open" disabled={busy || nContracts < 1 || overCap} onClick={openStrike} style={{ opacity: busy || nContracts < 1 || overCap ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
+                        <button className="oc-open" disabled={busy || nContracts < 1 || overCap} aria-busy={busy} onClick={openStrike} style={{ opacity: busy || nContracts < 1 || overCap ? 0.6 : 1, cursor: busy ? "wait" : "pointer" }}>
                           {busy ? (stage ?? "Submitting…") : overCap ? `Exceeds pool depth · max ${maxContracts!.toLocaleString()}` : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
                       )}
                       <p className="oc-note">{currency === "mUSDC"
-                        ? `Buys ${nContracts} whole ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"}, priced live off the DeepBook book — settled to the Pelagos USDC vault on Sui (~$0.003 gas).`
+                        ? `Buys ${nContracts} whole ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"}, priced live off the DeepBook book — settled in mUSDC (demo token, same contracts + pricing as dUSDC) on Sui (~$0.003 gas).`
                         : `Buys ${nContracts} whole ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.`}</p>
                     </>
                   ) : (
@@ -455,12 +458,12 @@ function BasicOptionsChain() {
                   )}
 
                   {result && (
-                    <div className="oc-ok">
+                    <div className="oc-ok" role="status" aria-live="polite">
                       ✓ Position opened on testnet ·{" "}
                       <a href={suiExplorerTxUrl(result.digest)} target="_blank" rel="noreferrer">{result.digest.slice(0, 10)}… ↗</a>
                     </div>
                   )}
-                  {openErr && <div className="oc-err inline">{openErr}</div>}
+                  {openErr && <div className="oc-err inline" role="alert">{openErr}</div>}
                 </>
               )}
             </div>
@@ -473,8 +476,11 @@ function BasicOptionsChain() {
 }
 
 // One cell-group for one side of a chain row (3 columns: mid / iv / delta).
-function SideCells({ q, side, selected, onClick }: { q: OptionQuote; side: Side; selected: boolean; onClick: () => void }) {
+function SideCells({ q, side, strike, selected, onClick }: { q: OptionQuote; side: Side; strike: number; selected: boolean; onClick: () => void }) {
   const mid = q.mid;
+  // Descriptive name for screen readers — the cells are otherwise three bare
+  // numbers with no spoken context (e.g. "call 64,124, mid 0.50").
+  const label = `${side} ${strikeFmt(strike)}, mid ${q.mid > 0.005 ? px(q.mid) : "0.00"}`;
   // A non-tradeable leg sits OUTSIDE the protocol's mintable [2%,98%] band — a $1
   // payout for ~$1 (deep ITM) or a ~$0 lottery (deep OTM). The pool won't
   // underwrite it, so black it out and make it non-interactive: you can never
@@ -489,7 +495,7 @@ function SideCells({ q, side, selected, onClick }: { q: OptionQuote; side: Side;
     );
   }
   return (
-    <button className={`oc-cells ${side}${selected ? " sel" : ""}`} onClick={onClick}>
+    <button className={`oc-cells ${side}${selected ? " sel" : ""}`} aria-label={label} aria-pressed={selected} onClick={onClick}>
       <span className="oc-mid">{px(mid)}</span>
       <span className="oc-iv">{ivFmt(q.iv)}</span>
       <span className="oc-dlt">{dltFmt(q.delta)}</span>
@@ -695,7 +701,7 @@ function Slider({ label, value, min, max, step, fmt, onChange }: { label: string
         <span style={{ fontFamily: FM, fontSize: 10.5, letterSpacing: "0.1em", color: C.textMuted, textTransform: "uppercase" }}>{label}</span>
         <span style={{ fontFamily: FD, fontSize: 14, color: C.textPrimary }}>{fmt(value)}</span>
       </div>
-      <input type="range" className="dc-range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input type="range" className="dc-range" aria-label={label} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
     </div>
   );
 }
@@ -840,7 +846,7 @@ function AdvancedDistribution() {
         setStage("Confirming…");
         await simConfirm(prep.sim_id, digest);
         setResult({ digest });
-        usdc.refresh();
+        musdc.refresh();
         return;
       }
       setStage("Preparing manager…");
@@ -942,8 +948,8 @@ function AdvancedDistribution() {
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                       <span className="dc-cap">Budget · max loss</span>
                       {/* Pool-depth cap is a DeepBook Predict liability — it binds the
-                          dUSDC rail only. mUSDC settles on our own Vault<MOCK_USDC>,
-                          so no Predict-pool cap applies there. */}
+                          dUSDC rail only. mUSDC (demo token, same contracts) settles
+                          on our own vault, so no Predict-pool cap applies there. */}
                       {currency === "dUSDC" && poolCapUsd != null && (
                         <span style={{ fontFamily: FM, fontSize: 9, letterSpacing: "0.04em", whiteSpace: "nowrap", color: overPoolCap ? C.amber : C.textMuted }}>
                           max ≈ ${Math.round(poolCapUsd).toLocaleString()} · pool depth
@@ -953,7 +959,7 @@ function AdvancedDistribution() {
                     <div className="dc-amount-in">
                       <span className="dc-amount-cur">$</span>
                       <input className="dc-num dc-num-bare" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
-                      <CurrencySelect value={currency} onChange={setCurrency} />
+                      <CurrencySelect value={currency} onChange={(c) => { setCurrency(c); setResult(null); setError(null); }} />
                     </div>
                   </div>
                   <button onClick={() => selectMarket(market)} className="dc-reset">Reset to live forward</button>
@@ -1020,7 +1026,7 @@ function AdvancedDistribution() {
               {!wallet.connected ? (
                 <ConnectModal trigger={<button className="dc-open" style={{ marginTop: 18, cursor: "pointer" }}>Connect a wallet to trade</button>} />
               ) : (
-                <button onClick={open} disabled={!canOpen} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
+                <button onClick={open} disabled={!canOpen} aria-busy={busy} className="dc-open" style={{ marginTop: 18, opacity: canOpen ? 1 : 0.5, cursor: canOpen ? "pointer" : "not-allowed" }}>
                   {busy ? stage ?? "Submitting…" : flat ? "Widen σ to build a tradeable strip" : overPoolCap ? `Exceeds pool depth · reduce budget` : `Open strip · lock ${quote ? usd(lock) : ""}`}
                 </button>
               )}
@@ -1032,14 +1038,14 @@ function AdvancedDistribution() {
               )}
 
               {result && (
-                <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.green }}>
+                <div role="status" aria-live="polite" style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.green }}>
                   ✓ Strip opened on testnet ·{" "}
                   <a href={suiExplorerTxUrl(result.digest)} target="_blank" rel="noreferrer" style={{ color: C.tealLight }}>
                     {result.digest.slice(0, 10)}… ↗
                   </a>
                 </div>
               )}
-              {error && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{error}</div>}
+              {error && <div role="alert" style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{error}</div>}
             </div>
           </main>
         </div>

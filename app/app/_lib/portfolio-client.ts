@@ -188,6 +188,18 @@ function normalizeTier(raw: number): 90 | 70 | 50 | undefined {
 }
 
 /**
+ * Resolve a row's maturity timestamp: prefer the bundle's `resolution_date`,
+ * fall back to `created_at`, and yield `undefined` if neither parses (so the
+ * card renders a blank maturity gracefully instead of `NaN`).
+ */
+function maturityFromRow(p: BackendPositionRow): number | undefined {
+  const raw = p.resolution_date ?? p.created_at ?? undefined;
+  if (!raw) return undefined;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
  * Fetch the wallet's basket positions from the backend
  * (`/api/deposit/portfolio/:wallet`) and map each row into the `BasketPosition`
  * shape the demo-state reducer expects. The portfolio page dispatches the
@@ -246,9 +258,10 @@ export async function fetchBasketPortfolio(
       // Latest row wins for display metadata (nav/maturity/status).
       existing.navHint = p.current_nav;
       existing.status = p.bundle_status;
-      existing.maturityAt = p.resolution_date
-        ? Date.parse(p.resolution_date)
-        : existing.maturityAt;
+      // Prefer the bundle's resolution_date; fall back to created_at so a row
+      // missing the resolution timestamp still renders a maturity instead of a
+      // blank. A still-missing value keeps the prior maturityAt.
+      existing.maturityAt = maturityFromRow(p) ?? existing.maturityAt;
       if (existing.fallbackAvg === undefined) existing.fallbackAvg = p.entry_price;
     } else {
       byBundle.set(p.bundle_id, {
@@ -258,7 +271,7 @@ export async function fetchBasketPortfolio(
         tier: normalizeTier(p.risk_tier),
         navHint: p.current_nav,
         displayName: p.bundle_name,
-        maturityAt: p.resolution_date ? Date.parse(p.resolution_date) : undefined,
+        maturityAt: maturityFromRow(p),
         status: p.bundle_status,
         fallbackAvg: p.entry_price,
       });

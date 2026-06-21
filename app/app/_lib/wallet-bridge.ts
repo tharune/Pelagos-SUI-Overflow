@@ -192,7 +192,7 @@ export async function airdropDusdc(address: string, amount = 25): Promise<{ dige
 
 /**
  * Combined "Test funds" grant — one operator tx that tops the wallet with mUSDC,
- * dUSDC, and 0.05 SUI for gas. Returns the dispensed amounts + tx digest.
+ * dUSDC, and 0.4 SUI for gas. Returns the dispensed amounts + tx digest.
  */
 export async function faucetTestFunds(address: string): Promise<{
   digest: string;

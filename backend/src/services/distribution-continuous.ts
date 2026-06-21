@@ -18,8 +18,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Transaction } from '@mysten/sui/transactions';
-import { getSuiClient, signerAddress } from './predict/sui';
-import { mintMockUsdc } from './mock-usdc';
+import { getSuiClient, getSigner, signerAddress } from './predict/sui';
+import { mintMockUsdc, addMintMockUsdc } from './mock-usdc';
 import { discoverDistributionCandidates, type DistributionCandidate } from './distribution';
 import { fetchRealizedVol } from './bluefin';
 
@@ -397,7 +397,11 @@ export function seedLiquidity(id: string, amountUsdc: number): { market_id: stri
   const amount = Number(amountUsdc);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('amount_usdc must be positive');
   if (amount > 5_000_000) throw new Error('amount_usdc too large (max 5,000,000 simulated)');
-  const p = pools.get(id) ?? ensurePool(id, 50_000, 1);
+  // If the pool was cleared (post-reset) recreate it from the REAL market base
+  // backing + sigma, not a (50_000, 1) placeholder — otherwise k is calibrated
+  // against a fake liquidity/sigma and the slippage geometry is wrong.
+  const mkt = getContinuousMarket(id);
+  const p = pools.get(id) ?? ensurePool(id, mkt?.pool_liquidity_usdc ?? 50_000, mkt?.sigma ?? 1);
   p.seeded_usdc += amount;
   pools.set(id, p);
   savePools();
@@ -757,6 +761,73 @@ function treasuryAddress(): string {
   return addr;
 }
 
+/**
+ * Pay `net` mUSDC to the trader on settle/close WITHOUT inflating supply by the
+ * escrowed collateral.
+ *
+ * On open, `collateral` mUSDC was escrowed into the treasury. The trader's total
+ * return is `net` (= collateral + payoff, clamped >= 0). Previously settle minted
+ * the full `net` while the escrow sat in the treasury forever — so every settled
+ * position permanently inflated mUSDC supply by its collateral.
+ *
+ * Instead we RECYCLE the escrow: return up to `collateral` from the treasury's
+ * existing mUSDC, and mint ONLY the profit (`net - collateral`, the payoff above
+ * collateral) when the trader is in the money. Trader P&L is identical; new supply
+ * is bounded to realized profit, and the escrow on a loss stays with the treasury.
+ */
+async function payoutRecyclingEscrow(
+  recipient: string,
+  collateral: number,
+  net: number,
+): Promise<{ digest: string | null; explorer_url: string | null }> {
+  const fromEscrow = Math.max(0, Math.min(net, collateral)); // returned from treasury float
+  const toMint = Math.max(0, Math.round((net - collateral) * 100) / 100); // profit only → new supply
+
+  const client = getSuiClient();
+  const signer = getSigner();
+  const treasury = treasuryAddress();
+
+  // No payout at all (net == 0): nothing to send.
+  if (fromEscrow <= 0 && toMint <= 0) return { digest: null, explorer_url: null };
+
+  // Pure profit with no escrow to return (shouldn't happen, but keep correct):
+  // fall back to a straight mint of the whole net.
+  if (fromEscrow <= 0) {
+    const minted = await mintMockUsdc(recipient, net);
+    return { digest: minted.digest, explorer_url: minted.explorer_url };
+  }
+
+  const rawReturn = BigInt(Math.round(fromEscrow * 10 ** USDC_DECIMALS));
+  const tx = new Transaction();
+
+  // Source the escrow return from the treasury's own mUSDC coins.
+  const { data: coins } = await client.getCoins({ owner: treasury, coinType: MOCK_USDC_TYPE });
+  const total = coins.reduce((s, c) => s + BigInt(c.balance), 0n);
+  if (total < rawReturn) {
+    // Treasury can't cover the escrow return (e.g. float drained out-of-band).
+    // Degrade gracefully to a mint of the full net so the trader is still paid.
+    const minted = await mintMockUsdc(recipient, net);
+    return { digest: minted.digest, explorer_url: minted.explorer_url };
+  }
+  const ids = coins.map((c) => c.coinObjectId);
+  const [primary, ...rest] = ids;
+  if (rest.length > 0) tx.mergeCoins(tx.object(primary), rest.map((id) => tx.object(id)));
+  const [payment] = tx.splitCoins(tx.object(primary), [tx.pure.u64(rawReturn)]);
+  tx.transferObjects([payment], tx.pure.address(recipient));
+
+  // Mint ONLY the profit above collateral (if any) in the same PTB.
+  if (toMint > 0) addMintMockUsdc(tx, recipient, toMint);
+
+  const res = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true } });
+  const status = res.effects?.status.status ?? 'unknown';
+  if (status !== 'success') throw new Error(`payout failed (${res.digest}): ${res.effects?.status.error}`);
+  await client.waitForTransaction({ digest: res.digest });
+  return {
+    digest: res.digest,
+    explorer_url: `https://suiscan.xyz/${process.env.SUI_NETWORK ?? 'testnet'}/tx/${res.digest}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Open: escrow collateral to the treasury (wallet-signed)
 // ---------------------------------------------------------------------------
@@ -846,6 +917,12 @@ export async function confirmContinuousOpen(args: {
   }
   const quote = quoteContinuous(args);
   const realized = drawNormal(quote.market_mu, quote.market_sigma, args.digest);
+  // IMPORTANT: persist the CAPPED effective collateral (quote.collateral_required_usdc),
+  // not args.collateralUsdc. quoteContinuous applies the AMM capacity cap, so when the
+  // requested size exceeds the pool the position is recorded — and later settled/closed —
+  // against the same capped collateral the open escrow + quote geometry used. Settlement
+  // re-derives via quoteCore(collateral: pos.collateral_usdc), so it never sizes the
+  // payoff against the uncapped request.
   const pos: ContinuousPosition = {
     id: args.digest,
     owner: args.owner,
@@ -905,15 +982,32 @@ export async function settleContinuousPosition(args: { owner: string; positionId
   // lose at most the collateral they escrowed on open).
   const net = Math.max(0, Math.round((pos.collateral_usdc + payoff) * 100) / 100);
 
+  // Claim the position synchronously (persisted) BEFORE the multi-second on-chain
+  // payout — closes the TOCTOU window so two concurrent settle/close calls can't both
+  // pass the pos.settled check above and double-pay. settle and close share this flag,
+  // so the claim also blocks the settle-vs-close cross-race. Roll back if the payout
+  // throws so a transient error doesn't permanently lock the position.
+  pos.settled = true;
+  store.set(pos.id, pos);
+  saveStore();
+
   let settleDigest: string | null = null;
   let explorer: string | null = null;
   if (net > 0) {
-    const minted = await mintMockUsdc(pos.owner, net); // protocol pays out (real on-chain)
-    settleDigest = minted.digest;
-    explorer = minted.explorer_url;
+    // Return the escrowed collateral from the treasury + mint only the realized
+    // profit, so settlement doesn't permanently inflate mUSDC by the escrow.
+    try {
+      const paid = await payoutRecyclingEscrow(pos.owner, pos.collateral_usdc, net);
+      settleDigest = paid.digest;
+      explorer = paid.explorer_url;
+    } catch (e) {
+      pos.settled = false;
+      store.set(pos.id, pos);
+      saveStore();
+      throw e;
+    }
   }
 
-  pos.settled = true;
   pos.settle_digest = settleDigest ?? undefined;
   pos.payoff_usdc = Math.round(payoff * 100) / 100;
   pos.net_usdc = net;
@@ -978,7 +1072,12 @@ export async function closeContinuousPosition(args: { owner: string; positionId:
   // market's real base (and the persisted pool) so the sell quotes against the
   // SAME liquidity the buy was sized against, even across a backend restart.
   const mkt = getContinuousMarket(pos.market_id);
-  const pool = poolBacking(pos.market_id, mkt?.pool_liquidity_usdc ?? 50_000, pos.market_sigma);
+  // Re-derive the pool against the REAL market base backing + the position's own
+  // sigma. If the market is momentarily out of cache, fall back to the position's
+  // recorded collateral as a sane base rather than a fixed 50_000 placeholder, so
+  // k isn't recalibrated against a constant after a pool reset.
+  const baseBacking = mkt?.pool_liquidity_usdc ?? Math.max(10_000, pos.collateral_usdc);
+  const pool = poolBacking(pos.market_id, baseBacking, pos.market_sigma);
   const utilization = pos.collateral_usdc / (pool || 1);
   const impactFrac = Math.min(0.2, 0.5 * utilization);
   const slippage = pos.collateral_usdc * impactFrac * 0.5;
@@ -987,15 +1086,30 @@ export async function closeContinuousPosition(args: { owner: string; positionId:
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const net = Math.max(0, r2(pos.collateral_usdc + mark - slippage - fee));
 
+  // Claim synchronously before the payout (same TOCTOU fix as settle; shares the
+  // pos.settled flag so a concurrent settle or double-click close can't also pay).
+  pos.settled = true;
+  store.set(pos.id, pos);
+  saveStore();
+
   let closeDigest: string | null = null;
   let explorer: string | null = null;
   if (net > 0) {
-    const minted = await mintMockUsdc(pos.owner, net);
-    closeDigest = minted.digest;
-    explorer = minted.explorer_url;
+    // Same escrow-recycling payout as settle: return up to the escrowed collateral
+    // from the treasury and mint only any amount above it, so an early unwind
+    // doesn't double-count the escrow as fresh supply.
+    try {
+      const paid = await payoutRecyclingEscrow(pos.owner, pos.collateral_usdc, net);
+      closeDigest = paid.digest;
+      explorer = paid.explorer_url;
+    } catch (e) {
+      pos.settled = false;
+      store.set(pos.id, pos);
+      saveStore();
+      throw e;
+    }
   }
 
-  pos.settled = true;
   pos.settle_digest = closeDigest ?? undefined;
   pos.payoff_usdc = r2(mark);
   pos.net_usdc = net;

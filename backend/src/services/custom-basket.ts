@@ -206,11 +206,21 @@ interface Candidate {
   fitScore: number;
 }
 
-function parseYesProbability(outcomePrices: string): number | null {
+// Resolve the index of the YES outcome. Polymarket does NOT guarantee outcome
+// order is [Yes, No] — match the token whose outcome label is (case-insensitive)
+// 'yes' and read the price at that index; fall back to index 0 if unresolvable.
+function resolveYesIndex(m: PolymarketMarket): number {
+  const tokenIdx = m.tokens?.findIndex((t) => t.outcome?.trim().toLowerCase() === 'yes');
+  if (typeof tokenIdx === 'number' && tokenIdx >= 0) return tokenIdx;
+  return 0;
+}
+
+function parseYesProbability(m: PolymarketMarket): number | null {
   try {
-    const arr = JSON.parse(outcomePrices);
+    const arr = JSON.parse(m.outcomePrices);
     if (Array.isArray(arr) && arr.length > 0) {
-      const p = parseFloat(arr[0]);
+      const idx = resolveYesIndex(m);
+      const p = parseFloat(arr[idx] ?? arr[0]);
       if (Number.isFinite(p) && p >= 0 && p <= 1) return p;
     }
   } catch { /* fall through */ }
@@ -229,7 +239,7 @@ function bestSideFor(
 ): Candidate | null {
   if (!m.active || m.closed) return null;
   if (!m.question || !m.id) return null;
-  const yesProb = parseYesProbability(m.outcomePrices);
+  const yesProb = parseYesProbability(m);
   if (yesProb === null) return null;
   const vol = parseFloat(m.volume);
   if (!Number.isFinite(vol) || vol < MIN_VOLUME_USD) return null;

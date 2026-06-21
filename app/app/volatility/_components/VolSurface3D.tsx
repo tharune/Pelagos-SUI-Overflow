@@ -67,7 +67,8 @@ function quantile(sorted: number[], q: number): number {
   const pos = (sorted.length - 1) * q;
   const lo = Math.floor(pos);
   const hi = Math.ceil(pos);
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  const v = sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  return Number.isFinite(v) ? v : 0;
 }
 
 export interface VolSurface3DProps {
@@ -126,7 +127,14 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     const all: number[] = [];
     for (let r = 0; r < rows; r++) {
       const row: number[] = [];
-      for (let cI = 0; cI < cols.length; cI++) { const v = sampleIv(slices[r], cols[cI]); row.push(v); all.push(v); }
+      for (let cI = 0; cI < cols.length; cI++) {
+        const raw = sampleIv(slices[r], cols[cI]);
+        // A single non-finite sampled IV would make the sort unorderable →
+        // quantile NaN → NaN vertex Y → corrupt/invisible mesh. Coerce any
+        // non-finite sample back to the slice's ATM vol (itself finite).
+        const v = Number.isFinite(raw) ? raw : slices[r].atm_iv;
+        row.push(v); all.push(v);
+      }
       grid.push(row);
     }
     // Smooth the IV grid: the short-tenor rows are microstructure-noisy, so a
@@ -145,12 +153,17 @@ export default function VolSurface3D({ surface, selectedSlice = 0, height = 380 
     // Robust scale from the SMOOTHED values + SOFT compression: linear inside
     // [p4, p90], a gentle tanh roll-off above so any residual spike is a soft bump,
     // not a clamped plateau with a cliff. Colour saturates at the top (normC).
-    const flat = sgrid.flat().sort((a, b) => a - b);
+    const flat = sgrid.flat().filter(Number.isFinite).sort((a, b) => a - b);
     let ivLo = quantile(flat, 0.04);
     let ivHi = quantile(flat, 0.93);
-    if (!(ivHi > ivLo)) { ivLo = flat[0]; ivHi = Math.max(flat[flat.length - 1], ivLo + 0.01); }
+    if (!(ivHi > ivLo)) {
+      ivLo = flat.length > 0 ? flat[0] : 0;
+      ivHi = Math.max(flat.length > 0 ? flat[flat.length - 1] : ivLo, ivLo + 0.01);
+    }
     const norm = (v: number) => {
+      if (!Number.isFinite(v)) return 0;
       const r = (v - ivLo) / (ivHi - ivLo);
+      if (!Number.isFinite(r)) return 0;
       return r <= 0 ? 0 : r <= 1 ? r : 1 + 0.16 * Math.tanh((r - 1) * 1.1);
     };
     const normC = (v: number) => Math.min(1, norm(v));

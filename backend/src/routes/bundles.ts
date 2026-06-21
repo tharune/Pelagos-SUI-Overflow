@@ -477,9 +477,24 @@ router.post('/', validate(createBundleSchema), async (req: Request, res: Respons
     //    respect them but still assess risk; otherwise the model picks.
     const userSupplied = enriched.every((e) => e.user_weight !== undefined);
     const modelResult = optimizeWeights(legMetadata);
-    const finalWeights = userSupplied
+    let finalWeights = userSupplied
       ? enriched.map((e) => e.user_weight as number)
       : modelResult.weights;
+
+    // Caller-supplied weights are untrusted. issue_price = Σ weight·prob must
+    // stay in [0,1] (it seeds nav_change), so weights must be non-negative and
+    // sum to 1. Clamp negatives/non-finite to 0, then renormalise; if the sum
+    // is non-positive fall back to equal weights.
+    if (userSupplied) {
+      const clamped = finalWeights.map((w) =>
+        Number.isFinite(w) && w > 0 ? w : 0,
+      );
+      const sum = clamped.reduce((s, w) => s + w, 0);
+      finalWeights =
+        sum > 0
+          ? clamped.map((w) => w / sum)
+          : enriched.map(() => 1 / Math.max(1, enriched.length));
+    }
 
     // 4. VaR guardrail: reject baskets whose projected tail risk exceeds the
     //    audited envelope. Record the attempt on the metrics ring buffer

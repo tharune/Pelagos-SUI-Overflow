@@ -377,10 +377,13 @@ export function quoteTranches(opts: QuoteTranchesInputs): TrancheQuote[] {
     const horizonYearsTrue = horizonDays / 365;
     const meanApyTrue = horizonYearsTrue > 0 ? ((fair / pricePerToken - 1) / horizonYearsTrue) * 100 : 0;
     const LOTTERY_UPSIDE_CAP = 5;
+    // Cap the displayed YTM at LOTTERY_UPSIDE_CAP× the true-horizon mean return.
+    // (The old Math.max(meanApyTrue, 5·meanApyTrue) always picked 5·meanApyTrue
+    // for meanApyTrue ≥ 0, so the cap never actually bound.)
     const expectedYieldPct = Math.min(
       MAX_EXPECTED_YIELD_PCT,
       ytmApyPct,
-      Math.max(meanApyTrue, LOTTERY_UPSIDE_CAP * meanApyTrue),
+      LOTTERY_UPSIDE_CAP * Math.max(0, meanApyTrue),
     );
 
     const maxOrderUsdc = dynamicOrderCapUsdc(

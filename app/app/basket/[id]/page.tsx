@@ -56,21 +56,22 @@ export default function BasketDetail() {
 
   // Fetch vault price at the top level so both the ISSUE PRICE tile and
   // the buy panel use the same authoritative on-chain price from first render.
+  // Use the SAME resolution + fetch helpers the buy panel uses
+  // (`resolveBundleUuid` + `fetchVaultPrice`) so the tile and the panel can't
+  // diverge on a hand-rolled bundles lookup.
   const [detailVaultPrice, setDetailVaultPrice] = useState<number | null>(null);
   useEffect(() => {
     if (!id) return;
-    // Resolve slug → UUID via the bundles API, then fetch vault price.
-    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:13101"}/api/bundles`)
-      .then((r) => r.json())
-      .then((bundles: Array<{ id: string; name: string }>) => {
-        const match = bundles.find((b) => b.name === id);
-        if (!match) return;
-        return fetch(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:13101"}/api/deposit/vault-price/${match.id}`
-        ).then((r) => r.json());
+    let cancelled = false;
+    resolveBundleUuid(id)
+      .then((uuid) => fetchVaultPrice(uuid))
+      .then((vp) => {
+        if (!cancelled && vp?.issue_price) setDetailVaultPrice(vp.issue_price);
       })
-      .then((vp) => { if (vp?.issue_price) setDetailVaultPrice(vp.issue_price); })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   // Resolve the basket for this id. **Live data wins when available** —
@@ -364,7 +365,7 @@ const HOW_IT_WORKS: Array<{ num: string; title: string; body: string }> = [
     title: "Settlement",
     body:
       IS_SUI
-        ? `Buy creates a Sui testnet market through the Pelagos Move package, mints Pelagos USDC, and stores the resulting Sui position object against this local basket.`
+        ? `Buy creates a Sui testnet market through the Pelagos Move package, mints demo USDC, and stores the resulting Sui position object against this local basket.`
         : "Buy signs a wallet transaction, transfers USDC into the basket vault, takes the protocol fee, and mints PBU units back to your wallet atomically.",
   },
   {
@@ -939,8 +940,12 @@ function BasketBuyPanel({
           bundleId: bundle.id,
           amountUsdc: usdcAmount,
           currency,
-          // Use vault issue price as cost basis so portfolio PnL starts at 0.
-          navAtDeposit: navPrice,   // cost basis = live Polymarket NAV shown in UI
+          // Cost basis = the price the buy is actually charged at (`entryPrice`,
+          // i.e. the vault ISSUE price, falling back to live NAV only until the
+          // on-chain issue price resolves). Recording the issue price — not live
+          // NAV — keeps portfolio PnL opening at 0, since `exit_active` pays the
+          // pool ratio (≈ issue price), not qty × live NAV.
+          navAtDeposit: entryPrice,
           onStage: (s) => setTxStage(s),
         });
         // Use the vault-authoritative token count, not the pre-estimate.
@@ -952,7 +957,10 @@ function BasketBuyPanel({
           type: "basket/deposit",
           bundleId: bundle.id,
           usdcAmount,
-          nav: navPrice,
+          // Cost basis = the issue price actually charged (see navAtDeposit
+          // above), so the sandbox avgCost matches the on-chain mint and
+          // portfolio PnL opens at 0.
+          nav: entryPrice,
           tokensOut: actualTokens,
         });
         void usdc.refresh();
@@ -967,6 +975,14 @@ function BasketBuyPanel({
       setTxSignature(null);
       setTxStage("preparing");
       try {
+        // TODO(settlement-currency): pass `currency: <held position's settlement
+        // currency>` so a dUSDC-settled deposit redeems against the dUSDC vault.
+        // We intentionally do NOT forward the in-component `currency` state here:
+        // that drives the buy/sell ticket and can differ from the currency the
+        // existing position was opened with (the user may have toggled the
+        // dropdown), so routing on it could hit the wrong vault. Thread the real
+        // per-position settlement currency once it is recorded at deposit time;
+        // until then this falls back to the mUSDC default in redeemFromBundle.
         const result = await redeemFromBundle({
           wallet,
           bundleId: bundle.id,
@@ -1157,7 +1173,10 @@ function BasketBuyPanel({
             currency={currency}
             onCurrencyChange={setCurrency}
             amount={amount}
-            setAmount={(v) => { setAmount(v); setConfirmedTokensOut(null); }}
+            // Editing the amount after a successful buy must clear the
+            // per-transaction state too — otherwise txStage stays "done" and the
+            // button locks on "✓ Position opened", blocking a second order.
+            setAmount={(v) => { setAmount(v); setConfirmedTokensOut(null); setTxStage("idle"); }}
             usdcAmount={usdcAmount}
             // Pass the LIVE on-chain USDC balance to the "Available" label.
             // We used to pass `state.usdc` (the in-memory sandbox counter),
@@ -1186,7 +1205,10 @@ function BasketBuyPanel({
             navPrice={navPrice}
             vaultState={vaultState}
             sellQtyInput={sellQtyInput}
-            setSellQtyInput={setSellQtyInput}
+            // Same reset as the buy amount: editing sell qty after a successful
+            // redeem clears txStage so the button leaves "✓ Position redeemed"
+            // and a second redeem works without a tab toggle.
+            setSellQtyInput={(v) => { setSellQtyInput(v); setTxStage("idle"); }}
             sellQty={sellQty}
             sellUsdcNotional={sellUsdcNotional}
             sellFees={sellFees}
@@ -1207,7 +1229,10 @@ function BasketBuyPanel({
             productType="basket"
             bundleId={bundle.id}
             walletAddress={activeAddress || null}
-            sizeUsdc={heldQty}
+            // `heldQty` is a PBU TOKEN count; MmDeskBid wants a USD notional.
+            // Convert at the per-unit issue price (live NAV as a fallback) so the
+            // desk bid isn't mispriced by the issue-price factor.
+            sizeUsdc={heldQty * (vaultIssuePrice ?? navPrice)}
             disabled={!appConnected}
             onSold={() => {
               if (activeAddress && resolvedBundleUuid) {
@@ -1254,6 +1279,7 @@ function BasketBuyPanel({
             type="button"
             onClick={handlePrimary}
             disabled={!buttonActive}
+            aria-busy={txBusy}
             style={{
               width: "100%",
               height: 44,
@@ -1292,6 +1318,7 @@ function BasketBuyPanel({
             context. */}
         {txError && (
           <div
+            role="alert"
             style={{
               fontFamily: FM,
               fontSize: 11,
@@ -1309,26 +1336,30 @@ function BasketBuyPanel({
           </div>
         )}
         {txSignature && (
-          <a
-            href={explorerTxUrl(txSignature)}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              fontFamily: FM,
-              fontSize: 11,
-              color: accent,
-              background: `${accent}14`,
-              border: `0.5px solid ${accent}55`,
-              borderRadius: 8,
-              padding: "8px 12px",
-              letterSpacing: "0.02em",
-              fontWeight: 500,
-              textAlign: "center",
-              textDecoration: "none",
-            }}
-          >
-            View on Sui Explorer ↗
-          </a>
+          <div role="status" aria-live="polite">
+            <a
+              href={explorerTxUrl(txSignature)}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${mode === "buy" ? "Position opened" : "Position redeemed"} — view on Sui Explorer`}
+              style={{
+                display: "block",
+                fontFamily: FM,
+                fontSize: 11,
+                color: accent,
+                background: `${accent}14`,
+                border: `0.5px solid ${accent}55`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                letterSpacing: "0.02em",
+                fontWeight: 500,
+                textAlign: "center",
+                textDecoration: "none",
+              }}
+            >
+              View on Sui Explorer ↗
+            </a>
+          </div>
         )}
       </div>
 

@@ -143,7 +143,7 @@ export interface PpnPrepareResponse {
   transaction_digest?: string;
   tx_bytes?: string;
   sender?: string;
-  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
+  dry_run?: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
 export interface PpnConfirmResponse {
@@ -173,7 +173,7 @@ export interface PpnRedeemPrepareResponse {
   transaction_digest?: string;
   tx_bytes?: string;
   sender?: string;
-  dry_run?: { ok: boolean; status: string; gas_used?: string; error?: string };
+  dry_run?: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
 export interface PpnRedeemConfirmResponse {
@@ -281,23 +281,34 @@ export async function fetchTrancheSellRfq(args: {
 export interface PpnPortfolioEntry {
   vault_id: string;
   bundle_id: string;
-  bundle_name: string;
-  bundle_status: string;
+  // bundle_name is resolved from bundle_id on the backend (getBundleById), but
+  // may be absent on rows that predate that resolution — the hydrate falls back
+  // to bundle_id, so keep it optional rather than asserting it always lands.
+  bundle_name?: string;
+  bundle_status?: string;
   principal_usdc: number;
-  yield_deployed_usdc: number;
+  // = position principal_usdc on the backend; older rows can omit it, so the
+  // hydrate guards with `?? 0` and it stays optional here.
+  yield_deployed_usdc?: number;
   accrued_yield: number;
-  projected_total_yield: number;
-  estimated_apy: number;
+  projected_total_yield?: number;
+  // Defaults to 8 on the backend when no Supabase row matches, but legacy rows
+  // can still send null — the hydrate's apyPct is null-safe.
+  estimated_apy: number | null;
   status: "active" | "matured" | "withdrawn";
   days_elapsed: number;
   days_remaining: number;
-  maturity_date: string;
-  created_at: string;
-  total_value: number;
+  // Backend can send null for these when the Supabase term metadata is missing.
+  maturity_date: string | null;
+  created_at: string | null;
+  // The backend values each row as `current_value`; older code referenced
+  // `total_value`. Accept either so a field rename never blanks the row.
+  current_value?: number;
+  total_value?: number;
   tranche_kind: "senior" | "mezzanine" | "junior" | null;
-  tranche_attach: number | null;
-  tranche_detach: number | null;
-  price_per_token: number | null;
+  tranche_attach?: number | null;
+  tranche_detach?: number | null;
+  price_per_token?: number | null;
 }
 
 export interface PpnPortfolio {
@@ -306,7 +317,8 @@ export interface PpnPortfolio {
   summary: {
     total_vaults: number;
     total_principal: number;
-    total_accrued_yield: number;
+    // Omitted on the empty-portfolio response, so keep it optional.
+    total_accrued_yield?: number;
     total_value: number;
     principal_protected: boolean;
   };
@@ -348,7 +360,11 @@ export async function ppnDeposit(args: {
   confirm: PpnConfirmResponse;
 }> {
   const owner = requireWallet(args.wallet);
-  const bundleUuid = await resolveBundleUuidForPpn(args.bundleId).catch(() => args.bundleId);
+  // Do NOT swallow a resolution failure: forwarding the raw UI bundle id to
+  // /prepare AND /confirm would desync the ledger and risk routing funds to
+  // the wrong note. Let the descriptive PpnError propagate so the deposit
+  // fails loudly instead of silently mis-routing.
+  const bundleUuid = await resolveBundleUuidForPpn(args.bundleId);
 
   const prepare = await postJson<PpnPrepareResponse>("/api/ppn/onchain/prepare", {
     bundle_id: bundleUuid,
@@ -388,6 +404,9 @@ export async function ppnRedeem(args: {
   vaultId?: string;
   bundleId?: string;
   trancheKind?: "senior" | "mezzanine" | "junior";
+  /** Settlement currency of the note/tranche — routes to the mUSDC or dUSDC
+   *  vault. Must match the currency the note was opened with. Defaults to mUSDC. */
+  currency?: "mUSDC" | "dUSDC";
   confirmationTimeoutMs?: number;
 }): Promise<{
   signature: string;
@@ -398,6 +417,7 @@ export async function ppnRedeem(args: {
 
   const prepare = await postJson<PpnRedeemPrepareResponse>("/api/ppn/onchain/redeem/prepare", {
     wallet_address: owner,
+    currency: args.currency ?? "mUSDC",
     ...(args.bundleId ? { bundle_id: args.bundleId } : {}),
     ...(args.vaultId ? { vault_id: args.vaultId } : {}),
     ...(args.trancheKind ? { tranche_kind: args.trancheKind } : {}),
@@ -422,13 +442,16 @@ export async function ppnCloseEarly(args: {
   wallet: WalletSigner;
   vaultId: string;
   minProceedsUsdc?: number;
+  /** Settlement currency of the note/tranche — routes to the mUSDC or dUSDC
+   *  vault. Must match the currency the note was opened with. Defaults to mUSDC. */
+  currency?: "mUSDC" | "dUSDC";
   confirmationTimeoutMs?: number;
 }): Promise<{
   signature: string;
   prepare: PpnClosePrepareResponse;
   confirm: PpnCloseConfirmResponse;
 }> {
-  const redeemed = await ppnRedeem({ wallet: args.wallet, vaultId: args.vaultId });
+  const redeemed = await ppnRedeem({ wallet: args.wallet, vaultId: args.vaultId, currency: args.currency });
   return {
     signature: redeemed.signature,
     prepare: {

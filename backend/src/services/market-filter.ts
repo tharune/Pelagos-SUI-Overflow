@@ -105,11 +105,24 @@ function parseVolume(v: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Resolve the index of the YES outcome. Polymarket does NOT guarantee the
+ * outcome order is [Yes, No] — match the outcome/token whose label is
+ * (case-insensitive) 'yes' and read the price at that index. Falls back to
+ * index 0 only when the YES label can't be located.
+ */
+function resolveYesIndex(m: PolymarketMarket): number {
+  const tokenIdx = m.tokens?.findIndex((t) => t.outcome?.trim().toLowerCase() === 'yes');
+  if (typeof tokenIdx === 'number' && tokenIdx >= 0) return tokenIdx;
+  return 0;
+}
+
 function parseYesProbability(m: PolymarketMarket): number | null {
   try {
     const parsed = JSON.parse(m.outcomePrices);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      const p = parseFloat(parsed[0]);
+      const idx = resolveYesIndex(m);
+      const p = parseFloat(parsed[idx] ?? parsed[0]);
       if (Number.isFinite(p)) return p;
     }
   } catch {

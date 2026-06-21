@@ -281,10 +281,31 @@ export function optimizeWeights(
   const sumRaw = raw.reduce((s, v) => s + v, 0);
   let weights = raw.map((v) => v / sumRaw);
 
-  // Clamp + renormalise
-  weights = weights.map((w) => Math.max(floor, Math.min(cap, w)));
+  // Clamp to [floor, cap] via iterative water-filling. A single clamp +
+  // renormalise re-pushes weights back outside the band (renormalising scales
+  // every weight, including the ones already at the cap/floor). Instead: clamp,
+  // then redistribute the residual ONLY across the still-free legs, and repeat
+  // until everything is within the band (or we hit the iteration cap). These
+  // weights are written on-chain into the vault allocation, so respecting the
+  // bounds matters. Final renormalise guarantees Σ = 1.
+  const feasibleFloor = n * floor <= 1 ? floor : 1 / n;
+  const feasibleCap = n * cap >= 1 ? cap : 1 / n;
+  for (let iter = 0; iter < 50; iter++) {
+    let excess = 0;
+    const free: number[] = [];
+    weights = weights.map((w, i) => {
+      if (w > feasibleCap) { excess += w - feasibleCap; return feasibleCap; }
+      if (w < feasibleFloor) { excess -= feasibleFloor - w; return feasibleFloor; }
+      free.push(i);
+      return w;
+    });
+    if (Math.abs(excess) < 1e-9 || free.length === 0) break;
+    const freeSum = free.reduce((s, i) => s + weights[i], 0);
+    if (freeSum <= 0) break;
+    for (const i of free) weights[i] = weights[i] + (weights[i] / freeSum) * excess;
+  }
   const sumClamped = weights.reduce((s, v) => s + v, 0);
-  weights = weights.map((w) => w / sumClamped);
+  weights = sumClamped > 0 ? weights.map((w) => w / sumClamped) : new Array(n).fill(1 / n);
 
   // Expected internal correlation under the computed weights
   let ic = 0;

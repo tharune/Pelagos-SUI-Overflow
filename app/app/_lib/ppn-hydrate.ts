@@ -35,12 +35,20 @@ export function looksLikeTranche(v: PpnPortfolioEntry): boolean {
   );
 }
 
+/** Default headline APY (percent) when the backend row carries no rate. */
+const DEFAULT_APY_PCT = 8;
+
 /**
  * Backend sends `estimated_apy` as a 0..1 fraction (e.g. 0.08 for 8%). UI
  * layers want a percentage (8). Values already > 1 are left alone so a
  * future backend switch to percent won't double-up.
+ *
+ * A null/undefined/NaN rate (legacy rows, or the Supabase lookup missing)
+ * falls back to the default rather than collapsing to 0% — a 0% headline on a
+ * protected note reads as broken.
  */
-export function apyPct(apy: number): number {
+export function apyPct(apy: number | null | undefined): number {
+  if (apy == null || !Number.isFinite(apy)) return DEFAULT_APY_PCT;
   return apy <= 1 ? apy * 100 : apy;
 }
 
@@ -59,7 +67,11 @@ export function apyPct(apy: number): number {
 export function mergePpnVaults(portfolio: PpnPortfolio): PpnVault[] {
   const ppnMap = new Map<string, PpnVault>();
   for (const v of portfolio.vaults.filter((x) => !looksLikeTranche(x))) {
-    const createdAt = new Date(v.created_at).getTime();
+    // Date.parse returns NaN for malformed/empty timestamps; a NaN createdAt
+    // would poison maturity (createdAt + days·ms) and the principal-weighted
+    // APY blend below. Fall back to "now" so the row still renders coherently.
+    const tParsed = v.created_at ? Date.parse(v.created_at) : NaN;
+    const createdAt = Number.isFinite(tParsed) ? tParsed : Date.now();
     const maturityDays = v.days_elapsed + v.days_remaining;
     const existing = ppnMap.get(v.bundle_id);
     if (existing) {
@@ -72,18 +84,24 @@ export function mergePpnVaults(portfolio: PpnPortfolio): PpnVault[] {
         0,
         (nextMaturityMs - nextCreatedAt) / 86_400_000,
       );
-      const totalPrincipal = existing.principal + v.principal_usdc;
+      const incomingPrincipal = Number.isFinite(v.principal_usdc)
+        ? v.principal_usdc
+        : 0;
+      const incomingApy = Number.isFinite(apyPct(v.estimated_apy))
+        ? apyPct(v.estimated_apy)
+        : existing.apy;
+      const totalPrincipal = existing.principal + incomingPrincipal;
       const blendedApy =
         totalPrincipal > 0
           ? (existing.apy * existing.principal +
-              apyPct(v.estimated_apy) * v.principal_usdc) /
+              incomingApy * incomingPrincipal) /
             totalPrincipal
           : existing.apy;
       ppnMap.set(v.bundle_id, {
         id: existing.id,
         bundleId: existing.bundleId,
         principal: totalPrincipal,
-        basketAmount: existing.basketAmount + v.yield_deployed_usdc,
+        basketAmount: existing.basketAmount + (v.yield_deployed_usdc ?? 0),
         apy: blendedApy,
         createdAt: nextCreatedAt,
         maturityDays: nextMaturityDays,
@@ -94,7 +112,7 @@ export function mergePpnVaults(portfolio: PpnPortfolio): PpnVault[] {
         id: v.vault_id,
         bundleId: v.bundle_id,
         principal: v.principal_usdc,
-        basketAmount: v.yield_deployed_usdc,
+        basketAmount: v.yield_deployed_usdc ?? 0,
         apy: apyPct(v.estimated_apy),
         createdAt,
         maturityDays,
@@ -128,7 +146,10 @@ export function mergeTranches(portfolio: PpnPortfolio): TranchePosition[] {
     const pricePerToken =
       v.price_per_token && v.price_per_token > 0 ? v.price_per_token : 1;
     const kind = (v.tranche_kind ?? "senior") as Kind;
-    const createdAt = new Date(v.created_at).getTime();
+    // Date.parse → NaN on bad timestamps would poison maturity + the
+    // qty-weighted APY blend; fall back to "now" so the row stays coherent.
+    const tParsed = v.created_at ? Date.parse(v.created_at) : NaN;
+    const createdAt = Number.isFinite(tParsed) ? tParsed : Date.now();
     const maturityDays = v.days_elapsed + v.days_remaining;
     const maturityMs = createdAt + maturityDays * 86_400_000;
     const qty = v.principal_usdc / pricePerToken;
@@ -165,7 +186,7 @@ export function mergeTranches(portfolio: PpnPortfolio): TranchePosition[] {
     } else {
       trancheMap.set(key, {
         bundleId: v.bundle_id,
-        bundleName: v.bundle_name,
+        bundleName: v.bundle_name ?? v.bundle_id,
         kind,
         qty,
         avgCost: pricePerToken,

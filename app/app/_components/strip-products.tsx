@@ -134,6 +134,7 @@ export function Slider({
       <input
         type="range"
         className="mk-range"
+        aria-label={label}
         min={min}
         max={max}
         step={step}
@@ -185,15 +186,20 @@ const OB_TFS: Array<{ k: string; span: number }> = [
 export function OrderBook({ oracleId, levels = 16 }: { oracleId?: string; levels?: number }) {
   const [tf, setTf] = useState("15m");
   const [quote, setQuote] = useState<StripQuote | null>(null);
+  // Distinguish the three terminal states the book can be in: still loading the
+  // first snapshot, loaded-but-empty (no tradeable depth), and a fetch error.
+  // Without this an empty/failed book shows "loading…" forever.
+  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
   const [pulse, setPulse] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setStatus("loading");
     const span = OB_TFS.find((t) => t.k === tf)?.span ?? 2.6;
     const load = () =>
       stripPreview({ oracle_id: oracleId, n: levels, span_sigma: span, budget_usd: 2000 })
-        .then((q) => { if (alive) { setQuote(q); setPulse((p) => p + 1); } })
-        .catch(() => {});
+        .then((q) => { if (alive) { setQuote(q); setStatus("ok"); setPulse((p) => p + 1); } })
+        .catch(() => { if (alive) setStatus("error"); });
     load();
     const timer = window.setInterval(load, 4500);
     return () => { alive = false; window.clearInterval(timer); };
@@ -222,9 +228,14 @@ export function OrderBook({ oracleId, levels = 16 }: { oracleId?: string; levels
     c = 0; const bidCum = new Map<number, number>();
     for (let i = 0; i < bids.length; i++) { c += bids[i].size; bidCum.set(i, c); }
     const maxCum = Math.max(...Array.from(askCum.values()), ...Array.from(bidCum.values()), 1);
-    const bestAsk = asks.length ? asks[asks.length - 1].ask : 0;
-    const bestBid = bids.length ? bids[0].bid : 0;
-    return { fwd, asks, bids, askCum, bidCum, maxCum, spread: Math.max(0, bestAsk - bestBid) };
+    // Touch spread = ask − bid of the SINGLE bucket straddling the forward. The
+    // old code subtracted bestBid (a below-forward bucket) from bestAsk (an
+    // above-forward bucket), mixing two different buckets' dollar costs into a
+    // meaningless number. Pricing the same bucket's mint-cost vs redeem-value is
+    // a real round-trip cost. Falls back to null when no bucket straddles fwd.
+    const straddle = rows.find((r) => r.lo <= fwd && r.hi >= fwd);
+    const spread = straddle ? Math.max(0, straddle.ask - straddle.bid) : null;
+    return { fwd, asks, bids, askCum, bidCum, maxCum, spread };
   }, [quote]);
 
   return (
@@ -241,7 +252,15 @@ export function OrderBook({ oracleId, levels = 16 }: { oracleId?: string; levels
       </div>
       <div className="cb-cols"><span>Price</span><span>Size</span><span>Total</span></div>
       {!view ? (
-        <div className="cb-empty">loading the live book…</div>
+        <div className="cb-empty">
+          {status === "error"
+            ? "Order book unavailable"
+            : status === "ok"
+              ? "No live depth"
+              : "loading the live book…"}
+        </div>
+      ) : view.asks.length === 0 && view.bids.length === 0 ? (
+        <div className="cb-empty">No live depth</div>
       ) : (
         <>
           <div className="cb-side">
@@ -259,7 +278,7 @@ export function OrderBook({ oracleId, levels = 16 }: { oracleId?: string; levels
           </div>
           <div className="cb-spread">
             <span className="cb-mid">{dollars(view.fwd)}</span>
-            <span className="cb-spread-v">spread {view.spread > 0 ? `$${view.spread.toFixed(2)}` : "—"}</span>
+            <span className="cb-spread-v">spread {view.spread != null && view.spread > 0 ? `$${view.spread.toFixed(2)}` : "—"}</span>
           </div>
           <div className="cb-side">
             {view.bids.map((r, i) => {
@@ -522,8 +541,8 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
             needUsdc={quote ? Number(quote.budget_raw) / 1e6 : budgetNum}
             currency={currency}
           />
-          {result && <ResultLine digest={result} label="Protected note opened" />}
-          {openErr && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}
+          {result && <div role="status" aria-live="polite"><ResultLine digest={result} label="Protected note opened" /></div>}
+          {openErr && <div role="alert" style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}
         </div>
       </main>
     </div>

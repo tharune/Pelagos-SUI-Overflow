@@ -56,17 +56,24 @@ export interface SimPosition {
 const STORE_FILE = path.resolve(process.cwd(), '.sim-positions.json');
 const positions = new Map<string, SimPosition>();
 let loaded = false;
+let loadPromise: Promise<void> | null = null;
 
 async function load(): Promise<void> {
   if (loaded) return;
-  loaded = true;
-  try {
-    const raw = await fs.readFile(STORE_FILE, 'utf8');
-    const arr = JSON.parse(raw) as SimPosition[];
-    for (const p of arr) positions.set(p.sim_id, p);
-  } catch {
-    /* fresh store */
-  }
+  // Memoize the in-flight load PROMISE so concurrent cold-start callers all await
+  // the SAME read and never observe an empty Map mid-load. `loaded` flips to true
+  // only AFTER the read completes, so the fast-path above is correct thereafter.
+  loadPromise ??= (async () => {
+    try {
+      const raw = await fs.readFile(STORE_FILE, 'utf8');
+      const arr = JSON.parse(raw) as SimPosition[];
+      for (const p of arr) positions.set(p.sim_id, p);
+    } catch {
+      /* fresh store */
+    }
+    loaded = true;
+  })();
+  await loadPromise;
 }
 async function persist(): Promise<void> {
   try {
@@ -138,6 +145,15 @@ export async function confirmSimOpen(simId: string, digest: string): Promise<Sim
   if (!pos) throw new Error(`unknown sim position ${simId}`);
   if (!digest || !digest.trim()) throw new Error('a real settlement digest is required to confirm');
   if (pos.status === 'settled') throw new Error(`sim position ${simId} is already settled`);
+  // Idempotent: if this position already carries a confirmed open_digest, treat a
+  // repeat /confirm as a no-op replay rather than silently overwriting the digest
+  // with a different (possibly spoofed) one. NOTE: we accept any non-empty digest
+  // here without on-chain verification — a full getTransactionBlock check that the
+  // digest is a real deposit into this label's vault would be the hardened path.
+  if (pos.open_digest && pos.open_digest !== digest) {
+    throw new Error(`sim position ${simId} already confirmed with a different digest`);
+  }
+  if (pos.status === 'open' && pos.open_digest === digest) return pos;
   pos.status = 'open';
   pos.open_digest = digest;
   await persist();
@@ -182,6 +198,13 @@ export interface SimSettleResult {
   explorer_url: string | null;
 }
 
+// In-flight settle reservations — closes the TOCTOU double-mint window in settleSim:
+// the status flag is only persisted AFTER the async mint, so two concurrent settles
+// would both pass the status check and mint twice. This Set makes the reservation
+// synchronous (a concurrent caller throws 'in progress'; once the first completes and
+// persists status='settled', a later call replays the booked result).
+const settlingSim = new Set<string>();
+
 /** Compute the payoff and mint exactly that much mUSDC to the holder. */
 export async function settleSim(simId: string): Promise<SimSettleResult> {
   await load();
@@ -200,31 +223,37 @@ export async function settleSim(simId: string): Promise<SimSettleResult> {
       explorer_url: null,
     };
   }
-  const fwd = await settlementForward(pos);
-  // Cap at max payout, floor at 0, and never let a non-finite value reach the mint.
-  const cap = Number.isFinite(pos.max_payout_usd) ? pos.max_payout_usd : realizedPayoff(pos, fwd);
-  const payoff = Math.max(0, Math.min(realizedPayoff(pos, fwd), cap));
-  if (!Number.isFinite(payoff)) throw new Error(`settlement produced a non-finite payoff for ${simId}`);
-  let mintDigest: string | null = null;
-  let explorer: string | null = null;
-  if (payoff > 0) {
-    const r = await mintMockUsdc(pos.owner, payoff);
-    mintDigest = r.digest;
-    explorer = r.explorer_url;
+  if (settlingSim.has(simId)) throw new Error(`settlement already in progress for ${simId}`);
+  settlingSim.add(simId);
+  try {
+    const fwd = await settlementForward(pos);
+    // Cap at max payout, floor at 0, and never let a non-finite value reach the mint.
+    const cap = Number.isFinite(pos.max_payout_usd) ? pos.max_payout_usd : realizedPayoff(pos, fwd);
+    const payoff = Math.max(0, Math.min(realizedPayoff(pos, fwd), cap));
+    if (!Number.isFinite(payoff)) throw new Error(`settlement produced a non-finite payoff for ${simId}`);
+    let mintDigest: string | null = null;
+    let explorer: string | null = null;
+    if (payoff > 0) {
+      const r = await mintMockUsdc(pos.owner, payoff);
+      mintDigest = r.digest;
+      explorer = r.explorer_url;
+    }
+    pos.status = 'settled';
+    pos.payoff_usd = payoff;
+    pos.settle_digest = mintDigest;
+    await persist();
+    return {
+      sim_id: simId,
+      settlement_forward_usd: fwd,
+      payoff_usd: payoff,
+      premium_usd: pos.premium_usd,
+      pnl_usd: payoff - pos.premium_usd,
+      mint_digest: mintDigest,
+      explorer_url: explorer,
+    };
+  } finally {
+    settlingSim.delete(simId);
   }
-  pos.status = 'settled';
-  pos.payoff_usd = payoff;
-  pos.settle_digest = mintDigest;
-  await persist();
-  return {
-    sim_id: simId,
-    settlement_forward_usd: fwd,
-    payoff_usd: payoff,
-    premium_usd: pos.premium_usd,
-    pnl_usd: payoff - pos.premium_usd,
-    mint_digest: mintDigest,
-    explorer_url: explorer,
-  };
 }
 
 export async function listSimPositions(owner: string): Promise<SimPosition[]> {

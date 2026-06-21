@@ -51,9 +51,9 @@ const SECTIONS: DocSection[] = [
     label: "DeepBook Predict",
     pages: [
       { id: "dbp-primitives",  label: "Binary & range",    render: () => <DbpPrimitives /> },
-      { id: "dbp-pricing",     label: "Live MM pricing",   render: () => <DbpPricing /> },
-      { id: "dbp-oracle",      label: "SVI oracle & expiries", render: () => <DbpOracle /> },
-      { id: "dbp-strip",       label: "The range strip",   render: () => <DbpStrip /> },
+      { id: "dbp-pricing",     label: "Live pricing",      render: () => <DbpPricing /> },
+      { id: "dbp-oracle",      label: "Oracle & expiries", render: () => <DbpOracle /> },
+      { id: "dbp-strip",       label: "The strip",         render: () => <DbpStrip /> },
     ],
   },
   {
@@ -477,70 +477,83 @@ function WhatIsPelagos() {
   return (
     <>
       <P>
-        Pelagos turns prediction-market outcomes into clean, tradeable{" "}
-        <B>structured products</B> on Sui, priced and settled on{" "}
-        <B>DeepBook Predict</B>. The flagship is a continuous view of where
-        an asset lands — drag a mean and a width, and Pelagos mints exactly
-        the basket of real on-chain range-options that expresses it, in one
-        wallet signature.
+        Pelagos is a <B>structured-products desk for prediction markets</B>,
+        built on Sui. It takes the simple yes/no contracts that a prediction
+        protocol exposes and packages them into the kind of instruments a
+        trading desk actually uses — options chains, volatility structures,
+        diversified baskets, principal-protected notes, and seniority slices —
+        each priced and settled on-chain through{" "}
+        <B>DeepBook Predict</B>, Mysten&apos;s on-chain prediction protocol.
       </P>
       <P>
-        Everything on the pricing and settlement path is real. Each contract
-        is a DeepBook Predict range with a $1 binary payout, priced live off
-        the protocol&apos;s own bid/ask via{" "}
-        <Code>get_range_trade_amounts</Code> and settled natively on chain.
-        No number on the pricing path is invented or linearly interpolated.
+        The point is to let you express a <B>nuanced market view</B> in a
+        single, well-defined position. Instead of placing one bet on one
+        outcome, you can take a view on <B>where</B> an asset lands, on{" "}
+        <B>how much it moves</B>, or on a whole <B>portfolio</B> of unrelated
+        events — and have Pelagos assemble and settle the underlying contracts
+        for you, in one wallet signature where possible.
       </P>
-      <SubHeading>One engine, five shapes</SubHeading>
       <P>
-        Under the hood every Pelagos product is the <B>same range-strip
-        engine</B> with a different parameterisation. A strip is a set of
-        adjacent Predict ranges, weighted by a Normal(μ, σ) mass, that
-        reproduces a distributional view as a payoff. Change what μ and σ
-        mean and you get a different product:
+        Everything on the pricing and settlement path is real. Each leg is a
+        live DeepBook Predict contract with a $1 binary payout, quoted off the
+        protocol&apos;s own order book and settled natively on chain. Pelagos
+        reads live prices and builds the transaction; it does not invent marks
+        or quote a synthetic price that the protocol would not honour.
+      </P>
+      <SubHeading>The product suite</SubHeading>
+      <P>
+        Five product families share one settlement engine. Each is documented
+        in full under <B>Products</B> — what it is, when you would use it, how
+        the payoff works, and how to trade it step by step:
       </P>
       <UL
         items={[
           <>
-            <B>Distributed Options</B> — a live BTC options chain, every
-            strike a Predict range priced off real liquidity.
+            <B>Distributed Options</B> — a live BTC options chain. Calls and
+            puts at every strike and expiry, each a $1 binary settled on Sui.
           </>,
           <>
-            <B>Volatility</B> — prebuilt vol structures (straddle, strangle,
-            butterfly, iron condor) with a live payoff diagram, greeks, and a
-            delta-hedge sleeve.
+            <B>Volatility</B> — prebuilt volatility structures (straddle,
+            strangle, butterfly, iron condor) with a live payoff diagram,
+            greeks, and an optional delta-hedge leg.
           </>,
           <>
-            <B>Distribution Markets</B> — the raw range ladder: a μ/σ view
-            minted as N weighted buckets.
+            <B>Distribution Markets</B> — take a view on the full distribution
+            of where an asset settles, not just one strike.
           </>,
           <>
-            <B>Risk Slices</B> — the same strip taken at senior / mezzanine /
-            junior widths (0.5σ / 1.0σ / 2.0σ).
+            <B>Tranches (Risk Slices)</B> — senior, mezzanine, and junior
+            seniority slices of the same view, from high-probability/low-payout
+            to convex/high-payout.
           </>,
           <>
-            <B>Protected Notes</B> — a principal floor supplied to the PLP
-            vault, paired with a range-strip upside sleeve.
+            <B>Protected Notes</B> — a position sized to a principal floor and
+            paired with an upside sleeve.
           </>,
         ]}
       />
+      <P>
+        A sixth surface, <B>Event Baskets</B>, bundles unrelated
+        prediction-market events into a single diversified position.
+      </P>
       <SubHeading>Two interfaces</SubHeading>
       <P>
         A global <B>Basic / Advanced</B> toggle in the header reskins every
-        product. Basic is clean, guided, and prebuilt. Advanced is the
-        institutional desk: order books, an interactive 3D SVI vol surface,
-        the risk-slice tranching engine, full greeks, and on-chain
-        deployment detail. The toggle, the light/dark theme, and{" "}
-        <Code>?mode=</Code> / <Code>?theme=</Code> deep links all persist
-        per browser.
+        product. Basic is clean, guided, and prebuilt — pick a structure and
+        open it. Advanced is the institutional desk: order books, an
+        interactive 3D volatility surface, the tranching engine, full greeks,
+        and on-chain deployment detail. The toggle, the light/dark theme, and{" "}
+        <Code>?mode=</Code> / <Code>?theme=</Code> deep links all persist per
+        browser, so a link opens the exact view you shared.
       </P>
       <SubHeading>Non-custodial by construction</SubHeading>
       <P>
-        The backend is a pricing and orchestration layer that builds{" "}
-        <B>unsigned</B> programmable transaction blocks. The user&apos;s
-        wallet signs and executes them, and the user&apos;s wallet owns the
-        on-chain <Code>PredictManager</Code> that gates every mint and
-        redeem. The backend never custodies user funds.
+        Pelagos never holds your funds. Its backend is a pricing and
+        orchestration layer that builds <B>unsigned</B> transactions; your
+        wallet signs and executes every one, and your wallet owns the on-chain
+        account that gates every mint and redeem. Positions mint and settle
+        on-chain on Sui, in your name. The <B>Non-custodial flow</B> page below
+        walks the full prepare → sign → confirm path.
       </P>
     </>
   );
@@ -551,43 +564,44 @@ function ProductSuite() {
     <>
       <P>
         Pelagos ships a full structured-product suite over one shared,
-        real-priced strip engine. The primary navigation is{" "}
+        live-priced settlement engine. The primary navigation is{" "}
         <B>Portfolio · Distributed Options · Volatility · DeepBook · Baskets ·
-        About</B>. The table below maps each product to the Predict primitive
-        it is built from.
+        About</B>. The table below is a quick map of what each product is and
+        when you would reach for it; each has its own page under{" "}
+        <B>Products</B> with the full how-to.
       </P>
       <Table
-        cols={["Product", "What it is", "Predict mapping"]}
+        cols={["Product", "What it is", "When you'd use it"]}
         rows={[
           [
             "Distributed Options",
             "Live BTC options chain — calls and puts across every on-chain expiry (≈15m → 22d), each a $1 binary settled on Sui.",
-            "Per-strike DeepBook Predict range, priced live off the protocol&apos;s own bid/ask.",
+            "You have a directional view on BTC by a specific time and want a clean, capped option position.",
           ],
           [
             "Volatility",
-            "Implied-vs-realized vol with prebuilt structures, a live payoff diagram, greeks, and a delta-hedge sleeve. Advanced adds a 3D SVI surface.",
-            "Multi-leg range strips; greeks computed off the live SVI smile.",
+            "Prebuilt vol structures (straddle, strangle, butterfly, iron condor) with a live payoff diagram, greeks, and an optional delta-hedge leg. Advanced adds a 3D vol surface.",
+            "You have a view on how much an asset moves, regardless of direction — high vol, low vol, or pinned to a level.",
           ],
           [
             "Distribution Markets",
-            "A continuous μ/σ view minted as N weighted range buckets — the raw range ladder.",
-            "buildStripBuckets → N on-grid mint_range buckets weighted by Normal mass.",
+            "Take a view on the full distribution of where an asset settles — a centre and a width — rather than a single strike.",
+            "You think the market is mispricing the shape or location of the outcome distribution, not just up vs down.",
           ],
           [
-            "Risk Slices",
-            "Senior, mezzanine, and junior risk appetites on the same underlying strip.",
-            "The same strip at 0.5σ / 1.0σ / 2.0σ width — narrow ATM is high hit-rate / low multiple, wide is convex / low hit-rate / high multiple.",
+            "Tranches (Risk Slices)",
+            "Senior, mezzanine, and junior seniority slices of the same view — from high-probability/low-payout to convex/high-payout.",
+            "You want to dial the same thesis to your risk appetite: steady and likely, or aggressive and convex.",
           ],
           [
             "Protected Notes",
-            "A principal floor plus capped upside, sized to a chosen floor percentage.",
-            "Floor sleeve → predict::supply (PLP yield); upside sleeve → a range strip; both in one PTB.",
+            "A position sized to a principal floor, paired with an upside sleeve.",
+            "You want defined downside with participation in the upside of a view.",
           ],
           [
-            "Baskets",
-            "Curated DeepBook recipes plus diversified prediction-market event baskets, de-correlated by an NLP layer.",
-            "Named μ/σ presets over the live oracle (Predict) and order-book-priced event legs on Pelagos&apos;s own vault (Pelagos USDC).",
+            "Event Baskets",
+            "A diversified bundle of unrelated prediction-market events in a single position, plus curated one-click DeepBook recipes.",
+            "You want broad exposure to many events at once without hand-picking and sizing each one.",
           ],
         ]}
       />
@@ -595,29 +609,30 @@ function ProductSuite() {
       <P>
         Every product reads from the same backend and writes through the same
         non-custodial prepare / sign / confirm flow. The{" "}
-        <DocLink href="/app/portfolio">Portfolio</DocLink> view aggregates
-        holdings across products with live mark-to-market, P&amp;L, and
-        per-strategy backtests on real price history.
+        <DocLink href="/app/portfolio">Portfolio</DocLink> view aggregates your
+        holdings across all products with live mark-to-market and running
+        P&amp;L, marking each open position to the price the protocol would pay
+        to redeem it right now.
       </P>
       <SubHeading>Where each lives</SubHeading>
       <UL
         items={[
           <>
             <DocLink href="/app/distribution">Distributed Options</DocLink>{" "}
-            — the BTC chain and the distribution range ladder.
+            — the BTC options chain and the distribution view.
           </>,
           <>
             <DocLink href="/app/volatility">Volatility</DocLink> — vol
-            structures, the SVI surface, and the multi-leg builder.
+            structures, the 3D surface, and the multi-leg builder.
           </>,
           <>
             <DocLink href="/app/deepbook">DeepBook</DocLink> — prebuilt range
             strategies and Protected Notes.
           </>,
           <>
-            <DocLink href="/app/basket">Baskets</DocLink> — DeepBook recipes
-            and prediction-market event baskets, with the Risk Slices tranching
-            engine in Advanced.
+            <DocLink href="/app/basket">Baskets</DocLink> — curated DeepBook
+            recipes and diversified event baskets, with the tranching engine in
+            Advanced.
           </>,
         ]}
       />
@@ -641,10 +656,9 @@ function Architecture() {
       │  wallet-signed PTBs (@mysten/dapp-kit)
       ▼
 Express API       :13101   builds UNSIGNED tx_bytes; non-custodial
-      ├── DeepBook Predict   range pricing · SVI surface · settlement
-      ├── Event markets      basket legs + midpoint order-book pricing
+      ├── DeepBook Predict   live pricing · vol surface · settlement
+      ├── Event markets      basket legs + order-book pricing
       ├── DeFiLlama          live Sui USDC lending APY (note floors)
-      ├── Coinbase           BTC candles (backtests)
       └── Sui RPC            pelagos_sui / _vault / _strategies moveCalls
       │
       └── Monitor :13102     process / API / on-chain / market metrics`}
@@ -653,22 +667,22 @@ Express API       :13101   builds UNSIGNED tx_bytes; non-custodial
       <UL
         items={[
           <>
-            <B>predict/</B> — the SVI surface, implied density, range-strip
-            pricing, and mint PTBs. The shared core under Distributed
-            Options, Volatility, Distribution, Risk Slices, and Notes.
+            <B>predict/</B> — live pricing, the volatility surface, and the
+            transaction builders. The shared core under Distributed Options,
+            Volatility, Distribution, Tranches, and Notes.
           </>,
           <>
             <B>options-chain</B> — the BTC options chain: each strike priced
-            off Predict range liquidity, IV from the live SVI smile,
-            depth and risk caps per strike.
+            off live Predict liquidity, with implied volatility from the live
+            surface and a depth and risk cap per strike.
           </>,
           <>
             <B>volatility</B> — prebuilt vol structures and greeks.
           </>,
           <>
-            <B>baskets / market-filter / nlp</B> — event-market discovery
-            through a 5-stage NLP quality filter, correlation-decorrelated
-            weighting, and tranching.
+            <B>baskets</B> — event-market discovery, basket construction, and
+            tranching. The selection and diversification logic is Pelagos&apos;s
+            own and runs entirely server-side.
           </>,
           <>
             <B>vault / sui / pelagos-chain</B> — the on-chain moveCall and
@@ -704,10 +718,11 @@ function NonCustodial() {
       <OL
         items={[
           <>
-            <B>Prepare.</B> The frontend posts a quote request (μ/σ, budget,
-            floor percentage, basket id) to a <Code>/prepare</Code> route.
-            The backend prices the legs against live Predict liquidity and
-            returns unsigned <Code>tx_bytes</Code> plus a dry-run result.
+            <B>Prepare.</B> The frontend posts your chosen parameters (the
+            product, budget, and any product-specific settings) to a{" "}
+            <Code>/prepare</Code> route. The backend prices the legs against
+            live Predict liquidity and returns unsigned <Code>tx_bytes</Code>{" "}
+            plus a dry-run result.
           </>,
           <>
             <B>Sign.</B> The wallet (<Code>@mysten/dapp-kit</Code>) signs the
@@ -748,47 +763,44 @@ function DbpPrimitives() {
   return (
     <>
       <P>
-        DeepBook Predict is Mysten&apos;s on-chain prediction protocol. Over a
-        BTC SVI vol-surface oracle it exposes two primitives that Pelagos
-        builds everything from.
+        DeepBook Predict is Mysten&apos;s on-chain prediction protocol. It
+        prices contracts against a live BTC volatility-surface oracle and
+        exposes two simple primitives. Every Pelagos product is assembled from
+        these two building blocks, so it is worth understanding them.
       </P>
       <UL
         items={[
           <>
-            <B>Binary.</B> Pays $1 per contract if settlement is above (UP)
-            or at/below (DOWN) a single strike. A single-strike directional
-            bet.
+            <B>Binary.</B> Pays $1 per contract if settlement finishes above
+            (UP) or at/below (DOWN) a single strike. This is a clean
+            directional bet on one level — the building block behind a single
+            call or put.
           </>,
           <>
-            <B>Range (vertical).</B> A{" "}
-            <Code>RangeKey{`{ oracle_id, expiry, lower, higher }`}</Code>{" "}
-            pays $1 per contract iff settlement lands in{" "}
-            <Code>(lower, higher]</Code>. Fair value is{" "}
-            <Code>up(lower) − up(higher)</Code>.
+            <B>Range.</B> Pays $1 per contract if settlement lands inside a
+            chosen price band — between a lower and an upper bound. This is a
+            bet that the asset finishes <B>within</B> a region, the building
+            block behind volatility structures and distribution views.
           </>,
         ]}
       />
       <SubHeading>From one strike to a view</SubHeading>
       <P>
-        A binary lets you bet on one strike. Pelagos&apos;s insight is that a
-        strip of adjacent ranges, weighted by a Normal(μ, σ) mass, is a
-        payoff that mirrors a whole distributional view. Drag μ for direction
-        and σ for conviction and width, and you mint exactly the basket of
-        real range-options that expresses it.
+        A single binary or range is a bet on one level or one band. Pelagos
+        combines several of them into a single position that expresses a richer
+        view — a direction, a width, or a whole shape of where an asset might
+        land. You set the view; Pelagos selects and sizes the underlying
+        contracts and mints them together. How those contracts are chosen and
+        weighted is Pelagos&apos;s own logic; what you get back is one position
+        whose payoff matches your view.
       </P>
-      <SubHeading>Units and scales</SubHeading>
+      <SubHeading>Whole-contract settlement</SubHeading>
       <P>
-        Scales are enforced in one place so the math stays consistent across
-        the whole engine:
+        Contracts are whole and each pays exactly $1 at settlement if it
+        finishes in the money. That makes the maximum payout, the cost, and the
+        downside of any Pelagos position easy to read off the quote before you
+        sign — there are no hidden legs or off-book marks.
       </P>
-      <Table
-        cols={["Quantity", "Scale", "Meaning"]}
-        rows={[
-          ["Strikes, spot, forward, probabilities", "1e9", "PRICE_SCALE fixed-point."],
-          ["dUSDC cash", "1e6", "Micro-dUSDC (6 decimals)."],
-          ["Contract quantity", "1,000,000 = 1 contract", "One contract pays $1 at settlement."],
-        ]}
-      />
     </>
   );
 }
@@ -797,73 +809,50 @@ function DbpPricing() {
   return (
     <>
       <P>
-        This is the heart of the integration: no price on the path is
-        invented or linearly interpolated. Every bucket price comes from the
-        protocol&apos;s own <Code>get_range_trade_amounts</Code> via{" "}
-        <Code>devInspect</Code> — no funds, no signer required.
+        This is the heart of the integration, and the most important honesty
+        guarantee in Pelagos: <B>no price on the path is invented</B>. Every
+        leg is quoted off the protocol&apos;s own live order book, at the
+        actual size you are trading, before you sign. The quote you see is the
+        price the protocol will charge.
       </P>
-      <SubHeading>How a strip is priced at real size</SubHeading>
-      <OL
-        items={[
-          <>
-            <B>Build buckets.</B> Slice <Code>Normal(μ, σ)</Code> into N
-            contiguous, on-grid, non-overlapping buckets spanning{" "}
-            <Code>±spanSigma·σ</Code>. Each bucket&apos;s weight is its Normal
-            mass <Code>Φ((higher−μ)/σ) − Φ((lower−μ)/σ)</Code>.
-          </>,
-          <>
-            <B>Marginal ask.</B> One preview per bucket at quantity = 1
-            contract gives the per-contract ask with no size impact — the
-            sizing and slippage reference.
-          </>,
-          <>
-            <B>Size ∝ Normal weight.</B> Quantities are allocated so the
-            payout mirrors the view and total marginal cost ≈ budget.
-          </>,
-          <>
-            <B>Re-price at real quantity.</B> Call{" "}
-            <Code>get_range_trade_amounts</Code> again at each bucket&apos;s
-            real quantity. Because the protocol prices against post-trade
-            vault state, the returned cost already includes the MM spread and
-            the slippage from the liability the order adds.
-          </>,
-          <>
-            <B>One budget correction.</B> If real total cost drifts more than
-            5% from the budget, quantities are scaled once and re-priced.
-          </>,
-        ]}
-      />
-      <SubHeading>Both sides surfaced</SubHeading>
       <P>
-        For every bucket the protocol returns{" "}
-        <Code>(mint_cost, redeem_payout)</Code> — the ask you pay to mint at
-        this size and the bid you would receive redeeming it now. Pelagos
-        surfaces both, plus derived deltas:
+        Pricing reads run as simulations against on-chain state — no funds and
+        no signature are required to get a live quote. That is why you can
+        explore prices freely without connecting a wallet or spending anything.
+      </P>
+      <SubHeading>Priced at your real size</SubHeading>
+      <P>
+        Crucially, a Pelagos quote is priced at the <B>real quantity</B> you
+        are about to trade, not at an idealised one-contract reference. Because
+        the protocol prices against the state your order would leave behind,
+        the cost it returns already includes the market-maker spread and the
+        slippage your own order adds. There is no synthetic AMM and no
+        better-looking mark hiding the true cost of size.
+      </P>
+      <SubHeading>What the quote tells you</SubHeading>
+      <P>
+        For every position, Pelagos surfaces both sides of the market and the
+        derived figures you need to decide:
       </P>
       <UL
         items={[
-          <><Code>mint_cost</Code> — ask at quantity (spread + slippage included).</>,
-          <><Code>redeem_value</Code> — bid at quantity (the redeem-now payout).</>,
-          <><Code>slippage</Code> — <Code>mint_cost − unit_price·qty</Code>, the convexity over the marginal price.</>,
-          <><Code>spread</Code> — <Code>mint_cost − redeem_value</Code>, the round-trip MM spread at this size.</>,
-          <><Code>expected_value</Code> — EV under the user&apos;s own Normal view.</>,
+          <><B>Cost to open</B> — the ask you pay to mint at your size, spread and slippage included.</>,
+          <><B>Redeem-now value</B> — the bid you would receive closing the position immediately.</>,
+          <><B>Maximum payout</B> — the most the position can pay if your view is right.</>,
+          <><B>Spread</B> — the round-trip cost of opening and immediately closing at this size.</>,
+          <><B>Expected value</B> — the position&apos;s value under your own stated view.</>,
         ]}
       />
-      <SubHeading>The [2%, 98%] mintable band</SubHeading>
+      <SubHeading>Tradeable means tradeable</SubHeading>
       <P>
-        The pricer will happily quote bands outside the protocol&apos;s mint
-        bounds (≈[1%, 99%]), so they look tradeable — but{" "}
-        <Code>mint_range</Code> then aborts in{" "}
-        <Code>assert_mintable_ask</Code>. To guarantee that every bucket
-        Pelagos surfaces as tradeable actually mints, a bucket is flagged
-        tradeable only when its marginal ask sits inside{" "}
-        <Code>[0.02, 0.98]</Code> — a deliberate safety margin inside the
-        protocol bound so post-trade slippage cannot push it out. Out-of-band
-        and failing buckets are skipped, never faked.
-      </P>
-      <P>
-        Verified live: a binary preview on an ATM oracle returned UP $0.509 /
-        DOWN $0.508, summing to $1.017 — the spread the PLP earns.
+        The protocol only mints contracts inside a sensible probability band;
+        a contract that has become too extreme cannot be minted. Pelagos checks
+        this up front and only surfaces a leg as tradeable when it will
+        actually mint at your size, with a deliberate safety margin so
+        post-trade slippage cannot push it out of bounds. Legs that fall
+        outside the band are shown as untradeable rather than quoted at a
+        fictional price — Pelagos never surfaces a number it cannot honour
+        on-chain.
       </P>
     </>
   );
@@ -873,20 +862,23 @@ function DbpOracle() {
   return (
     <>
       <P>
-        DeepBook Predict prices against a BTC <B>SVI vol-surface oracle</B>.
-        Pelagos reads the live surface and forward directly from the
-        protocol, so every strike, probability, and greek is grounded in the
-        same source the protocol settles against.
+        DeepBook Predict prices against a live BTC{" "}
+        <B>volatility-surface oracle</B>. Pelagos reads that surface and the
+        forward price directly from the protocol, so every strike,
+        probability, and greek you see is grounded in the same source the
+        protocol settles against — not a separate model Pelagos maintains on
+        the side.
       </P>
-      <SubHeading>SVI surface</SubHeading>
+      <SubHeading>The volatility surface</SubHeading>
       <P>
         The backend exposes the live surface at{" "}
         <Code>GET /api/predict/vol-surface</Code> and an implied density at{" "}
         <Code>GET /api/predict/density</Code>. The Advanced{" "}
         <DocLink href="/app/volatility">Volatility</DocLink> desk renders this
-        as an interactive 3D surface with smile and term-structure analytics;
-        greeks are computed off the same smile rather than a flat-vol
-        assumption.
+        as an interactive 3D surface with smile and term-structure analytics,
+        and greeks are computed off the live surface rather than a flat-vol
+        assumption — so delta, gamma, vega, and theta reflect the market the
+        protocol actually settles against.
       </P>
       <SubHeading>Rolling BTC expiries</SubHeading>
       <P>
@@ -914,37 +906,40 @@ function DbpStrip() {
   return (
     <>
       <P>
-        The range strip is the single primitive every Pelagos product is
-        parameterised from. A strip is N on-grid Predict ranges, weighted by
-        a Normal(μ, σ) mass, that together reproduce a distributional payoff.
+        Most Pelagos products are not a single contract — they are a small
+        <B> set of range contracts assembled into one position</B>. Pelagos
+        calls this a <B>strip</B>. The strip is what lets a position track a
+        view that no single binary or range could express on its own: a
+        direction, a width, or a whole shape of where an asset might land.
       </P>
-      <SubHeading>Anatomy of a strip quote</SubHeading>
-      <CodeBlock>
-        {`view        Normal(μ, σ)            direction μ, width σ
-buckets     N on-grid ranges        ±spanSigma·σ, non-overlapping
-weight[i]   Φ(hi)−Φ(lo)             Normal mass of bucket i
-qty[i]      ∝ weight[i]             sized so payout mirrors the view
-cost[i]     get_range_trade_amounts priced at qty[i], post-trade state
-strip       Σ cost[i]  ≈  budget    one budget correction if >5% off`}
-      </CodeBlock>
-      <SubHeading>How each product re-parameterises it</SubHeading>
+      <SubHeading>What a strip is, in plain terms</SubHeading>
+      <P>
+        You describe the view you want — for example, &ldquo;BTC finishes near
+        this level&rdquo; or &ldquo;BTC moves a lot in either direction.&rdquo;
+        Pelagos selects a handful of adjacent price bands that, together, pay
+        out in proportion to that view, sizes each one, prices the whole set
+        live at your real order size, and presents it as a single quote with
+        one cost and one maximum payout. The choice and weighting of those
+        bands is Pelagos&apos;s own logic; what you interact with is one clean
+        position.
+      </P>
+      <SubHeading>How each product shapes the strip</SubHeading>
       <Table
-        cols={["Product", "Strip parameterisation"]}
+        cols={["Product", "How it uses the strip"]}
         rows={[
-          ["Distribution", "μ/σ chosen directly on sliders; N buckets across the view."],
-          ["Risk Slices", "Same μ; width fixed per slice — senior 0.5σ, mezzanine 1.0σ, junior 2.0σ."],
-          ["Protected Notes", "Upside sleeve is a strip; floor sleeve is supplied to the PLP vault instead of minted."],
-          ["DeepBook baskets", "Named μ/σ presets — BTC Pin (0.3%σ, n4), BTC Spread (0.6%σ, n6), BTC Wide (1.0%σ, n8)."],
-          ["Volatility", "Multi-leg strips composed into straddle / strangle / butterfly / iron condor."],
+          ["Distribution Markets", "You set the centre and width of the view directly."],
+          ["Tranches (Risk Slices)", "The same view taken at three preset widths — senior (narrow), mezzanine (mid), junior (wide)."],
+          ["Protected Notes", "An upside strip paired with a principal floor; see Protected Notes."],
+          ["Event Baskets", "Curated one-click recipes — a tight pin, a moderate spread, or a wide range."],
+          ["Volatility", "Several strips composed into a straddle, strangle, butterfly, or iron condor."],
         ]}
       />
       <SubHeading>One signature</SubHeading>
       <P>
         A whole strip mints in a single programmable transaction block: an
-        optional <Code>create_manager</Code>, a dUSDC deposit, and{" "}
-        <Code>N × mint_range</Code> — all bundled and signed once. The same
-        applies to a Protected Note, where the PLP supply and the range strip
-        share one PTB.
+        optional one-time account bootstrap, the deposit, and all of the range
+        legs — bundled and signed once. You approve one transaction and the
+        entire position is created on-chain.
       </P>
     </>
   );
@@ -958,35 +953,52 @@ function PDistributed() {
   return (
     <>
       <P>
-        Distributed Options is a live BTC options chain. Every strike is a
-        DeepBook Predict range with a $1 binary payout, priced live off the
-        protocol&apos;s own bid/ask. Contracts are whole, depth- and
-        risk-capped per strike, and settled on Sui.
+        <B>What it is.</B> Distributed Options is a live BTC options chain.
+        Every strike is a real on-chain contract with a $1 binary payout,
+        priced live off DeepBook Predict&apos;s own order book. Contracts are
+        whole, depth- and risk-capped per strike, and settled on Sui.
+      </P>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When you have a directional view on BTC by a specific time — &ldquo;BTC
+        is above $X by Friday&rdquo; — and you want a clean, capped position to
+        express it. A call pays if BTC finishes above your strike; a put pays
+        if it finishes below. Your downside is limited to what you pay, and the
+        most you can make is fixed and shown up front.
+      </P>
+      <SubHeading>How the payoff works</SubHeading>
+      <P>
+        Each contract is a $1 binary. If it finishes in the money it pays $1
+        per contract; if not, it pays nothing. You pay the live ask to open. So
+        the position&apos;s maximum payout is one dollar times your contract
+        count, and the price you pay reflects the market&apos;s current
+        probability of finishing in the money. There are no margin calls and no
+        liquidation — the most you can lose is the premium you paid.
       </P>
       <SubHeading>The chain</SubHeading>
       <P>
-        Calls and puts are laid out across every on-chain expiry, from
-        roughly fifteen minutes to about twenty-two days. Each strike shows
-        the live ask and bid, the implied volatility from the SVI smile, and a
+        Calls and puts are laid out across every on-chain expiry, from roughly
+        fifteen minutes to about twenty-two days. Each strike shows the live
+        ask and bid, the implied volatility from the live surface, and a
         per-strike depth cap so an order can never exceed what is actually
         mintable. The chain is served by{" "}
         <Code>GET /api/options/chain</Code> with per-strike depth at{" "}
         <Code>GET /api/options/depth</Code>.
       </P>
-      <SubHeading>Buying a contract</SubHeading>
+      <SubHeading>How to trade it</SubHeading>
       <OL
         items={[
           <>Open <DocLink href="/app/distribution">Distributed Options</DocLink> and pick an expiry and strike.</>,
-          <>Choose call or put and a contract count. The quote shows ask, IV, and the depth-capped maximum.</>,
-          <>Confirm. The wallet signs a single PTB that mints the underlying range against dUSDC.</>,
-          <>Hold to settlement for the binary payout, or redeem early at the live bid.</>,
+          <>Choose call or put and a contract count. The quote shows the ask, the implied volatility, and the depth-capped maximum you can buy.</>,
+          <>Pick your settlement rail — dUSDC or Pelagos USDC — and confirm. Your wallet signs a single transaction that mints the position.</>,
+          <>Hold to settlement for the binary payout, or close early at the live bid. The position shows in your <DocLink href="/app/portfolio">Portfolio</DocLink> with a live mark.</>,
         ]}
       />
       <SubHeading>Why it is honest</SubHeading>
       <P>
-        Because each strike is a real Predict range, the price the chain
-        shows is the price the protocol charges — including the MM spread and
-        the slippage the order itself adds. There is no synthetic AMM and no
+        Because each strike is a real on-chain contract, the price the chain
+        shows is the price the protocol charges — including the spread and the
+        slippage your order itself adds. There is no synthetic AMM and no
         invented mark.
       </P>
     </>
@@ -997,31 +1009,58 @@ function PVolatility() {
   return (
     <>
       <P>
-        The Volatility desk trades implied versus realized vol with prebuilt
-        structures: straddle, strangle, butterfly, and iron condor. Each is a
-        multi-leg composition of range strips, with a live payoff diagram,
-        full greeks, and an optional delta-hedge sleeve.
+        <B>What it is.</B> The Volatility desk lets you trade <B>how much</B> an
+        asset moves rather than which way. It ships prebuilt structures —
+        straddle, strangle, butterfly, and iron condor — each a multi-leg
+        position with a live payoff diagram, full greeks, and an optional
+        delta-hedge leg.
+      </P>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When your view is about movement, not direction. A <B>straddle</B> or{" "}
+        <B>strangle</B> pays when the asset moves sharply either way — buy it if
+        you expect a big swing. A <B>butterfly</B> or <B>iron condor</B> pays
+        when the asset stays near a level — buy it if you expect things to be
+        quiet. In short: long-vol structures profit from turbulence, short-vol
+        structures profit from calm.
+      </P>
+      <SubHeading>How the payoff works</SubHeading>
+      <P>
+        Each structure combines several contracts so that its payoff diagram
+        has the classic shape you would expect — a V for a straddle, a tent for
+        a butterfly. The desk draws that diagram live before you trade, so you
+        can see exactly where the position makes and loses money, and the most
+        it can pay or cost, against the current market.
       </P>
       <SubHeading>Basic and Advanced</SubHeading>
       <P>
         Basic presents the prebuilt structures with a payoff diagram and a
-        one-click open. Advanced adds an interactive{" "}
-        <B>3D SVI vol surface</B>, smile and term-structure analytics, and a
-        multi-leg trade builder for composing custom structures. Both read the
-        same live surface and price the same way.
+        one-click open. Advanced adds an interactive <B>3D volatility
+        surface</B>, smile and term-structure analytics, and a multi-leg trade
+        builder for composing custom structures. Both read the same live
+        surface and price the same way.
       </P>
       <SubHeading>Greeks and hedging</SubHeading>
       <P>
-        Greeks are computed off the live SVI smile rather than a flat-vol
-        assumption, so delta, gamma, vega, and theta reflect the actual
-        surface the protocol settles against. The hedge sleeve sizes a
-        delta-neutralising leg, surfaced at{" "}
-        <Code>GET /api/vol/hedge</Code>.
+        Greeks are computed off the live volatility surface rather than a
+        flat-vol assumption, so delta, gamma, vega, and theta reflect the
+        actual market the protocol settles against. The optional hedge leg
+        sizes a delta-neutralising trade so you can isolate the volatility view
+        from the direction, surfaced at <Code>GET /api/vol/hedge</Code>.
       </P>
+      <SubHeading>How to trade it</SubHeading>
+      <OL
+        items={[
+          <>Open <DocLink href="/app/volatility">Volatility</DocLink> and pick a structure (or build one in Advanced).</>,
+          <>Set your budget and review the live payoff diagram and greeks.</>,
+          <>Pick a settlement rail and confirm. Your wallet signs one multi-leg open.</>,
+          <>Track and close the position from your <DocLink href="/app/portfolio">Portfolio</DocLink>.</>,
+        ]}
+      />
       <SubHeading>Routes</SubHeading>
       <UL
         items={[
-          <><Code>GET /api/vol/surface</Code> — the live SVI surface for the desk.</>,
+          <><Code>GET /api/vol/surface</Code> — the live volatility surface for the desk.</>,
           <><Code>POST /api/vol/quote</Code> — price a structure and return greeks + payoff.</>,
           <><Code>POST /api/vol/open/prepare</Code> — unsigned multi-leg open for the wallet to sign.</>,
         ]}
@@ -1034,43 +1073,58 @@ function PDistribution() {
   return (
     <>
       <P>
-        Distribution Markets expose the range ladder directly. A user shapes a
-        continuous view — a mean μ and a width σ — and Pelagos mints it as N
-        weighted Predict range buckets that reproduce the payoff. This is the
-        raw form of the engine every other product specialises.
+        <B>What it is.</B> Distribution Markets let you take a view on the{" "}
+        <B>full shape of where an asset settles</B>, not just whether it
+        finishes above or below one strike. You describe a centre (where you
+        think it lands) and a width (how confident you are), and Pelagos builds
+        a single position whose payoff tracks that view.
       </P>
-      <SubHeading>Flow</SubHeading>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When your edge is about the distribution itself — &ldquo;BTC settles
+        tightly around this level&rdquo; or &ldquo;the market is too confident;
+        the real range is wider&rdquo; — rather than a one-sided up/down call.
+        It is the most expressive way to state a probabilistic view on this
+        desk, and the raw form that the other products specialise.
+      </P>
+      <SubHeading>How the payoff works</SubHeading>
+      <P>
+        The position pays the most when the asset settles where you said it
+        would, and less the further it lands from your view. Concentrate the
+        view (a narrow width) for a high-conviction, high-payout-if-right bet;
+        spread it out (a wide width) for a steadier, more forgiving payoff. The
+        quote shows the total cost, the maximum payout, and the value of the
+        position under your own stated view before you commit.
+      </P>
+      <SubHeading>How to trade it</SubHeading>
       <OL
         items={[
           <>
-            Drag μ (direction) and σ (conviction) on the{" "}
-            <DocLink href="/app/distribution">Distribution</DocLink> sliders;
-            set a budget and bucket count N.
+            On <DocLink href="/app/distribution">Distribution</DocLink>, set
+            the centre and width of your view, plus a budget.
           </>,
           <>
-            The preview calls <Code>POST /api/predict/strip/preview</Code>,
-            which returns N on-grid buckets priced live off the protocol, with
-            per-bucket ask, bid, slippage, and the strip totals.
+            The live preview prices the whole position against the protocol,
+            showing per-band ask and bid and the totals for the position.
           </>,
           <>
-            Confirm. <Code>POST /api/predict/strip/open/prepare</Code> returns
-            an unsigned <Code>deposit + N × mint_range</Code> PTB; the wallet
-            signs it in one signature.
+            Pick a settlement rail and confirm. Your wallet signs one
+            transaction that mints the full position.
           </>,
           <>
-            Redeem live via <Code>range/redeem/prepare</Code>, or
-            permissionlessly once the oracle settles.
+            Close early at the live bid, or hold to settlement and claim the
+            payout once the oracle resolves.
           </>,
         ]}
       />
       <SubHeading>What the quote tells you</SubHeading>
       <P>
-        Because the strip is priced at real quantity against post-trade vault
-        state, the quote surfaces the true cost of expressing the view: total
-        cost, max payout, total slippage, round-trip spread, and the expected
-        value under the user&apos;s own Normal. Out-of-band buckets (outside
-        the <Code>[2%, 98%]</Code> mintable band) are shown as untradeable
-        rather than silently dropped.
+        Because the position is priced at your real order size against live
+        on-chain state, the quote surfaces the true cost of expressing the
+        view: total cost, maximum payout, the round-trip spread, and the
+        position&apos;s expected value under your view. Any leg that the
+        protocol cannot currently mint is shown as untradeable rather than
+        quoted at a fictional price.
       </P>
     </>
   );
@@ -1080,34 +1134,50 @@ function PSlices() {
   return (
     <>
       <P>
-        Risk Slices express a risk appetite over the same underlying view.
-        Senior, mezzanine, and junior are the same strip taken at different
-        widths: a narrow ATM slice is high hit-rate and low multiple, a wide
-        slice is convex, low hit-rate, and high multiple.
+        <B>What it is.</B> Tranches — shown in the app as <B>Risk Slices</B> —
+        let you take the same market view at three different risk appetites.
+        Senior, mezzanine, and junior slices run from a steady,
+        high-probability position to an aggressive, convex one.
+      </P>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When you and the market agree on the thesis but you want to choose how
+        much risk to take expressing it. Pick <B>senior</B> for a likely,
+        modest payout; <B>junior</B> for a less likely but much larger one;{" "}
+        <B>mezzanine</B> for the balance in between.
       </P>
       <Table
-        cols={["Slice", "Strip width", "Profile"]}
+        cols={["Slice", "Profile", "Resembles"]}
         rows={[
-          ["Senior", "0.5σ", "Narrow, around the mean. High probability of paying, modest multiple. Resembles an investment-grade claim."],
-          ["Mezzanine", "1.0σ", "Mid-width. Balanced hit-rate and multiple. Resembles a call spread."],
-          ["Junior", "2.0σ", "Wide tails. Low hit-rate, convex payout. Resembles a deep out-of-the-money option."],
+          ["Senior", "Narrow, around the expected level. High probability of paying, modest payout.", "An investment-grade claim."],
+          ["Mezzanine", "Mid-width. Balanced probability and payout.", "A call spread."],
+          ["Junior", "Wide. Lower probability, convex, high payout if it hits.", "A deep out-of-the-money option."],
         ]}
       />
-      <SubHeading>Pricing</SubHeading>
+      <SubHeading>How the payoff works</SubHeading>
+      <P>
+        All three slices are built from the same underlying view; they differ
+        in how much of the outcome range they cover. The senior slice sits
+        tightly around the expected level, so it pays often but modestly. The
+        junior slice reaches for the tails, so it pays rarely but large. The
+        Advanced <DocLink href="/app/basket">Baskets</DocLink> surface renders
+        the three side by side with live quotes so the trade-off between
+        probability and payout is legible at a glance.
+      </P>
+      <SubHeading>How seniority is enforced</SubHeading>
+      <P>
+        Seniority on Pelagos is a <B>structured position that Pelagos tracks
+        and enforces in its own accounting layer</B>, over pooled vault
+        deposits — not an on-chain waterfall. Each slice is a defined position
+        with its own pricing and payout, and Pelagos is responsible for
+        bookkeeping the slice ordering and settling each one accordingly. There
+        is no separate on-chain seniority or waterfall contract, and Pelagos
+        does not claim one.
+      </P>
       <P>
         Each slice is quoted through{" "}
-        <Code>POST /api/predict/tranche/quote</Code>, which prices the
-        corresponding strip width against live Predict liquidity. The
-        Advanced <DocLink href="/app/basket">Baskets</DocLink> surface
-        renders the three slices side by side with their live quotes so the
-        seniority trade-off is legible at a glance.
-      </P>
-      <SubHeading>Settlement</SubHeading>
-      <P>
-        Slices settle exactly like any other strip: each constituent range
-        redeems at its binary payout, and the slice pays the weighted sum.
-        There is no separate waterfall contract — the seniority is encoded in
-        which part of the distribution the strip covers.
+        <Code>POST /api/predict/tranche/quote</Code>, priced live against the
+        protocol just like any other position.
       </P>
     </>
   );
@@ -1117,48 +1187,56 @@ function PNotes() {
   return (
     <>
       <P>
-        A Protected Note pairs a principal floor with capped upside. The floor
-        sleeve is supplied to DeepBook Predict&apos;s PLP vault — the
-        &quot;be the house&quot; side that earns the spread Pelagos quotes
-        elsewhere — and the upside sleeve is a range strip. Both legs settle
-        in one programmable transaction block.
+        <B>What it is.</B> A Principal-Protected Note (PPN) pairs a{" "}
+        <B>principal floor</B> with an <B>upside sleeve</B>. You commit a
+        budget; most of it is held against a target floor so the bulk of your
+        principal is preserved, and the remainder buys an upside position that
+        participates if your view plays out.
+      </P>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When you want defined downside with some participation in the upside —
+        the structured-note classic. You give up some of the upside you would
+        get from an outright position in exchange for protecting most of your
+        principal if the view does not work out.
       </P>
       <SubHeading>How the split works</SubHeading>
       <UL
         items={[
           <>
-            <B>Floor sleeve.</B> A chosen fraction of the deposit (default
-            <Code>floor_pct = 0.8</Code>) is supplied to the PLP vault via{" "}
-            <Code>predict::supply</Code>, earning the protocol&apos;s
-            counterparty yield.
+            <B>Floor portion.</B> The larger share of your deposit is allocated
+            to the protected portion of the note, sized to your chosen floor
+            target.
           </>,
           <>
-            <B>Upside sleeve.</B> The remainder buys a range strip expressing
-            the user&apos;s view, carrying the convex upside.
+            <B>Upside sleeve.</B> The remainder buys an upside position
+            expressing your view, carrying the participation.
           </>,
           <>
-            <B>One PTB.</B> The deposit split, PLP supply, and range mint are
-            bundled by <Code>POST /api/predict/ppn/open/prepare</Code> and
-            signed once.
+            <B>One signature.</B> The split and both legs are bundled by{" "}
+            <Code>POST /api/predict/ppn/open/prepare</Code> and signed once.
           </>,
         ]}
       />
-      <SubHeading>Floor sourcing</SubHeading>
+      <SubHeading>How the floor is enforced</SubHeading>
       <P>
-        The note&apos;s yield context is surfaced from real Sui USDC lending
-        venues (via DeFiLlama) so the floor target is grounded in live rates,
-        not a fixed assumption. Live PLP vault state — NAV, share price,
-        utilisation — is readable at{" "}
-        <Code>GET /api/predict/vault/summary</Code>. The prebuilt strategies
+        Important and honest: the principal floor is a{" "}
+        <B>structured position that Pelagos tracks and enforces in its own
+        accounting layer</B>, over pooled vault deposits — it is{" "}
+        <B>not</B> an on-chain-enforced principal guarantee. Pelagos is
+        responsible for the bookkeeping that sizes and honours the floor; the
+        underlying funds sit in a pooled vault. The floor target is informed by
+        real Sui USDC lending rates (via DeFiLlama) so it is grounded in live
+        market yields rather than a fixed assumption. The prebuilt strategies
         and the note builder live on the{" "}
         <DocLink href="/app/deepbook">DeepBook</DocLink> surface.
       </P>
       <SubHeading>Honest floor</SubHeading>
       <P>
-        Principal protection is a target, not a guarantee. It depends on PLP
-        vault solvency, redemption availability, and settlement timing — see{" "}
-        the risk summary. The floor is the protocol&apos;s counterparty
-        position, so it carries the risks of being the house.
+        Principal protection is a <B>target, not a guarantee</B>. It depends on
+        vault solvency, redemption availability, and settlement timing, and on
+        Pelagos&apos;s accounting — see the risk summary. Pelagos does not claim
+        on-chain-enforced principal protection.
       </P>
     </>
   );
@@ -1168,37 +1246,47 @@ function PBaskets() {
   return (
     <>
       <P>
-        Baskets come in two flavours: curated DeepBook range recipes and
-        diversified prediction-market event baskets. They share the basket
-        terminal but sit on different settlement rails.
+        <B>What it is.</B> Baskets come in two flavours: curated DeepBook range
+        recipes for a quick one-click BTC view, and diversified
+        prediction-market event baskets that bundle many unrelated events into
+        a single position. They share the basket terminal but sit on different
+        settlement rails.
+      </P>
+      <SubHeading>When you&apos;d use it</SubHeading>
+      <P>
+        When you want broad exposure without hand-picking and sizing every leg.
+        Reach for a <B>DeepBook recipe</B> when you want a fast, prebuilt BTC
+        position; reach for an <B>Event Basket</B> when you want spread-out
+        exposure across many events at once, so no single outcome dominates the
+        position.
       </P>
       <SubHeading>DeepBook baskets</SubHeading>
       <P>
-        One-click μ/σ presets over the live BTC oracle, each a range strip:
-        <Code>BTC Pin</Code> (0.3%σ, n4), <Code>BTC Spread</Code> (0.6%σ, n6),
-        and <Code>BTC Wide</Code> (1.0%σ, n8). They are quoted through{" "}
-        <Code>GET /api/predict/baskets</Code> and{" "}
-        <Code>POST /api/predict/basket/quote</Code> and settle in dUSDC on
-        DeepBook Predict.
+        One-click prebuilt BTC positions — a tight pin, a moderate spread, and
+        a wide range — each a ready-made distribution view. They are quoted
+        through <Code>GET /api/predict/baskets</Code> and{" "}
+        <Code>POST /api/predict/basket/quote</Code> and settle on DeepBook
+        Predict.
       </P>
-      <SubHeading>Prediction-market event baskets</SubHeading>
+      <SubHeading>Event Baskets</SubHeading>
       <P>
-        Diversified baskets of live prediction-market events, priced off the
-        order-book midpoint. An NLP layer (TF-IDF cosine plus theme clustering)
-        de-correlates the legs so a basket is genuinely uncorrelated rather
-        than thirty variants of one bet. These settle on Pelagos&apos;s own
-        generic <Code>Vault&lt;T&gt;</Code> in Pelagos USDC, kept distinct
-        from the Predict-backed suite so demos are never bottlenecked on the
-        dUSDC faucet.
+        Diversified baskets of live prediction-market events. The point of a
+        basket is <B>diversification</B>: Pelagos selects and weights the legs
+        so the basket spreads risk across genuinely different outcomes rather
+        than holding many variants of the same bet. <B>How</B> Pelagos selects
+        and diversifies the legs is its own proprietary logic and runs entirely
+        server-side. These baskets settle on Pelagos&apos;s own vault in Pelagos
+        USDC, kept distinct from the Predict-backed suite so a demo is never
+        bottlenecked on the dUSDC faucet.
       </P>
-      <SubHeading>Risk Slices in Advanced</SubHeading>
+      <SubHeading>Tranches in Advanced</SubHeading>
       <P>
-        The Basic <DocLink href="/app/basket">Baskets</DocLink> view is a
-        clean basket terminal; Advanced is the{" "}
+        The Basic <DocLink href="/app/basket">Baskets</DocLink> view is a clean
+        basket terminal; Advanced is the{" "}
         <DocLink href="/app/basket">Risk Slices</DocLink> tranching engine,
-        rendering senior, mezzanine, and junior on the same basket. The
-        5-stage NLP quality filter behind the event legs is documented in the
-        repository&apos;s market-filter writeup.
+        rendering senior, mezzanine, and junior on the same basket so you can
+        choose your seniority. As with all tranches, seniority is tracked and
+        enforced by Pelagos&apos;s accounting layer, not an on-chain waterfall.
       </P>
     </>
   );
@@ -1212,53 +1300,48 @@ function RailsOverview() {
   return (
     <>
       <P>
-        Pelagos has two settlement rails, both first-class, both 1:1 in USD.
-        Which one an order uses depends on the product: anything that touches
-        DeepBook Predict settles in dUSDC; Pelagos&apos;s own contracts settle
-        in Pelagos USDC.
+        Every trade picks one of two settlement rails, and you choose per
+        trade. <B>Both work end-to-end</B>, including redemption, and both are
+        1:1 in USD. The only difference is the token and how you get it.
       </P>
       <Table
-        cols={["Rail", "Asset", "Mintable?", "Used for"]}
+        cols={["Rail", "Token", "How you get it"]}
         rows={[
           [
-            "DeepBook Predict",
-            "dUSDC — the protocol&apos;s quote asset (6 dp).",
-            "Faucet-gated. TreasuryCap is Mysten&apos;s; we hold a float only.",
-            "Distribution strips, Risk Slices, Protected Note floors and upside, DeepBook baskets.",
+            "dUSDC",
+            "DeepBook Predict&apos;s own quote asset (the real one).",
+            "From the testnet faucet — it is not freely mintable by Pelagos.",
           ],
           [
-            "Pelagos vault",
-            "Pelagos USDC (MOCK_USDC, 6 dp).",
-            "Freely mintable via a shared, permissionless Faucet (≤1,000,000/call).",
-            "Polymarket event baskets and Pelagos&apos;s own Vault flows.",
+            "Pelagos USDC (mUSDC)",
+            "Pelagos&apos;s demo USDC, for frictionless testing.",
+            "Freely mintable on demand via a shared, permissionless faucet.",
           ],
         ]}
       />
-      <SubHeading>Why two rails</SubHeading>
+      <SubHeading>The key thing to understand</SubHeading>
       <P>
-        dUSDC is the only asset DeepBook Predict accepts — registering a quote
-        asset requires the protocol&apos;s AdminCap, which Pelagos does not
-        hold. So the Predict-backed suite is honestly collateralised in the
-        protocol&apos;s real asset. dUSDC is faucet-gated and not mintable by
-        us, which makes it the one hard blocker for live writes. To keep the
-        rest of the app frictionlessly testable, Pelagos&apos;s own contracts
-        use a freely-mintable Pelagos USDC so a demo never bottlenecks on the
-        dUSDC faucet.
+        <B>mUSDC is just a demo token.</B> A trade settled in mUSDC uses the{" "}
+        <B>same smart contracts, the same live DeepBook pricing, and the same
+        backend flow</B> as a dUSDC trade — the only difference is that mUSDC is
+        freely mintable, so you never wait on a faucet. dUSDC is the
+        protocol&apos;s real quote asset (so it is the most faithful rail) but
+        it is faucet-gated; mUSDC removes that bottleneck for testing and demos
+        without changing how anything is priced or settled.
       </P>
       <SubHeading>Getting test funds</SubHeading>
       <P>
-        The header <B>Test funds</B> button, shown when a wallet is connected,
-        sends 25 dUSDC (from the operator float) and 10,000 Pelagos USDC
-        (freshly minted) in one click. Each Predict surface also shows a
-        contextual <B>Get test dUSDC</B> when the wallet is short. Gas (SUI) is
-        free from the standard Sui testnet faucet.
+        The header <B>Test funds</B> button (shown when a wallet is connected)
+        dispenses dUSDC, mUSDC, <B>and</B> SUI gas in a single transaction, so
+        one click gets you everything you need to trade. Each Predict surface
+        also shows a contextual top-up when your dUSDC balance is short.
       </P>
       <SubHeading>A note on DEEP</SubHeading>
       <P>
-        DeepBook Predict is an AMM/PLP-backed range protocol that settles
-        purely in dUSDC. It does <B>not</B> use DEEP — that is DeepBook v3&apos;s
-        CLOB fee token, and Pelagos places no v3 CLOB orders. A live range
-        mint consumes zero DEEP, only dUSDC and SUI gas.
+        DeepBook Predict settles purely in its dUSDC quote asset and does{" "}
+        <B>not</B> use DEEP — that is DeepBook v3&apos;s CLOB fee token, and
+        Pelagos places no v3 CLOB orders. Trading on Pelagos consumes only your
+        chosen settlement token and SUI for gas; no DEEP is ever required.
       </P>
     </>
   );
@@ -1268,48 +1351,56 @@ function RailsLifecycle() {
   return (
     <>
       <P>
-        However it is parameterised, a Pelagos position follows the same
-        lifecycle from quote to settlement. The Predict-backed path is shown
-        below; the vault-backed event-basket path mirrors it through the
-        sim/deposit routes on the Pelagos USDC rail.
+        Whatever the product, a Pelagos position follows the same lifecycle
+        from quote to settlement. The event-basket path on the Pelagos USDC
+        rail mirrors this same flow.
       </P>
       <OL
         items={[
           <>
-            <B>Quote.</B> A μ/σ view (or a structure, slice, or basket
-            preset) is priced live off the protocol&apos;s own{" "}
-            <Code>get_range_trade_amounts</Code>. The quote shows ask, bid,
-            slippage, spread, and expected value at the real order size.
+            <B>Quote.</B> Your view (a direction, a structure, a slice, or a
+            basket) is priced live off the protocol at your real order size.
+            The quote shows the cost to open, the redeem-now value, the spread,
+            and the position&apos;s expected value — no signature required to
+            see it.
           </>,
           <>
-            <B>Prepare.</B> The backend builds an unsigned PTB — on a first
-            open, bundling <Code>create_manager</Code>, the dUSDC deposit, and{" "}
-            <Code>N × mint_range</Code> — and dry-runs it for a gas estimate.
+            <B>Prepare.</B> The backend builds an unsigned transaction — on a
+            first open, bundling the one-time account bootstrap, the deposit,
+            and all of the legs — and dry-runs it for a gas estimate.
           </>,
           <>
-            <B>Sign.</B> The wallet signs the bytes. The user&apos;s wallet
-            owns the resulting <Code>PredictManager</Code>.
+            <B>Sign.</B> Your wallet signs the transaction. Your wallet owns the
+            resulting on-chain account, and the position mints in your name.
           </>,
           <>
-            <B>Confirm.</B> The executed digest is posted to{" "}
-            <Code>/confirm</Code>, which verifies it on chain and records the
-            position. It now shows in the{" "}
-            <DocLink href="/app/portfolio">Portfolio</DocLink> with live
-            mark-to-market.
+            <B>Confirm.</B> The executed digest is verified on chain and the
+            position is recorded. It now shows in your{" "}
+            <DocLink href="/app/portfolio">Portfolio</DocLink> with a live mark.
           </>,
           <>
-            <B>Redeem or settle.</B> Redeem early at the live bid via{" "}
-            <Code>range/redeem</Code>, or hold to settlement and claim the
-            binary payout permissionlessly once the oracle resolves.
+            <B>Redeem or settle.</B> Close early at the live bid at any time, or
+            hold to settlement and claim the payout once the oracle resolves.
+            Redemption works on both settlement rails.
           </>,
         ]}
       />
+      <SubHeading>Settlement and redemption</SubHeading>
+      <P>
+        Each leg is a $1 binary: at settlement, in-the-money legs pay $1 each
+        and out-of-the-money legs pay nothing, so the total payout is the sum
+        across the position&apos;s legs. Before settlement you can redeem at any
+        time at the live bid — the protocol&apos;s current price to close — and
+        once the oracle resolves, a winning position can be claimed
+        permissionlessly. Pelagos does not adjudicate or override resolution; it
+        reads and submits against the protocol.
+      </P>
       <SubHeading>Mark-to-market</SubHeading>
       <P>
         While a position is open, its mark is the live redeem-now value of its
-        constituent ranges — the same bid the protocol would pay, read off
-        chain. The Portfolio surface aggregates this across products into a
-        single P&amp;L.
+        legs — the same bid the protocol would pay, read off chain. The
+        Portfolio surface aggregates this across all products into a single
+        running P&amp;L.
       </P>
     </>
   );
@@ -1342,7 +1433,7 @@ function ChainPackages() {
           [
             "pelagos_strategies",
             "structured_note",
-            "A principal-protection floor primitive plus admin settlement.",
+            "Structured-note scaffolding plus admin settlement. Note floors and tranche seniority are tracked and enforced in Pelagos&apos;s accounting layer, not by an on-chain waterfall.",
           ],
           [
             "DeepBook Predict (Mysten)",
@@ -1418,12 +1509,12 @@ function ChainDeploy() {
       <SubHeading>Verified end-to-end</SubHeading>
       <P>
         Both Pelagos packages publish with green Move tests. Live, on-chain,
-        wallet-signed digests this deploy include a one-PTB range-strip mint,
-        a PLP supply for a note floor, and a range mint and redeem in both
-        directions. The indexer corroborates four range mints and one redeem.
-        Every wallet-signed build dry-runs clean on chain, and a fresh
-        mint→redeem cycle confirms the live path on current code. Full digests
-        are in <Code>DEPLOYMENT.md</Code>.
+        wallet-signed digests this deploy include a one-signature multi-leg
+        mint and range mints and redeems in both directions, on both settlement
+        rails. The indexer corroborates the mints and redeems. Every
+        wallet-signed build dry-runs clean on chain, and a fresh mint→redeem
+        cycle confirms the live path — including redemption — on current code.
+        Full digests are in <Code>DEPLOYMENT.md</Code>.
       </P>
     </>
   );
@@ -1458,14 +1549,14 @@ function DevApi() {
       <Endpoint
         method="GET"
         path="/api/predict/vol-surface"
-        description="Live SVI vol surface for the Volatility desk and greeks."
+        description="Live volatility surface for the Volatility desk and greeks."
         params={[]}
         responseNote="{ surface, smile, term_structure }"
       />
       <Endpoint
         method="GET"
         path="/api/predict/vault/summary"
-        description="Live PLP vault summary — NAV, share price, utilisation. The 'vault strategy' behind Protected Note floors."
+        description="Live vault summary — NAV, share price, utilisation."
         params={[]}
         responseNote="{ nav, share_price, utilization }"
       />
@@ -1473,38 +1564,38 @@ function DevApi() {
       <Endpoint
         method="POST"
         path="/api/predict/strip/preview"
-        description="μ/σ view → N on-grid range buckets, live MM-priced off get_range_trade_amounts. Surfaces ask, bid, slippage, spread, and EV per bucket and as strip totals."
+        description="A view (centre + width) priced live at real size against the protocol. Surfaces cost to open, redeem-now value, spread, and expected value per leg and as totals."
         params={[
           ["asset", "string", "Default BTC; or oracle_id directly."],
-          ["mu_usd", "number", "View mean (or mu_raw, 1e9)."],
+          ["mu_usd", "number", "View centre (or mu_raw, 1e9)."],
           ["sigma_usd", "number", "View width (or sigma_raw, 1e9)."],
           ["budget_usd", "number", "Total spend (or budget_raw, 6dp)."],
-          ["n", "number", "Bucket count."],
+          ["n", "number", "Number of legs."],
         ]}
-        responseNote="{ buckets: PricedBucket[], totals: StripQuote }"
+        responseNote="{ legs: PricedLeg[], totals: StripQuote }"
       />
       <SubHeading>Predict — structured products (non-custodial)</SubHeading>
       <Endpoint
         method="POST"
         path="/api/predict/strip/open/prepare"
-        description="Unsigned deposit + N × mint_range PTB (one signature). Bundles create_manager on a first open."
+        description="Unsigned single-signature open for a distribution view. Bundles the one-time account bootstrap on a first open."
         params={[
           ["asset", "string", "Or oracle_id."],
-          ["mu_usd", "number", "View mean."],
+          ["mu_usd", "number", "View centre."],
           ["sigma_usd", "number", "View width."],
           ["budget_usd", "number", "Total spend."],
-          ["n", "number", "Bucket count."],
+          ["n", "number", "Number of legs."],
         ]}
         responseNote="{ tx_bytes, sender, dry_run }"
       />
       <Endpoint
         method="POST"
         path="/api/predict/ppn/open/prepare"
-        description="Unsigned single-PTB Protected Note open: split → PLP supply (floor) + deposit + range strip (upside)."
+        description="Unsigned single-signature Protected Note open: floor portion plus an upside sleeve."
         params={[
           ["budget_usd", "number", "Total deposit."],
-          ["floor_pct", "number", "Floor fraction; default 0.8."],
-          ["mu_usd", "number", "Upside view mean."],
+          ["floor_pct", "number", "Floor target as a fraction of the deposit."],
+          ["mu_usd", "number", "Upside view centre."],
           ["sigma_usd", "number", "Upside view width."],
         ]}
         responseNote="{ tx_bytes, sender, dry_run }"
@@ -1512,7 +1603,7 @@ function DevApi() {
       <Endpoint
         method="POST"
         path="/api/predict/tranche/quote"
-        description="Senior / mezzanine / junior Risk Slice quotes — the same strip at 0.5σ / 1σ / 2σ."
+        description="Senior / mezzanine / junior tranche quotes — the same view taken at three seniority widths."
         params={[
           ["asset", "string", "Or oracle_id."],
           ["budget_usd", "number", "Per-slice budget."],
@@ -1530,7 +1621,7 @@ function DevApi() {
       <Endpoint
         method="GET"
         path="/api/options/chain"
-        description="The BTC options chain — calls and puts across every live expiry, each priced off Predict range liquidity with IV from the SVI smile and a per-strike depth cap."
+        description="The BTC options chain — calls and puts across every live expiry, each priced off live Predict liquidity with implied volatility from the live surface and a per-strike depth cap."
         params={[["asset", "string", "Default BTC."]]}
         responseNote="{ expiries: Expiry[], strikes: Strike[] }"
       />
@@ -1544,7 +1635,7 @@ function DevApi() {
       <Endpoint
         method="GET"
         path="/api/predict/baskets"
-        description="The named DeepBook structured baskets (BTC Pin / Spread / Wide)."
+        description="The prebuilt DeepBook baskets — a tight pin, a moderate spread, and a wide range."
         params={[]}
         responseNote="{ baskets: Basket[] }"
       />
@@ -1591,15 +1682,15 @@ pelagos_strategies/  Move: structured_note`}
       <CodeBlock>
         {`app/app/
   page.tsx              // Landing
-  distribution/         // Distributed Options + range ladder
-  volatility/           // Vol structures, SVI surface, builder
+  distribution/         // Distributed Options + distribution view
+  volatility/           // Vol structures, vol surface, builder
   deepbook/             // Prebuilt range strategies + Protected Notes
-  basket/               // DeepBook recipes + Polymarket event baskets
-  tranche/  ppn/        // Risk Slices + Notes (deep-link routes)
-  portfolio/            // Holdings, mark-to-market, P&L, backtests
+  basket/               // DeepBook recipes + event baskets
+  tranche/  ppn/        // Tranches + Notes (deep-link routes)
+  portfolio/            // Holdings, mark-to-market, live P&L
   docs/                 // This About & docs surface
   _components/          // Header, shared layout
-  _lib/                 // tokens, clients, mode/theme, strip math`}
+  _lib/                 // tokens, clients, mode/theme helpers`}
       </CodeBlock>
       <SubHeading>Backend layout</SubHeading>
       <CodeBlock>
@@ -1612,7 +1703,7 @@ pelagos_strategies/  Move: structured_note`}
     distribution.ts     // /api/distribution/*
     deepbook.ts ppn.ts vaults.ts ...
   services/
-    predict/            // SVI surface, strip math, PTB builders
+    predict/            // vol surface, pricing, PTB builders
     options-chain/  volatility/  baskets/  vault/  sui/ ...`}
       </CodeBlock>
       <SubHeading>Forked Next.js</SubHeading>
@@ -1659,38 +1750,40 @@ function RiskSummary() {
       </P>
       <SubHeading>Directional risk</SubHeading>
       <P>
-        A strip is a leveraged expression of a view on where an asset lands. If
-        BTC settles outside the range mass the position pays little or
-        nothing. A narrow ATM slice has a high hit-rate but small multiple; a
-        wide junior slice is convex and frequently expires worthless.
+        A structured position is a leveraged expression of a view on where an
+        asset lands. If the asset settles away from your view the position pays
+        little or nothing. A narrow, senior position pays often but modestly; a
+        wide, junior position is convex and frequently expires worthless.
       </P>
       <P>
-        <B>Scenario.</B> A junior (2.0σ) slice is minted for a sharp move. BTC
-        settles near the forward, inside the senior band but outside the
+        <B>Scenario.</B> A junior tranche is opened for a sharp move. The asset
+        settles near where it started — inside the senior band but outside the
         junior tails. The junior position pays zero even though a senior slice
         on the same view would have paid in full.
       </P>
       <SubHeading>Liquidity and slippage risk</SubHeading>
       <P>
-        Every bucket is priced against post-trade vault state, so a large
-        order pays the slippage of the liability it adds. The{" "}
-        <Code>[2%, 98%]</Code> mintable band means buckets near the edges of
-        the distribution can become untradeable; size that exceeds available
-        depth is rejected rather than filled at a fictional price.
+        Because every leg is priced at your real order size, a large order pays
+        the slippage it adds. Legs near the edges of the distribution can fall
+        outside what the protocol will mint and become untradeable, and size
+        that exceeds available depth is rejected rather than filled at a
+        fictional price.
       </P>
-      <SubHeading>PLP / floor risk (Protected Notes)</SubHeading>
+      <SubHeading>Floor and seniority risk (Notes &amp; Tranches)</SubHeading>
       <P>
-        A note&apos;s floor sleeve is supplied to the PLP vault as the
-        protocol&apos;s counterparty — the &quot;be the house&quot; side.
-        Principal protection is a target, not a guarantee: it depends on PLP
-        vault solvency, redemption availability, and settlement timing. A loss
-        on the house side, or a withdrawal delay around maturity, impairs the
-        floor.
+        Protected Note floors and tranche seniority are tracked and enforced in
+        Pelagos&apos;s own accounting layer over pooled vault deposits — they
+        are <B>not</B> on-chain-enforced guarantees or an on-chain waterfall.
+        Principal protection is a target, not a guarantee: it depends on vault
+        solvency, redemption availability, settlement timing, and the integrity
+        of Pelagos&apos;s bookkeeping. A withdrawal delay around maturity, or a
+        shortfall in the pooled deposits, can impair the floor or the ordering
+        between slices.
       </P>
       <SubHeading>Oracle and settlement risk</SubHeading>
       <P>
-        Settlement follows DeepBook Predict&apos;s SVI oracle. Pelagos does
-        not adjudicate or override resolution; an oracle fault or a delayed
+        Settlement follows DeepBook Predict&apos;s oracle. Pelagos does not
+        adjudicate or override resolution; an oracle fault or a delayed
         settlement propagates to every position referencing the affected
         market.
       </P>
@@ -1728,43 +1821,43 @@ function FaqAll() {
       />
       <Faq
         q="What is DeepBook Predict and what does Pelagos add?"
-        a="DeepBook Predict is Mysten's on-chain prediction protocol — it exposes binary and range options over a BTC SVI oracle. Pelagos calls it (does not deploy it) and adds a structured-product layer: a range-strip engine that turns a continuous μ/σ view into a basket of real range-options minted in one signature."
+        a="DeepBook Predict is Mysten's on-chain prediction protocol — it exposes simple binary and range contracts over a live BTC volatility-surface oracle. Pelagos calls it (does not deploy it) and adds a structured-product layer on top: options chains, volatility structures, distribution views, tranches, notes, and diversified baskets, each assembled from real on-chain contracts and minted in one signature where possible."
       />
       <Faq
         q="Where do the prices come from?"
-        a="Every bucket price comes from the protocol's own get_range_trade_amounts via devInspect, priced at the actual order quantity against post-trade vault state. Nothing on the pricing path is invented or linearly interpolated — the quote already includes the MM spread and the order's own slippage."
+        a="Every leg is quoted off the protocol's own live order book, at the real size you are trading, before you sign — and pricing reads need no funds and no signature. Nothing on the pricing path is invented or interpolated: the quote already includes the market-maker spread and the slippage your own order adds."
       />
       <Faq
         q="Is Pelagos custodial?"
         a="No. The backend builds unsigned programmable transaction blocks; the user's wallet signs and executes them, and the user's wallet owns the on-chain PredictManager that gates mint and redeem. The backend never holds user keys or collateral on the structured-product path."
       />
       <Faq
-        q="Why are there two USDC tokens?"
-        a="dUSDC is the only asset DeepBook Predict accepts, so anything settling on Predict uses it — but it is faucet-gated and not mintable by us. Pelagos USDC (MOCK_USDC) is freely mintable and backs Pelagos's own contracts (Polymarket event baskets, vault flows), so a demo never bottlenecks on the dUSDC faucet. Both are 1:1 in USD and first-class."
+        q="Why are there two USDC tokens, and which should I pick?"
+        a="You pick a settlement rail per trade. dUSDC is DeepBook Predict's real quote asset — the most faithful rail — but it is faucet-gated. Pelagos USDC (mUSDC) is a demo token that is freely mintable, so you never wait on a faucet. The crucial point: a trade in mUSDC uses the same smart contracts, the same live DeepBook pricing, and the same backend flow as a dUSDC trade, including redemption. For frictionless testing, use mUSDC; both are 1:1 in USD and both work end-to-end."
       />
       <Faq
         q="How do I get test funds?"
-        a="The header 'Test funds' button (shown when a wallet is connected) sends 25 dUSDC plus 10,000 Pelagos USDC in one click. Each Predict surface also shows a contextual 'Get test dUSDC' when the wallet is short. Gas (SUI) is free from the standard Sui testnet faucet."
+        a="The header 'Test funds' button (shown when a wallet is connected) dispenses dUSDC, mUSDC, and SUI gas in a single transaction — one click gets you everything you need to trade. Each Predict surface also shows a contextual top-up when your dUSDC balance is short."
       />
       <Faq
         q="Does Pelagos use DEEP?"
         a="No. DeepBook Predict is an AMM/PLP-backed range protocol that settles purely in dUSDC. DEEP is DeepBook v3's CLOB fee token; Pelagos places no v3 CLOB orders, and a live range mint consumes zero DEEP — only dUSDC and SUI gas."
       />
       <Faq
-        q="What is the range strip, exactly?"
-        a="A set of adjacent, on-grid DeepBook Predict ranges weighted by a Normal(μ, σ) mass. Together they reproduce a distributional payoff. Every Pelagos product — Distribution, Risk Slices, Protected Notes, DeepBook baskets, Volatility — is the same strip engine with a different parameterisation."
+        q="What is a 'strip', and why does it matter?"
+        a="Most Pelagos products are not a single contract but a small set of range contracts assembled into one position — Pelagos calls this a strip. It is what lets a position track a richer view than any single binary could: a direction, a width, or a whole shape of where an asset lands. You set the view; Pelagos selects and sizes the underlying contracts and presents one clean position with one cost and one maximum payout."
       />
       <Faq
-        q="What are Risk Slices?"
-        a="The same underlying strip taken at three widths: senior 0.5σ, mezzanine 1.0σ, junior 2.0σ. Narrow is high hit-rate and low multiple; wide is convex, low hit-rate, and high multiple. Seniority is encoded in which part of the distribution the strip covers."
+        q="What are Tranches (Risk Slices)?"
+        a="The same market view taken at three risk appetites: senior (narrow, high-probability, modest payout), mezzanine (balanced), and junior (wide, lower-probability, convex, high payout). Important and honest: tranche seniority is tracked and enforced in Pelagos's own accounting layer over pooled vault deposits — not an on-chain waterfall."
       />
       <Faq
-        q="How is a Protected Note's floor produced?"
-        a="A chosen fraction of the deposit (default 80%) is supplied to DeepBook Predict's PLP vault — the 'be the house' side that earns the spread — and the remainder buys a range strip for upside. Both legs settle in one PTB. The floor is a target, not a guarantee: it depends on PLP solvency and redemption availability."
+        q="How is a Protected Note's floor produced and enforced?"
+        a="Most of your deposit is held against a target principal floor and the remainder buys an upside sleeve; both settle in one signature. The floor is a structured position that Pelagos tracks and enforces in its own accounting layer over pooled vault deposits — it is NOT an on-chain-enforced principal guarantee. Principal protection is a target, not a guarantee: it depends on vault solvency, redemption availability, settlement timing, and Pelagos's bookkeeping."
       />
       <Faq
-        q="What is the [2%, 98%] mintable band?"
-        a="The pricer will quote bands outside the protocol's mint bounds, which would then abort in assert_mintable_ask. So Pelagos only flags a bucket tradeable when its marginal ask sits inside [0.02, 0.98] — a safety margin inside the protocol's ~[1%, 99%] so post-trade slippage can't push a surfaced bucket out of bounds."
+        q="Why are some strikes or legs shown as untradeable?"
+        a="The protocol only mints contracts inside a sensible probability band; a contract that has become too extreme cannot be minted. Pelagos checks this up front and only surfaces a leg as tradeable when it will actually mint at your size, with a safety margin so post-trade slippage can't push it out of bounds. Legs that fall outside are shown as untradeable rather than quoted at a price Pelagos couldn't honour on-chain."
       />
       <Faq
         q="Which BTC expiries are available?"
@@ -1772,11 +1865,19 @@ function FaqAll() {
       />
       <Faq
         q="Can I close a position before settlement?"
-        a="Yes. A range can be redeemed at the live bid via range/redeem while the market is open. Once the oracle settles, a winning range can be claimed permissionlessly. The Portfolio surface marks open positions to the live redeem-now value."
+        a="Yes. A position can be redeemed at the live bid at any time while the market is open, on either settlement rail. Once the oracle settles, a winning position can be claimed permissionlessly. The Portfolio surface marks open positions to the live redeem-now value."
+      />
+      <Faq
+        q="Do I need a wallet or funds just to see prices?"
+        a="No. All pricing and previews run as read-only simulations against on-chain state, so you can explore live quotes for any product without connecting a wallet or spending anything. You only need a connected wallet and funds when you actually open or close a position."
+      />
+      <Faq
+        q="What happens at settlement?"
+        a="Each leg is a $1 binary: at settlement, in-the-money legs pay $1 each and out-of-the-money legs pay nothing, so the total payout is the sum across the position's legs. Pelagos does not adjudicate resolution — it reads and submits against the protocol's oracle."
       />
       <Faq
         q="Where can I verify it actually works on chain?"
-        a="DEPLOYMENT.md lists the live testnet package and object IDs plus verified wallet-signed digests — a one-PTB range-strip mint, a PLP supply, and a range mint and redeem — corroborated by the Predict indexer. Every build also dry-runs clean on chain before signing."
+        a="DEPLOYMENT.md lists the live testnet package and object IDs plus verified wallet-signed digests — a one-signature multi-leg mint and range mints and redeems in both directions — corroborated by the Predict indexer. Every build also dry-runs clean on chain before signing."
       />
     </>
   );

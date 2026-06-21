@@ -363,21 +363,32 @@ export async function previewStrip(args: {
 export interface PreparedTx {
   tx_bytes: string;
   sender: string;
-  dry_run: { ok: boolean; status: string; gas_used?: string; error?: string };
+  dry_run: { ok: boolean | null; status: string; gas_used?: string; error?: string };
 }
 
-/** Serialize an unsigned tx + dry-run a throwaway copy (mirrors vault/index.ts).
- *  We deliberately do NOT pin an explicit gas budget: a multi-leg DeepBook Predict
- *  PTB genuinely costs ~0.8 SUI, so the wallet's auto-estimate is correct. Forcing a
- *  lower budget turns the wallet's clean pre-sign rejection into an on-chain failure
- *  that still burns gas. The faucet's SUI grant is sized to cover the auto-estimate. */
-async function buildAndDryRun(tx: Transaction, sender: string): Promise<PreparedTx> {
+/** Pinned gas budget (MIST) for the heavy multi-leg DeepBook Predict opens. Without
+ *  a pin the wallet auto-reserves its full estimate (~1.2-1.7 SUI for a 12-band
+ *  basket) even though net charge after the storage rebate is a fraction of that,
+ *  forcing an oversized faucet grant. Pinning a budget lets the faucet stay small
+ *  (see dusdc-faucet.ts). Keep it safely ABOVE real consumption — under-pinning
+ *  turns a clean pre-sign rejection into an on-chain gas-burn failure. Override with
+ *  PREDICT_OPEN_GAS_BUDGET_MIST; validate against a funded multi-leg open before
+ *  trusting it for the heaviest products. */
+const OPEN_GAS_BUDGET_MIST = BigInt(process.env.PREDICT_OPEN_GAS_BUDGET_MIST ?? 200_000_000); // 0.2 SUI
+
+/** Serialize an unsigned tx for the user's wallet. Optionally pin a gas budget on
+ *  the heavy opens so the wallet stops over-reserving; cheaper single-call txs
+ *  (create_manager, single-bucket redeem) keep the wallet's auto-estimate. */
+async function buildAndDryRun(tx: Transaction, sender: string, gasBudget?: bigint): Promise<PreparedTx> {
   tx.setSender(sender);
+  if (gasBudget && gasBudget > 0n) tx.setGasBudget(gasBudget);
   // Skip the server-side dry-run — it cost two extra RPC round-trips (build +
   // dryRun) on every prepare for a preview the wallet re-computes at sign time.
   // Returning the unbuilt serialized tx keeps the Approve button near-instant.
+  // NOTE: nothing is validated here, so `ok` is null — the FE must NOT read this
+  // as a passing dry-run. The wallet re-simulates at sign time.
   const serialized = await tx.toJSON();
-  return { tx_bytes: serialized, sender, dry_run: { ok: true, status: 'skipped' } };
+  return { tx_bytes: serialized, sender, dry_run: { ok: null, status: 'skipped' } };
 }
 
 /** Select the owner's dUSDC, merge, split an exact-amount coin for this PTB. */
@@ -434,7 +445,7 @@ export async function prepareMintStrip(args: {
     live++;
   }
   if (live === 0) throw new Error('no positive-quantity buckets to mint');
-  const prepared = await buildAndDryRun(tx, args.owner);
+  const prepared = await buildAndDryRun(tx, args.owner, OPEN_GAS_BUDGET_MIST);
   return { ...prepared, bucket_count: live };
 }
 
@@ -472,7 +483,7 @@ export async function prepareMintMultiStrip(args: {
     if (legLive > 0) legs++;
   }
   if (live === 0) throw new Error('no positive-quantity buckets to mint across the basket legs');
-  const prepared = await buildAndDryRun(tx, args.owner);
+  const prepared = await buildAndDryRun(tx, args.owner, OPEN_GAS_BUDGET_MIST);
   return { ...prepared, bucket_count: live, leg_count: legs };
 }
 
@@ -497,9 +508,9 @@ export async function prepareRedeemRange(args: {
 
 /**
  * SELL a whole strip in one PTB: redeem every band of the tranche/strip back to
- * dUSDC (the bid side). Non-custodial — the dry-run will reject if the wallet's
- * manager doesn't actually hold these band positions, so the UI surfaces a clear
- * "no position to sell" rather than a silent failure.
+ * dUSDC (the bid side). Non-custodial — the server no longer dry-runs (the wallet
+ * re-simulates at sign time), so if the manager doesn't actually hold these band
+ * positions the redeem aborts at wallet-sign time rather than here.
  */
 export async function prepareRedeemStrip(args: {
   owner: string;
@@ -518,7 +529,7 @@ export async function prepareRedeemStrip(args: {
       quantity: b.quantity,
     });
   }
-  const prepared = await buildAndDryRun(tx, args.owner);
+  const prepared = await buildAndDryRun(tx, args.owner, OPEN_GAS_BUDGET_MIST);
   return { ...prepared, bucket_count: live.length };
 }
 
@@ -562,7 +573,7 @@ export async function preparePpnOpen(args: {
       quantity: b.quantity,
     });
   }
-  const prepared = await buildAndDryRun(tx, args.owner);
+  const prepared = await buildAndDryRun(tx, args.owner, OPEN_GAS_BUDGET_MIST);
   return { ...prepared, floor_raw: args.floorRaw.toString(), upside_raw: args.upsideRaw.toString(), bucket_count: live.length };
 }
 

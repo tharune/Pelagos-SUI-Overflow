@@ -31,6 +31,8 @@ import {
   type StripBucket,
   type PpnQuote,
 } from "../_lib/predict-strip-client";
+import { CurrencySelect, type Currency } from "./CurrencySelect";
+import { simOpen, simConfirm } from "../_lib/sim-client";
 
 export type Wallet = ReturnType<typeof useWalletSigner>;
 export type Usdc = ReturnType<typeof useUsdcBalance>;
@@ -296,6 +298,7 @@ export function OpenButton({
   busyLabel,
   onOpen,
   needUsdc,
+  currency = "dUSDC",
 }: {
   wallet: Wallet;
   busy: boolean;
@@ -303,11 +306,14 @@ export function OpenButton({
   label: string;
   busyLabel: string;
   onOpen: () => void;
-  /** dUSDC the open will cost — when set and the wallet is short, surface the
-   *  test-dUSDC faucet so a connected wallet is never stuck without the asset. */
+  /** Funds the open will cost — when set and the wallet is short the selected
+   *  currency, surface the Test-funds hint so a connected wallet is never stuck. */
   needUsdc?: number;
+  /** Settlement currency the cost is denominated in (drives which balance to check). */
+  currency?: Currency;
 }) {
   const dusdc = useDusdcBalance();
+  const musdc = useUsdcBalance();
   if (!wallet.connected) {
     return (
       <ConnectModal
@@ -319,7 +325,8 @@ export function OpenButton({
       />
     );
   }
-  const short = needUsdc !== undefined && needUsdc > 0 && dusdc.uiAmount + 1e-9 < needUsdc;
+  const bal = currency === "mUSDC" ? musdc : dusdc;
+  const short = needUsdc !== undefined && needUsdc > 0 && bal.uiAmount + 1e-9 < needUsdc;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <button className="mk-open" disabled={busy || disabled} onClick={onOpen}>
@@ -327,7 +334,7 @@ export function OpenButton({
       </button>
       {short && (
         <span style={{ fontFamily: FM, fontSize: 10.5, color: C.amber }}>
-          Needs {needUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC · you hold {dusdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} — switch to mUSDC or top up via Test funds
+          Needs {needUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency} · you hold {bal.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} — {currency === "mUSDC" ? "mint more" : "switch to mUSDC or top up"} via Test funds
         </span>
       )}
     </div>
@@ -341,6 +348,7 @@ export function OpenButton({
 export function PpnPanel({ wallet }: { wallet: Wallet }) {
   const [budget, setBudget] = useState("100");
   const [floorPct, setFloorPct] = useState(0.8);
+  const [currency, setCurrency] = useState<Currency>("dUSDC");
   const [quote, setQuote] = useState<PpnQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -377,6 +385,40 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
     setOpenErr(null);
     setResult(null);
     try {
+      // mUSDC = Pelagos USDC settlement (principal-protected): deposit the full
+      // budget; settle to protected principal (floor) + realized upside. The floor
+      // catch-all band guarantees the protected principal back even if BTC misses.
+      if (currency === "mUSDC") {
+        const r = (x: string) => Number(x) / 1e6;
+        const protectedPrincipal = r(quote.protected_principal_raw);
+        const upBands = quote.strip.buckets
+          .filter((b) => b.tradeable && Number(b.quantity) > 0)
+          .map((b) => ({
+            lower_usd: b.lower_usd,
+            higher_usd: b.higher_usd,
+            payout_usd: protectedPrincipal + r(b.max_payout_raw),
+          }));
+        if (upBands.length === 0) throw new Error("No tradeable upside buckets in this note.");
+        const bands = [...upBands, { lower_usd: 0, higher_usd: 1e15, payout_usd: protectedPrincipal }];
+        setStage("Opening position…");
+        const prep = await simOpen({
+          owner: wallet.address as string,
+          product: "vol",
+          name: "Protected note · BTC",
+          premium_usd: r(quote.budget_raw),
+          max_payout_usd: r(quote.total_max_payout_raw),
+          oracle_id: quote.oracle_id,
+          forward_usd: quote.forward_usd,
+          expiry_ms: Number(quote.expiry),
+          bands,
+        });
+        setStage("Sign in wallet…");
+        const digest = await wallet.signAndExecute(prep.tx_bytes);
+        setStage("Confirming…");
+        await simConfirm(prep.sim_id, digest);
+        setResult(digest);
+        return;
+      }
       setStage("Preparing manager…");
       const mgr = await ensureManager(wallet.address as string, wallet.signAndExecute);
       const buckets = openableBuckets(quote.strip.buckets);
@@ -415,7 +457,10 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
           <Cap>Structure · BTC</Cap>
           <div style={{ display: "grid", gap: 18, marginTop: 16 }}>
             <div>
-              <Cap style={{ marginBottom: 6 }}>Budget (dUSDC)</Cap>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 10 }}>
+                <Cap>Budget</Cap>
+                <CurrencySelect value={currency} onChange={setCurrency} />
+              </div>
               <input className="mk-num" type="number" min={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
             </div>
             <Slider label="Protection floor" value={floorPct} min={0.5} max={0.99} step={0.01} fmt={(v) => pct(v)} onChange={setFloorPct} />
@@ -475,6 +520,7 @@ export function PpnPanel({ wallet }: { wallet: Wallet }) {
             busyLabel={stage ?? "Submitting…"}
             onOpen={open}
             needUsdc={quote ? Number(quote.budget_raw) / 1e6 : budgetNum}
+            currency={currency}
           />
           {result && <ResultLine digest={result} label="Protected note opened" />}
           {openErr && <div style={{ marginTop: 12, fontFamily: FM, fontSize: 12, color: C.red, lineHeight: 1.5 }}>{openErr}</div>}

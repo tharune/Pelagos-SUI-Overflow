@@ -12,7 +12,16 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 import { getSuiClient, getSigner, signerAddress } from '../predict/sui';
-import { VAULT, vaultConfigured, vaultTarget, shareType, explorerTx } from './config';
+import {
+  VAULT,
+  vaultConfigured,
+  vaultTarget,
+  shareType,
+  shareTypeFor,
+  explorerTx,
+  resolveVault,
+  type VaultCurrency,
+} from './config';
 
 const FALLBACK_SENDER =
   process.env.SUI_ACTIVE_ADDRESS ??
@@ -40,21 +49,28 @@ function fromRaw(raw: bigint | string | number): number {
   return Number(BigInt(raw)) / 10 ** VAULT.usdcDecimals;
 }
 
-function ensureConfigured(): void {
-  if (!vaultConfigured()) {
+function ensureConfigured(currency?: VaultCurrency): void {
+  if (!vaultConfigured(currency)) {
     throw new Error(
-      'Vault not configured. Set VAULT_PACKAGE_ID + VAULT_OBJECT_ID in the backend env.',
+      currency === 'dUSDC'
+        ? 'dUSDC vault not configured. Set VAULT_DUSDC_OBJECT_ID in the backend env.'
+        : 'Vault not configured. Set VAULT_PACKAGE_ID + VAULT_OBJECT_ID in the backend env.',
     );
   }
 }
 
-/** Read live vault accounting via devInspect of the view functions. */
-export async function readVaultState(): Promise<VaultState> {
-  ensureConfigured();
+/** Read live vault accounting via devInspect of the view functions. Defaults to
+ *  the mUSDC vault; pass a resolved descriptor to read the dUSDC vault. */
+export async function readVaultState(vault?: { vaultObjectId: string; usdcType: string }): Promise<VaultState> {
+  const vaultObjectId = vault?.vaultObjectId ?? VAULT.vaultObjectId;
+  const usdcType = vault?.usdcType ?? VAULT.usdcType;
+  if (!VAULT.packageId || !vaultObjectId) {
+    throw new Error('Vault not configured. Set VAULT_PACKAGE_ID + VAULT_OBJECT_ID in the backend env.');
+  }
   const client = getSuiClient();
   const tx = new Transaction();
-  const v = () => tx.object(VAULT.vaultObjectId);
-  const ta = [VAULT.usdcType];
+  const v = () => tx.object(vaultObjectId);
+  const ta = [usdcType];
   tx.moveCall({ target: vaultTarget('total_assets'), typeArguments: ta, arguments: [v()] });
   tx.moveCall({ target: vaultTarget('total_shares'), typeArguments: ta, arguments: [v()] });
   tx.moveCall({ target: vaultTarget('accrued_fees'), typeArguments: ta, arguments: [v()] });
@@ -169,21 +185,24 @@ export async function prepareDeposit(args: {
   owner: string;
   amount_usdc: number;
   label?: string;
+  /** Which settlement vault to deposit into. Defaults to the mUSDC vault. */
+  currency?: VaultCurrency;
 }): Promise<PreparedTx & { economics: DepositEconomics; vault_id: string; share_type: string }> {
-  ensureConfigured();
+  ensureConfigured(args.currency);
+  const vault = resolveVault(args.currency);
   const client = getSuiClient();
   const grossRaw = toRaw(args.amount_usdc);
   if (grossRaw <= 0n) throw new Error('amount_usdc must be positive');
 
-  const { data: coins } = await client.getCoins({ owner: args.owner, coinType: VAULT.usdcType });
+  const { data: coins } = await client.getCoins({ owner: args.owner, coinType: vault.usdcType });
   const total = coins.reduce((s, c) => s + BigInt(c.balance), 0n);
   if (total < grossRaw) {
     throw new Error(
-      `Insufficient mUSDC for ${args.owner}: holds ${fromRaw(total)}, needs ${fromRaw(grossRaw)}.`,
+      `Insufficient ${vault.label} for ${args.owner}: holds ${fromRaw(total)}, needs ${fromRaw(grossRaw)}.`,
     );
   }
 
-  const state = await readVaultState();
+  const state = await readVaultState(vault);
   const economics = computeDeposit(grossRaw, state);
 
   const tx = new Transaction();
@@ -196,12 +215,12 @@ export async function prepareDeposit(args: {
   const labelBytes = Array.from(new TextEncoder().encode(args.label ?? ''));
   tx.moveCall({
     target: vaultTarget('deposit'),
-    typeArguments: [VAULT.usdcType],
-    arguments: [tx.object(VAULT.vaultObjectId), payment, tx.pure.vector('u8', labelBytes)],
+    typeArguments: [vault.usdcType],
+    arguments: [tx.object(vault.vaultObjectId), payment, tx.pure.vector('u8', labelBytes)],
   });
 
   const prepared = await buildAndDryRun(tx, args.owner);
-  return { ...prepared, economics, vault_id: VAULT.vaultObjectId, share_type: shareType() };
+  return { ...prepared, economics, vault_id: vault.vaultObjectId, share_type: shareTypeFor(vault.usdcType) };
 }
 
 export interface VaultShareInfo {

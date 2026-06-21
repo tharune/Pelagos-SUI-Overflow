@@ -55,17 +55,20 @@ function notConfigured(res: Response) {
  */
 async function prepareDepositHandler(req: Request, res: Response) {
   try {
-    if (!vaultConfigured()) return notConfigured(res);
-    const { bundle_id, wallet_address, amount_usdc } = req.body as {
+    const { bundle_id, wallet_address, amount_usdc, currency } = req.body as {
       bundle_id: string;
       wallet_address: string;
       amount_usdc: number;
+      currency?: 'mUSDC' | 'dUSDC';
     };
+    const ccy: 'mUSDC' | 'dUSDC' = currency === 'dUSDC' ? 'dUSDC' : 'mUSDC';
+    if (!vaultConfigured(ccy)) return notConfigured(res);
 
     const prep = await prepareDeposit({
       owner: wallet_address,
       amount_usdc,
       label: bundle_id,
+      currency: ccy,
     });
 
     res.status(200).json({

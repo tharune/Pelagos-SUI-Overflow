@@ -368,11 +368,19 @@ export function quoteTranches(opts: QuoteTranchesInputs): TrancheQuote[] {
 
     // Yield-to-maturity at face (with 30-day annualisation floor), clamped to a
     // sane display ceiling — a deep-junior price annualised over a short horizon
-    // can otherwise produce nonsensical 5-digit APYs.
+    // can otherwise produce nonsensical 5-digit APYs. Kept in LOCKSTEP with the
+    // frontend buy panel (app/app/tranche/_quote.ts): cap the YTM by 5× the mean
+    // (true-horizon) expected return so the buy ticket and the secondary-market
+    // RFQ never print divergent headline APYs for the same tranche.
     const periodReturn = 1 / pricePerToken - 1;
+    const ytmApyPct = (periodReturn / annualizationYears) * 100;
+    const horizonYearsTrue = horizonDays / 365;
+    const meanApyTrue = horizonYearsTrue > 0 ? ((fair / pricePerToken - 1) / horizonYearsTrue) * 100 : 0;
+    const LOTTERY_UPSIDE_CAP = 5;
     const expectedYieldPct = Math.min(
       MAX_EXPECTED_YIELD_PCT,
-      Math.max(0, (periodReturn / annualizationYears) * 100),
+      ytmApyPct,
+      Math.max(meanApyTrue, LOTTERY_UPSIDE_CAP * meanApyTrue),
     );
 
     const maxOrderUsdc = dynamicOrderCapUsdc(

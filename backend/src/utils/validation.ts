@@ -58,6 +58,7 @@ export const depositSchema = z.object({
   bundle_id: z.string().min(1).max(128),
   wallet_address: suiAddress,
   amount_usdc: z.number().positive().max(1_000_000),
+  currency: z.enum(['mUSDC', 'dUSDC']).optional(),
 });
 
 export const redeemSchema = z.object({

@@ -70,17 +70,25 @@ const frontendOrigins = expandLoopback(
     .map((s) => s.trim())
     .filter(Boolean),
 );
-const corsOrigin: cors.CorsOptions['origin'] =
-  frontendOrigins.length === 0
-    ? '*'
-    : frontendOrigins.length === 1
-      ? frontendOrigins[0]
-      : (origin, cb) => {
-          // Allow same-origin / curl / server-to-server (no Origin header).
-          if (!origin) return cb(null, true);
-          if (frontendOrigins.includes(origin)) return cb(null, true);
-          return cb(new Error(`CORS: origin ${origin} not allowed`));
-        };
+// A single reflecting callback (never the literal '*', which is invalid with
+// credentials:true). Allows: no-Origin (curl/server-to-server), any configured
+// FRONTEND_URL, every Vercel deploy (*.vercel.app — covers preview + prod), and
+// localhost/127.0.0.1 for dev. Reflecting the request origin keeps credentials
+// working where '*' would be rejected by the browser.
+const VERCEL_HOST = /(^|\.)vercel\.app$/;
+const corsOrigin: cors.CorsOptions['origin'] = (origin, cb) => {
+  if (!origin) return cb(null, true);
+  if (frontendOrigins.includes(origin)) return cb(null, true);
+  try {
+    const host = new URL(origin).hostname;
+    if (VERCEL_HOST.test(host) || host === 'localhost' || host === '127.0.0.1') {
+      return cb(null, true);
+    }
+  } catch {
+    /* malformed Origin header — fall through to reject */
+  }
+  return cb(new Error(`CORS: origin ${origin} not allowed`));
+};
 app.use(cors({
   origin: corsOrigin,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

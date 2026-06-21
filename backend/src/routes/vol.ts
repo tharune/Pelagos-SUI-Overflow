@@ -256,13 +256,24 @@ router.get('/hedge', async (req: Request, res: Response) => {
 router.post('/open/prepare', async (req: Request, res: Response) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // Validate up front (mirrors /api/predict/strip/open/prepare) so malformed
+    // requests fail fast with a clear message instead of deep in tx construction.
+    const owner = String(body.owner ?? '');
+    const managerId = String(body.manager_id ?? '');
+    const oracleId = String(body.oracle_id ?? '');
+    if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('owner (0x...) is required');
+    if (!/^0x[0-9a-fA-F]+$/.test(managerId)) throw new Error('manager_id (0x...) is required');
+    if (!/^0x[0-9a-fA-F]+$/.test(oracleId)) throw new Error('oracle_id (0x...) is required');
+    if (body.expiry == null || String(body.expiry) === '') throw new Error('expiry is required');
+    const buckets = body.buckets;
+    if (!Array.isArray(buckets) || buckets.length === 0) throw new Error('buckets must be a non-empty array');
     res.json(
       await structured.prepareMintStrip({
-        owner: body.owner as string,
-        managerId: body.manager_id as string,
-        oracleId: body.oracle_id as string,
+        owner,
+        managerId,
+        oracleId,
         expiry: String(body.expiry),
-        buckets: body.buckets as Array<{ lower: string; higher: string; quantity: string }>,
+        buckets: buckets as Array<{ lower: string; higher: string; quantity: string }>,
         depositRaw: body.deposit_amount_raw ? BigInt(String(body.deposit_amount_raw)) : undefined,
       }),
     );

@@ -340,6 +340,8 @@ export async function ppnDeposit(args: {
   maturityDays?: number;
   confirmationTimeoutMs?: number;
   tranche?: TrancheOverlay;
+  /** Settlement currency — picks the mUSDC or dUSDC vault. Defaults to mUSDC. */
+  currency?: "mUSDC" | "dUSDC";
 }): Promise<{
   signature: string;
   prepare: PpnPrepareResponse;
@@ -353,6 +355,7 @@ export async function ppnDeposit(args: {
     wallet_address: owner,
     amount_usdc: args.amountUsdc,
     maturity_days: args.maturityDays ?? 30,
+    currency: args.currency ?? "mUSDC",
     ...(args.tranche
       ? {
           tranche_kind: args.tranche.kind,

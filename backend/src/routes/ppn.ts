@@ -86,7 +86,6 @@ function notConfigured(res: Response) {
  *  tranche/bundle as the share label. Returns signable tx bytes. */
 router.post('/onchain/prepare', async (req: Request, res: Response) => {
   try {
-    if (!vaultConfigured()) return notConfigured(res);
     const {
       bundle_id,
       wallet_address,
@@ -96,6 +95,7 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
       tranche_attach,
       tranche_detach,
       price_per_token,
+      currency,
     } = req.body as {
       bundle_id: string;
       wallet_address: string;
@@ -105,7 +105,10 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
       tranche_attach?: number;
       tranche_detach?: number;
       price_per_token?: number;
+      currency?: 'mUSDC' | 'dUSDC';
     };
+    const ccy: 'mUSDC' | 'dUSDC' = currency === 'dUSDC' ? 'dUSDC' : 'mUSDC';
+    if (!vaultConfigured(ccy)) return notConfigured(res);
     if (!bundle_id || !wallet_address || !amount_usdc || amount_usdc <= 0) {
       return res
         .status(400)
@@ -117,6 +120,7 @@ router.post('/onchain/prepare', async (req: Request, res: Response) => {
       owner: wallet_address,
       amount_usdc,
       label: ppnLabel(bundle_id, tranche_kind),
+      currency: ccy,
     });
 
     // Best-effort DB record (no-op when Supabase is unconfigured).

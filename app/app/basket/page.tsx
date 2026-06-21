@@ -225,6 +225,20 @@ function BasketSelector({
           />
         ))}
       </div>
+      {/* Footer fills the column under the list so the two panes' bottoms line up. */}
+      <div className="bk-selector-foot">
+        <div className="bk-foot-legend">
+          <Caption>Reading the table</Caption>
+          <div className="bk-foot-rows">
+            <div><span>NAV</span><em>Live mark, 0–100% of $1 face</em></div>
+            <div><span>Issue</span><em>Vault entry price per unit</em></div>
+            <div><span>Move</span><em>24-hour change in NAV</em></div>
+          </div>
+        </div>
+        <p className="bk-foot-note">
+          Open a basket to trade it on the Pelagos vault, or switch to <strong>Advanced</strong> for senior / mezzanine / junior risk slices.
+        </p>
+      </div>
     </div>
   );
 }
@@ -611,8 +625,9 @@ const BASKET_CSS = `
 
 
   /* left selector fills the detail column's height so the two sections' bottoms line up */
-  .bk-split { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 16px; align-items: start; min-width: 0; }
-  .bk-col-left, .bk-col-right { min-width: 0; }
+  .bk-split { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 16px; align-items: stretch; min-width: 0; }
+  .bk-col-left, .bk-col-right { min-width: 0; display: flex; }
+  .bk-col-left > .bk-card, .bk-col-right > .bk-card { width: 100%; }
 
   .bk-card { border: 0.5px solid ${C.border}; background: ${C.card}; border-radius: 12px; min-width: 0; }
 
@@ -636,7 +651,17 @@ const BASKET_CSS = `
   .bk-row-name strong { color: ${C.textPrimary}; font-size: 13px; font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bk-row-name em { color: ${C.textMuted}; font-family: ${FM}; font-size: 9.5px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* selector footer — risk-slice explainer that fills the column under the basket list */
+  /* selector footer — legend + how-to that fills the column under the basket list,
+     so the left pane's bottom edge lines up with the right detail card. */
+  .bk-selector-table { flex: 0 0 auto; }
+  .bk-selector-foot { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; padding: 15px 16px 16px; }
+  .bk-foot-legend { display: grid; gap: 10px; }
+  .bk-foot-rows { display: grid; gap: 8px; }
+  .bk-foot-rows > div { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+  .bk-foot-rows span { color: ${C.textSecondary}; font-family: ${FM}; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 560; }
+  .bk-foot-rows em { color: ${C.textMuted}; font-family: ${FS}; font-size: 11.5px; font-style: normal; line-height: 1.4; }
+  .bk-foot-note { margin: 0; color: ${C.textMuted}; font-family: ${FS}; font-size: 11.5px; line-height: 1.55; }
+  .bk-foot-note strong { color: ${C.textSecondary}; font-weight: 600; }
 
   .bk-detail { padding: 16px; display: grid; gap: 14px; }
   .bk-detail-head { display: flex; justify-content: space-between; align-items: start; gap: 18px; }

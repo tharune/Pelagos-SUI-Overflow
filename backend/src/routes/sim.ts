@@ -88,7 +88,12 @@ router.post('/settle', async (req: Request, res: Response) => {
     if (!simId) throw new Error('sim_id is required');
     res.json(await settleSim(simId));
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    // Client-actionable errors (bad/stale id, validation) → 4xx; reserve 500 for
+    // genuine on-chain/RPC failures.
+    const msg = (err as Error).message;
+    if (/unknown sim position/i.test(msg)) return res.status(404).json({ error: msg });
+    if (/required|invalid|non-finite|must be/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg });
   }
 });
 

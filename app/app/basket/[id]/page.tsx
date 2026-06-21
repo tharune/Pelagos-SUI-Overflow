@@ -22,6 +22,7 @@ import {
   useActiveWalletAddress,
   useWalletSigner,
   useUsdcBalance,
+  useDusdcBalance,
   explorerTxUrl,
 } from "../../_lib/wallet-bridge";
 import { IS_SUI, friendlyWalletError } from "../../_lib/chain";
@@ -675,6 +676,8 @@ function BasketBuyPanel({
   const activeAddress = useActiveWalletAddress();
   const appConnected = wallet.connected;
   const usdc = useUsdcBalance();
+  const dusdc = useDusdcBalance();
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const [mode, setMode] = useState<TradeMode>("buy");
   const [amount, setAmount] = useState<string>("100");
   const [sellQtyInput, setSellQtyInput] = useState<string>("");
@@ -803,7 +806,7 @@ function BasketBuyPanel({
   // `usdc.uiAmount` is the LIVE wallet balance polled from the chain.
   // We gate "Insufficient USDC" on the real balance so the CTA tells the
   // user the truth about their wallet, not a sandbox counter.
-  const liveUsdc = usdc.uiAmount;
+  const liveUsdc = currency === "mUSDC" ? usdc.uiAmount : dusdc.uiAmount;
   const insufficient = appConnected && hasAmount && usdcAmount > liveUsdc;
   const txBusy =
     txStage === "preparing" ||
@@ -935,6 +938,7 @@ function BasketBuyPanel({
           wallet,
           bundleId: bundle.id,
           amountUsdc: usdcAmount,
+          currency,
           // Use vault issue price as cost basis so portfolio PnL starts at 0.
           navAtDeposit: navPrice,   // cost basis = live Polymarket NAV shown in UI
           onStage: (s) => setTxStage(s),
@@ -1150,6 +1154,8 @@ function BasketBuyPanel({
         {mode === "buy" ? (
           <BuySection
             connected={appConnected}
+            currency={currency}
+            onCurrencyChange={setCurrency}
             amount={amount}
             setAmount={(v) => { setAmount(v); setConfirmedTokensOut(null); }}
             usdcAmount={usdcAmount}
@@ -1430,6 +1436,8 @@ function BuySection({
   bookStatus,
   topLegCount,
   hasAmount,
+  currency,
+  onCurrencyChange,
 }: {
   connected: boolean;
   unitLabel: string;
@@ -1454,8 +1462,9 @@ function BuySection({
   bookStatus: "idle" | "loading" | "ok" | "error";
   topLegCount: number;
   hasAmount: boolean;
+  currency: Currency;
+  onCurrencyChange: (c: Currency) => void;
 }) {
-  const [currency, setCurrency] = useState<Currency>("dUSDC");
   return (
     <>
       <div
@@ -1488,7 +1497,7 @@ function BuySection({
               <span>
                 Balance{" "}
                 <span style={{ color: C.textSecondary }}>
-                  {stateUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                  {stateUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}
                 </span>
               </span>
               {stateUsdc > 0 && (
@@ -1534,7 +1543,7 @@ function BuySection({
               padding: 0,
             }}
           />
-          <CurrencySelect value={currency} onChange={setCurrency} />
+          <CurrencySelect value={currency} onChange={onCurrencyChange} />
         </div>
       </div>
 

@@ -30,8 +30,10 @@ import { computeHedgeability } from "../_risk";
 import {
   useWalletSigner,
   useUsdcBalance,
+  useDusdcBalance,
   explorerTxUrl,
 } from "../../_lib/wallet-bridge";
+import { CurrencySelect, type Currency } from "../../_components/CurrencySelect";
 import { ConnectModal } from "@mysten/dapp-kit";
 import {
   fetchTrancheSellRfq,
@@ -1038,6 +1040,8 @@ function TrancheBuyPanel({
   // instead of the sandbox reducer counter.
   const wallet = useWalletSigner();
   const usdc = useUsdcBalance();
+  const dusdc = useDusdcBalance();
+  const [currency, setCurrency] = useState<Currency>("mUSDC");
   const appConnected = wallet.connected;
   // Seed the amount input from the AI-recommended deposit when a user
   // lands on this page via a `?amount=` deep link. Falls back to $100.
@@ -1207,7 +1211,7 @@ function TrancheBuyPanel({
   // Gate on the live on-chain USDC balance. When disconnected we don't
   // flag "Insufficient" — the button's wallet-modal branch handles that
   // path without ever advancing past the connect step.
-  const liveUsdc = usdc.uiAmount;
+  const liveUsdc = currency === "mUSDC" ? usdc.uiAmount : dusdc.uiAmount;
   const insufficient = appConnected && hasAmount && usdcAmount > liveUsdc;
 
   // -----------------------------------------------------------------
@@ -1281,6 +1285,7 @@ function TrancheBuyPanel({
         wallet,
         bundleId: bundle.id,
         amountUsdc: usdcAmount,
+        currency,
         // Tranche maturity matches the basket resolution window. Clamp
         // to the on-chain program's 1..365 day range so we don't emit a
         // negative `maturity_days` if the basket is already past due.
@@ -1591,13 +1596,16 @@ function TrancheBuyPanel({
               fontWeight: 500,
             }}
           >
-            <span>Amount</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, textTransform: "none", letterSpacing: 0 }}>
+              <span style={{ letterSpacing: "0.14em", textTransform: "uppercase" }}>Amount</span>
+              <CurrencySelect value={currency} onChange={setCurrency} />
+            </span>
             {appConnected && (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <span>
                   Balance{" "}
                   <span style={{ color: C.textSecondary }}>
-                    {liveUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                    {liveUsdc.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}
                   </span>
                 </span>
                 {liveUsdc > 0 && (

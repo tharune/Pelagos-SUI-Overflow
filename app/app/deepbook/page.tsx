@@ -525,7 +525,7 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
 
   if (loadErr && !presets) return <div className="db-banner err">Couldn’t load note presets — {loadErr}</div>;
   if (!presets) {
-    return <div className="db-note-grid">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="db-card db-skel" style={{ height: 150 }} />)}</div>;
+    return <div className="db-note-grid">{Array.from({ length: 7 }).map((_, i) => <div key={i} className="db-card db-strat db-skel" style={{ height: 150 }} />)}</div>;
   }
 
   return (
@@ -966,8 +966,13 @@ const DB_CSS = `
   .db-strat-grid > .db-strat { flex: 1 1 220px; max-width: calc((100% - 33px) / 4); }
   @media (max-width: 1180px) { .db-strat-grid > .db-strat { max-width: calc((100% - 22px) / 3); } }
   @media (max-width: 820px) { .db-strat-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
-  .db-note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 12px; }
-  @media (max-width: 560px) { .db-note-grid { grid-template-columns: 1fr; } }
+  /* All presets on one clean row (no lonely wrap). Cards grow to fill; any wrap
+     at narrower widths centers so a half-row never reads as "stuck out". */
+  .db-note-grid { display: flex; flex-wrap: wrap; gap: 11px; justify-content: center; }
+  .db-note-grid > .db-strat { flex: 1 1 200px; min-width: 0; max-width: calc((100% - 66px) / 7); }
+  @media (max-width: 1340px) { .db-note-grid > .db-strat { max-width: calc((100% - 33px) / 4); } }
+  @media (max-width: 860px) { .db-note-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
+  @media (max-width: 560px) { .db-note-grid > .db-strat { max-width: 100%; } }
   .db-strat { text-align: left; display: grid; gap: 7px; align-content: start; cursor: pointer; transition: all 0.15s ${EASE}; }
   .db-strat:hover { border-color: ${C.borderHover}; transform: translateY(-1px); }
   .db-strat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1026,8 +1031,12 @@ const DB_CSS = `
   .db-dsum-k { font-family: ${FM}; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: ${C.textMuted}; white-space: nowrap; }
   .db-dsum-v { font-family: ${FD}; font-size: 12.5px; font-weight: 600; color: ${C.textPrimary}; font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .db-quote-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.95fr); gap: 14px; align-items: start; }
-  .db-adv-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.92fr); gap: 14px; align-items: start; }
+  /* Both columns share the row's height; the shorter (left) card distributes its
+     content so its bottom edge lines up with the right column's deploy button. */
+  .db-quote-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.95fr); gap: 14px; align-items: stretch; }
+  .db-adv-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.92fr); gap: 14px; align-items: stretch; }
+  .db-quote-grid > .db-card:first-child { display: flex; flex-direction: column; }
+  .db-quote-grid > .db-card:first-child > .db-proj { flex: 1 1 auto; align-content: space-between; }
   @media (max-width: 1100px) { .db-quote-grid, .db-adv-grid { grid-template-columns: 1fr; } }
 
   .db-payoff p.db-risk { margin: 10px 0 0; font-family: ${FS}; font-size: 11px; line-height: 1.5; color: ${C.textMuted}; }

@@ -180,12 +180,14 @@ export async function prepareDeposit(args: {
   bundleId: string;
   walletAddress: string;
   amountUsdc: number;
+  currency?: "mUSDC" | "dUSDC";
 }): Promise<DepositPrepareResponse> {
   const uuid = await resolveBundleUuid(args.bundleId);
   return postJson<DepositPrepareResponse>("/api/deposit/prepare", {
     bundle_id: uuid,
     wallet_address: args.walletAddress,
     amount_usdc: args.amountUsdc,
+    currency: args.currency ?? "mUSDC",
   });
 }
 
@@ -258,6 +260,7 @@ export async function depositIntoBundle(args: {
   amountUsdc: number;
   navAtDeposit?: number;
   confirmationTimeoutMs?: number;
+  currency?: "mUSDC" | "dUSDC";
   onStage?: (stage: "preparing" | "signing" | "confirming" | "persisting") => void;
 }): Promise<{
   signature: string;
@@ -268,7 +271,7 @@ export async function depositIntoBundle(args: {
   const owner = requireWallet(wallet);
 
   args.onStage?.("preparing");
-  const prepare = await prepareDeposit({ bundleId, walletAddress: owner, amountUsdc });
+  const prepare = await prepareDeposit({ bundleId, walletAddress: owner, amountUsdc, currency: args.currency });
   if (!prepare.tx_bytes) {
     throw new DepositError("Backend did not return a signable transaction.", 0, prepare);
   }

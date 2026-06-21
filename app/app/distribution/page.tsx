@@ -695,6 +695,7 @@ function Slider({ label, value, min, max, step, fmt, onChange }: { label: string
 function AdvancedDistribution() {
   const wallet = useWalletSigner();
   const usdc = useDusdcBalance();
+  const musdc = useUsdcBalance();
 
   const [markets, setMarkets] = useState<DeepBookMarket[]>([]);
   const [marketId, setMarketId] = useState<string | null>(null);
@@ -959,7 +960,7 @@ function AdvancedDistribution() {
                     {wallet.connected && (
                       <div style={{ display: "flex", justifyContent: "space-between", fontFamily: FM, fontSize: 11, color: C.textMuted }}>
                         <span>Balance</span>
-                        <span style={{ color: C.textPrimary }}>{usdc.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} dUSDC</span>
+                        <span style={{ color: C.textPrimary }}>{(currency === "mUSDC" ? musdc : usdc).uiAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}</span>
                       </div>
                     )}
                   </div>

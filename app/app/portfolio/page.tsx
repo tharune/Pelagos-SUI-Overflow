@@ -6,7 +6,7 @@
 // tracking mUSDC + dUSDC at 1:1 USD, plus a portfolio-driven strategy backtest.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FS, FD, FM, EASE, tc, trancheColor, fmtUsd } from "../_lib/tokens";
@@ -361,6 +361,39 @@ export default function PortfolioPage() {
 
   const deployedValue = Math.max(0, displayTotal - liveUsdc);
   const deployedPct = displayTotal > 0 ? (deployedValue / displayTotal) * 100 : 0;
+
+  // Net account value over time. Anchored to the live total and stepped only by
+  // REAL realized P&L from settled distribution positions (net - collateral) —
+  // no fabricated data, so a wallet with no realized change shows a flat line.
+  const navChart = useMemo(() => {
+    if (!walletReady) return null;
+    const settled = (distPositions || [])
+      .filter((p) => p.settled && Number.isFinite(p.net_usdc) && Number.isFinite(p.collateral_usdc))
+      .map((p) => ({ t: (p.settled_at ?? p.opened_at) || Date.now(), delta: (p.net_usdc as number) - p.collateral_usdc }))
+      .sort((a, b) => a.t - b.t);
+    const now = Date.now();
+    let series: Array<{ t: number; v: number }>;
+    if (settled.length === 0) {
+      series = [{ t: now - 7 * 864e5, v: displayTotal }, { t: now, v: displayTotal }];
+    } else {
+      const totalDelta = settled.reduce((acc, e) => acc + e.delta, 0);
+      let v = displayTotal - totalDelta;
+      series = [{ t: Math.min(settled[0].t, now - 864e5), v }];
+      for (const e of settled) { v += e.delta; series.push({ t: e.t, v }); }
+      series.push({ t: now, v: displayTotal });
+    }
+    const W = 600, H = 88, padT = 8, padB = 8;
+    const t0 = series[0].t, t1 = series[series.length - 1].t || t0 + 1;
+    const vs = series.map((q) => q.v);
+    let lo = Math.min(...vs), hi = Math.max(...vs);
+    if (hi - lo < 1e-9) { const pad = Math.max(1, Math.abs(lo) * 0.02); lo -= pad; hi += pad; }
+    const sx = (t: number) => ((t - t0) / (t1 - t0 || 1)) * W;
+    const sy = (v: number) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+    const line = series.map((q, i) => `${i ? "L" : "M"} ${sx(q.t).toFixed(1)} ${sy(q.v).toFixed(1)}`).join(" ");
+    const area = `${line} L ${W.toFixed(1)} ${H} L 0 ${H} Z`;
+    const up = series[series.length - 1].v >= series[0].v;
+    return { W, H, line, area, up, flat: settled.length === 0 };
+  }, [walletReady, distPositions, displayTotal]);
   // Count every position the grid actually renders. This MUST include the
   // confirmed-open structured (sim) positions — omitting them showed "Positions 0"
   // while three sim cards were on screen. Settled/pending sim rows are already
@@ -489,6 +522,24 @@ export default function PortfolioPage() {
                   </div>
                 </div>
 
+                {walletReady && navChart && (
+                  <div style={{ margin: "16px 0 4px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 7 }}>
+                      <span style={{ color: C.textMuted, fontFamily: FM, fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase" }}>Value over time</span>
+                      <span style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5 }}>{navChart.flat ? "no realized change yet" : "realized \u00b7 since first settle"}</span>
+                    </div>
+                    <svg viewBox={`0 0 ${navChart.W} ${navChart.H}`} width="100%" height={navChart.H} preserveAspectRatio="none" style={{ display: "block" }}>
+                      <defs>
+                        <linearGradient id="pf-nav-fill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={navChart.up ? C.green : C.red} stopOpacity="0.16" />
+                          <stop offset="100%" stopColor={navChart.up ? C.green : C.red} stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path d={navChart.area} fill="url(#pf-nav-fill)" />
+                      <path d={navChart.line} fill="none" stroke={navChart.up ? C.green : C.red} strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                )}
                 <div className="pf-summary-metrics">
                   <div>
                     <div style={{ color: C.textMuted, fontFamily: FM, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" }}>Cash</div>

@@ -997,10 +997,11 @@ const DB_CSS = `
 
   /* strategy / preset cards — flex with centered wrap so 7 cards never leave a
      ragged empty cell: the trailing row (3) centers under a full row of 4. */
-  .db-strat-grid { display: flex; flex-wrap: wrap; gap: 11px; justify-content: center; }
-  .db-strat-grid > .db-strat { flex: 1 1 220px; max-width: calc((100% - 33px) / 4); }
-  @media (max-width: 1180px) { .db-strat-grid > .db-strat { max-width: calc((100% - 22px) / 3); } }
-  @media (max-width: 820px) { .db-strat-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
+  .db-strat-grid { display: flex; flex-wrap: wrap; gap: 11px; justify-content: flex-start; }
+  .db-strat-grid > .db-strat { flex: 1 1 180px; max-width: calc((100% - 66px) / 7); }
+  @media (max-width: 1400px) { .db-strat-grid > .db-strat { max-width: calc((100% - 33px) / 4); } }
+  @media (max-width: 980px) { .db-strat-grid > .db-strat { max-width: calc((100% - 22px) / 3); } }
+  @media (max-width: 640px) { .db-strat-grid > .db-strat { max-width: calc((100% - 11px) / 2); } }
   /* All presets on one clean row (no lonely wrap). Cards grow to fill; any wrap
      at narrower widths centers so a half-row never reads as "stuck out". */
   .db-note-grid { display: flex; flex-wrap: wrap; gap: 11px; justify-content: center; }

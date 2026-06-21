@@ -521,44 +521,56 @@ function DistributionViz({ caption }: { caption: string }) {
   const baseY = cPlotB;
   const span = cPlotW;
   const N = 72;
-  const gauss = (muFrac: number, sigFrac: number, peakY: number): Array<[number, number]> => {
+  const muF = 0.58, sigF = 0.13, peakY = cPlotT + 14;
+  const dens = (t: number) => Math.exp(-0.5 * ((t - muF) / sigF) ** 2);
+  const gauss = (mu: number, sig: number, pY: number): Array<[number, number]> => {
     const pts: Array<[number, number]> = [];
     for (let i = 0; i <= N; i++) {
       const t = i / N;
-      const z = (t - muFrac) / sigFrac;
-      const dens = Math.exp(-0.5 * z * z);
-      pts.push([cPlotL + t * span, baseY - dens * (baseY - peakY)]);
+      const z = (t - mu) / sig;
+      pts.push([cPlotL + t * span, baseY - Math.exp(-0.5 * z * z) * (baseY - pY)]);
     }
     return pts;
   };
   const market = gauss(0.44, 0.22, cPlotT + 92);
-  const view = gauss(0.58, 0.13, cPlotT + 12);
-  const muX = cPlotL + 0.58 * span;
-  const sigLo = cPlotL + (0.58 - 0.13) * span;
-  const sigHi = cPlotL + (0.58 + 0.13) * span;
+  const view = gauss(muF, sigF, peakY);
+  const muX = cPlotL + muF * span;
+  const sigLo = cPlotL + (muF - sigF) * span;
+  const sigHi = cPlotL + (muF + sigF) * span;
   const fillId = "dist-fill";
+  const nBars = 15;
+  const bw = (span / nBars) * 0.58;
+  const bars = Array.from({ length: nBars }, (_, i) => {
+    const t = (i + 0.5) / nBars;
+    const top = baseY - dens(t) * (baseY - peakY);
+    return { cx: cPlotL + t * span, top, inBand: Math.abs(t - muF) <= sigF + 1e-9 };
+  });
   const areaD = `${smoothPath(view)} L ${view[view.length - 1][0].toFixed(1)} ${baseY} L ${view[0][0].toFixed(1)} ${baseY} Z`;
   return (
     <svg viewBox={`0 0 ${CW} ${CH}`} className="feat-chart" role="img" aria-label={caption}>
       <defs>
         <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.2" />
+          <stop offset="0%" stopColor={C.tealLight} stopOpacity="0.18" />
           <stop offset="100%" stopColor={C.tealLight} stopOpacity="0" />
         </linearGradient>
       </defs>
-      {/* outcome axis */}
+      {/* outcome / strike axis */}
       <line x1={cPlotL} x2={cPlotR} y1={baseY} y2={baseY} stroke={C.border} strokeWidth="1" />
-      {/* the ±σ band you're trading */}
+      {/* the band you're trading */}
       <rect x={sigLo} y={cPlotT} width={sigHi - sigLo} height={baseY - cPlotT} fill={C.tealLight} fillOpacity="0.05" />
-      {/* your μ */}
+      {/* strike bars: each is a $1 strike in the options chain; heights trace your distribution */}
+      {bars.map((b, i) => (
+        <rect key={i} x={b.cx - bw / 2} y={b.top} width={bw} height={Math.max(0, baseY - b.top)} rx={1.5} fill={C.tealLight} fillOpacity={b.inBand ? 0.5 : 0.16} />
+      ))}
+      {/* market-implied distribution (muted, dashed) */}
+      <path d={smoothPath(market)} fill="none" stroke={C.tealLight} strokeWidth="1.8" strokeOpacity="0.28" strokeDasharray="5 5" strokeLinecap="round" strokeLinejoin="round" className="feat-line" pathLength={1} />
+      {/* your sharper view — the envelope the strikes trace */}
+      <path d={areaD} fill={`url(#${fillId})`} className="feat-area" />
+      <path d={smoothPath(view)} fill="none" stroke={C.tealLight} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="feat-line" style={{ animationDelay: "0.18s" }} pathLength={1} />
+      {/* your mu */}
       <line x1={muX} x2={muX} y1={cPlotT} y2={baseY} stroke={C.tealLight} strokeWidth="1.5" strokeOpacity="0.5" strokeDasharray="5 5" className="feat-dash" />
       <text x={muX} y={cPlotT - 6} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9" letterSpacing="0.1em">YOUR μ</text>
-      {/* market-implied distribution (muted) */}
-      <path d={smoothPath(market)} fill="none" stroke={C.tealLight} strokeWidth="1.8" strokeOpacity="0.3" strokeLinecap="round" strokeLinejoin="round" className="feat-line" pathLength={1} />
-      {/* your sharper view (bold + area) */}
-      <path d={areaD} fill={`url(#${fillId})`} className="feat-area" />
-      <path d={smoothPath(view)} fill="none" stroke={C.tealLight} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="feat-line" style={{ animationDelay: "0.18s" }} pathLength={1} />
-      {/* σ ticks */}
+      {/* sigma ticks */}
       <text x={sigLo} y={baseY + 16} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5">μ−σ</text>
       <text x={sigHi} y={baseY + 16} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5">μ+σ</text>
       <text x={(cPlotL + cPlotR) / 2} y={CH - 9} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5" letterSpacing="0.05em">{caption}</text>
@@ -726,8 +738,8 @@ const SHOWCASE: Showcase[] = [
     Icon: IconCurve,
     lead: "Trade where BTC lands — a live options chain of $1 strikes, or set your own μ and σ to trade the whole distribution curve.",
     specs: ["Options chain: $1 binary calls and puts at every strike", "Curve view: set μ and σ, mint the matching range strip", "Priced live off DeepBook, settles on Sui"],
-    caption: "Your sharper view vs the market's implied distribution",
-    legend: [{ name: "Your view" }, { name: "Market", op: 0.3 }, { name: "μ", dashed: true, op: 0.6 }],
+    caption: "Each bar is a $1 strike — together they trace your view",
+    legend: [{ name: "Strikes", op: 0.5 }, { name: "Your view" }, { name: "Market", op: 0.3 }],
   },
   {
     id: "risk",

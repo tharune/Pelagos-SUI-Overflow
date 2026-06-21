@@ -102,4 +102,39 @@ router.post('/quote', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/deepbook/distribution
+ * The live BTC market-implied distribution, straight off the DeepBook Predict
+ * order book: a range-plateau strip on a longer-dated oracle, with each band's
+ * normalized implied probability. Powers the landing hero chart (no params).
+ */
+type DistBucket = { lower_usd: number; higher_usd: number; mint_cost_raw: string; quantity: string; tradeable: boolean };
+router.get('/distribution', async (_req: Request, res: Response) => {
+  try {
+    const out = await quoteStrategy({ strategyId: 'range-plateau', notionalUsd: 100, expiryPref: 'far' });
+    const buckets = ((out.strip?.buckets ?? []) as DistBucket[]).filter((b) => b.tradeable && Number(b.quantity) > 0);
+    const raw = buckets.map((b) => {
+      const qty = Number(b.quantity) / 1e6;
+      const cost = Number(b.mint_cost_raw) / 1e6;
+      // For a $1 binary, per-contract cost ≈ P(BTC settles in this band).
+      return { lower_usd: b.lower_usd, higher_usd: b.higher_usd, prob: qty > 0 ? Math.max(0, cost / qty) : 0 };
+    });
+    const sum = raw.reduce((a, b) => a + b.prob, 0) || 1;
+    const bands = raw.map((b) => ({ ...b, prob: b.prob / sum }));
+    res.json({
+      source: out.source,
+      oracle_id: out.oracle_id,
+      forward_usd: out.forward_usd,
+      tenor_label: out.tenor_label,
+      atm_iv: out.atm_iv,
+      bands,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/no active BTC oracle/i.test(message)) return res.status(404).json({ error: message });
+    console.error('GET /api/deepbook/distribution error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
 export const deepbookRoutes = router;

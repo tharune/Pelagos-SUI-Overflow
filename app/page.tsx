@@ -810,7 +810,7 @@ const PIPE: Array<{ name: string; sub: string; Icon: (p: IconProps) => React.Rea
   { name: "Live pricing", sub: "DeepBook Predict order book", Icon: IconSignal },
   { name: "Quote engine", sub: "Depth-weighted bands", Icon: IconBasket },
   { name: "USDC collateral", sub: "Net of quote fees", Icon: IconCoin },
-  { name: "Sui settlement", sub: "mock-USDC package", Icon: IconCube },
+  { name: "Sui settlement", sub: "Pelagos USDC package", Icon: IconCube },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -864,18 +864,82 @@ function bellFromForward(m: ContForward): DistributionCandidate {
   };
 }
 
+/** The live BTC market-implied distribution served by GET /api/deepbook/distribution
+ *  (range-plateau strip on a longer-dated oracle, normalized band probabilities). */
+type LiveDist = {
+  source: string;
+  forward_usd: number;
+  tenor_label: string;
+  atm_iv: number;
+  bands: Array<{ lower_usd: number; higher_usd: number; prob: number }>;
+};
+
+/** Adapt the live DeepBook distribution into the candidate shape the hero chart
+ *  renders — real on-chain band probabilities, not a synthesized bell. */
+function candidateFromLiveDist(d: LiveDist): DistributionCandidate {
+  const curve = d.bands.map((b) => b.prob);
+  const n = d.bands.length;
+  return {
+    id: "deepbook-live",
+    title: `BTC/USD · ${d.tenor_label} forward`,
+    category: "crypto",
+    category_confidence: 1,
+    distribution_fit: "high",
+    outcome_type: "price_level",
+    event_slug: null,
+    end_date_iso: null,
+    days_to_resolution: 0,
+    aggregate_volume_usd: 0,
+    aggregate_depth_usd: 0,
+    avg_spread: null,
+    band_count: n,
+    launch_score: 95,
+    launch_quality: "strong",
+    reasons: [],
+    pricing_source: "polymarket_gamma_clob",
+    clob_book_count: n,
+    gamma_liquidity_count: n,
+    bands: [],
+    reference_curve: curve,
+    liquidity_curve: curve,
+    fetched_at: new Date().toISOString(),
+  };
+}
+
 export default function HomePage() {
   const [candidates, setCandidates] = useState<DistributionCandidate[]>([]);
   const [forward, setForward] = useState<ContForward | null>(null);
+  const [liveDist, setLiveDist] = useState<LiveDist | null>(null);
   const [vaults, setVaults] = useState<VaultSource[]>([]);
   const [chartReady, setChartReady] = useState(false);
 
   useGlobalScrollFade();
 
+  // Hero chart: the live BTC market-implied distribution straight off DeepBook
+  // Predict. Fetched on mount and re-polled so the curve stays live.
   useEffect(() => {
     let cancelled = false;
-    // Draw the hero curve only after the data settles (or a short fallback
-    // timeout) so it animates once on its final shape and never jerks.
+    const loadLive = () =>
+      fetch(`${BACKEND_URL}/api/deepbook/distribution`, { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (cancelled || !body || !Array.isArray(body.bands) || body.bands.length === 0) return;
+          setLiveDist(body as LiveDist);
+          setChartReady(true);
+        })
+        .catch(() => {});
+    loadLive();
+    const poll = window.setInterval(loadLive, 25_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Fallback sources (used only if the live DeepBook distribution is slow/down)
+    // plus a short timeout so the curve always draws in once on its final shape.
     const timer = setTimeout(() => {
       if (!cancelled) setChartReady(true);
     }, 2200);
@@ -883,10 +947,7 @@ export default function HomePage() {
       .then((result) => {
         if (!cancelled) setCandidates(result.candidates);
       })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setChartReady(true);
-      });
+      .catch(() => {});
     fetch(`${BACKEND_URL}/api/distribution/continuous/markets`, { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
@@ -914,15 +975,12 @@ export default function HomePage() {
     };
   }, []);
 
-  // Prefer a real bell-shaped distribution for the hero: a multi-band market
-  // (price-level / continuous outcome) reads as a normal curve, whereas a
-  // 2-outcome winner market is just two bars. Fall back to the top-ranked
-  // candidate when no multi-band market is live.
-  // Hero distribution: prefer a real multi-band (bell-shaped) discrete market;
-  // otherwise synthesize a clean Normal bell from a live continuous forward
-  // (BTC/ETH price) so the chart always shows a real distribution rather than
-  // the flat two-outcome shape of a winner market.
+  // Hero distribution, in priority order:
+  //   1. the LIVE DeepBook Predict implied distribution (real on-chain band prices),
+  //   2. a multi-band Polymarket candidate, 3. a Normal bell from a live forward,
+  //   4. the top-ranked candidate — so the curve is always a real distribution.
   const candidate =
+    (liveDist ? candidateFromLiveDist(liveDist) : null) ??
     candidates.find((c) => (c.band_count ?? 0) >= 5) ??
     (forward ? bellFromForward(forward) : null) ??
     candidates[0] ??
@@ -940,14 +998,16 @@ export default function HomePage() {
         <style>{`
           .lp-shell { max-width: 1200px; margin: 0 auto; }
 
-          .lp-section { padding: 108px 0; border-top: 0.5px solid ${C.border}; }
+          .lp-section { padding: 104px 0; border-top: 0.5px solid ${C.border}; }
+          /* first section after the hero sits closer so there's no dead gap */
+          #products { padding-top: 72px; }
           .lp-eyebrow { color: ${C.tealLight}; font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; }
           .lp-head { max-width: 660px; }
           .lp-head h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 28px; line-height: 1.14; letter-spacing: -0.025em; font-weight: 600; text-wrap: balance; }
           .lp-head p { margin: 14px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 560px; text-wrap: pretty; }
 
           /* ---- hero ---- */
-          .lp-hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr); gap: 60px; align-items: center; padding: 76px 0 84px; }
+          .lp-hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr); gap: 60px; align-items: center; min-height: min(760px, 80vh); padding: 36px 0 52px; }
           .lp-hero-title { color: ${C.textPrimary}; font-family: ${FD}; font-size: clamp(44px, 4.8vw, 62px); line-height: 1.04; letter-spacing: -0.04em; font-weight: 600; font-feature-settings: "ss01", "cv05"; margin: 16px 0 0; text-wrap: balance; }
           .lp-hero-title em { font-style: normal; color: ${C.tealLight}; }
           .lp-hero-sub { color: ${C.textSubtle}; font-family: ${FS}; font-size: 16px; line-height: 1.65; max-width: 520px; margin: 20px 0 0; text-wrap: pretty; }
@@ -1186,7 +1246,7 @@ export default function HomePage() {
                   ["Market data", candidate?.title ?? "Distribution candidates", candidate ? `${candidate.clob_book_count}/${candidate.band_count} CLOB books` : "Gamma + CLOB"],
                   ["Quote asset", "USDC collateral, net-route accounting", fmtUsd(net, 0)],
                   ["Vault split", "Protected sleeve vs. market upside", `${pct(protectedVaultPct, 1)} / ${pct(basketPct, 1)}`],
-                  ["On-chain", "Sui testnet mock-USDC package route", "Configured"],
+                  ["On-chain", "Sui testnet · Pelagos USDC package route", "Configured"],
                 ].map(([k, t, v]) => (
                   <div className="lp-spec-row" key={k}>
                     <span className="sk">{k}</span>

@@ -24,26 +24,11 @@ const NAV_LEFT = [
 
 function PelagosMark() {
   return (
-    <span
-      aria-hidden
-      style={{
-        width: 24,
-        height: 24,
-        borderRadius: 8,
-        display: "inline-grid",
-        placeItems: "center",
-        background: `linear-gradient(145deg, ${C.tealLight}24, ${C.blue}10)`,
-        border: `0.5px solid ${C.tealLight}55`,
-        boxShadow: `0 0 18px ${C.tealLight}18`,
-        flexShrink: 0,
-      }}
-    >
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
-        <path d="M3.5 13.4C5.6 10.9 7.8 9.7 10 9.7c2.6 0 3.7 2.4 6 2.4 1.6 0 2.8-.7 4.5-2.3" stroke={C.tealLight} strokeWidth="2" strokeLinecap="round" />
-        <path d="M3.5 9.1C5.6 6.6 7.8 5.4 10 5.4c2.6 0 3.7 2.4 6 2.4 1.6 0 2.8-.7 4.5-2.3" stroke={C.teal} strokeWidth="2" strokeLinecap="round" opacity="0.95" />
-        <path d="M5 18h14" stroke="#bae6fd" strokeWidth="1.7" strokeLinecap="round" opacity="0.95" />
-      </svg>
-    </span>
+    <svg aria-hidden viewBox="0 0 95 40" width="40" height="17" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M10 10 C28 16 36 30 52 30 C66 30 70 18 82 20" stroke={C.blue} strokeWidth="5" strokeLinecap="round" />
+      <path d="M10 30 C28 24 36 10 52 10 C66 10 70 22 82 20" stroke={C.tealLight} strokeWidth="5" strokeLinecap="round" />
+      <circle cx="82" cy="20" r="5.5" fill={C.tealLight} />
+    </svg>
   );
 }
 

@@ -815,8 +815,11 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
               </span>
               <span style={{ color: C.tealLight, fontFamily: FM, fontSize: 17, lineHeight: 1, transform: riskOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s ease" }}>›</span>
             </button>
-            <div style={{ overflow: "hidden", maxHeight: riskOpen ? 280 : 0, opacity: riskOpen ? 1 : 0, transition: "max-height 0.28s ease, opacity 0.22s ease" }}>
+            <div style={{ overflow: "hidden", maxHeight: riskOpen ? 680 : 0, opacity: riskOpen ? 1 : 0, transition: "max-height 0.28s ease, opacity 0.22s ease" }}>
               <p style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13.5, lineHeight: 1.55, margin: "12px 0 10px" }}>{RISK_SLICE.lead}</p>
+              <div style={{ margin: "2px 0 14px", border: `0.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px 6px", background: C.panelGradient }}>
+                <WaterfallViz caption="Capital stack and loss waterfall" />
+              </div>
               <ul className="feat-specs" style={{ marginBottom: 12 }}>
                 {RISK_SLICE.specs.map((sp) => (<li key={sp}>{sp}</li>))}
               </ul>

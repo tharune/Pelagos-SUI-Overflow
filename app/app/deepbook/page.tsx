@@ -356,15 +356,15 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
 
       {/* quote */}
       {mode === "basic"
-        ? <StrategyBasic quote={quote} pricing={pricing} accent={accent} deployBtn={deployBtn} result={result} openErr={openErr} tradeable={tradeableBuckets.length} />
+        ? <StrategyBasic quote={quote} pricing={pricing} accent={accent} deployBtn={deployBtn} result={result} openErr={openErr} tradeable={tradeableBuckets.length} currency={currency} />
         : <StrategyAdvanced quote={quote} pricing={pricing} accent={accent} deployBtn={deployBtn} result={result} openErr={openErr} buckets={tradeableBuckets} />}
     </div>
   );
 }
 
 // ── BASIC: simple quote (cost, max payout, payoff shape, deploy)
-function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tradeable }: {
-  quote: DeepBookQuote | null; pricing: boolean; accent: string; deployBtn: React.ReactNode; result: string | null; openErr: string | null; tradeable: number;
+function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tradeable, currency }: {
+  quote: DeepBookQuote | null; pricing: boolean; accent: string; deployBtn: React.ReactNode; result: string | null; openErr: string | null; tradeable: number; currency: Currency;
 }) {
   if (!quote) {
     return <div className="db-card db-empty">{pricing ? "Pricing the strip on DeepBook…" : "Enter a notional to price this strategy."}</div>;
@@ -396,13 +396,15 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
           <div className="db-dsum">
             <div><span className="db-dsum-k">Strategy</span><span className="db-dsum-v">{quote.name}</span></div>
             <div><span className="db-dsum-k">Expiry</span><span className="db-dsum-v">{fmtExpiry(quote.expiry)}</span></div>
-            <div><span className="db-dsum-k">Settles</span><span className="db-dsum-v">Sui · DeepBook Predict</span></div>
+            <div><span className="db-dsum-k">Settles</span><span className="db-dsum-v">{currency === "mUSDC" ? "Sui · Pelagos USDC vault" : "Sui · DeepBook Predict"}</span></div>
           </div>
           <div className="db-deploy-act">
             {deployBtn}
             {result && <ResultLine digest={result} label={`${quote.name} deployed`} />}
             {openErr && <div className="db-banner err" style={{ marginTop: 10 }}>{openErr}</div>}
-            <p className="db-note">Strip minted on-chain on Sui via DeepBook Predict. Pricing live from the order book; settles on testnet.</p>
+            <p className="db-note">{currency === "mUSDC"
+              ? "Premium deposited to the Pelagos USDC vault on Sui (real on-chain receipt, ~$0.003 gas); the payoff is minted to you at settlement. Pricing live from the order book."
+              : "Strip minted on-chain on Sui via DeepBook Predict. Pricing live from the order book; settles on testnet."}</p>
           </div>
         </div>
       </div>

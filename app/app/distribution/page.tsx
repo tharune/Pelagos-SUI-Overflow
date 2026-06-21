@@ -444,7 +444,9 @@ function BasicOptionsChain() {
                           {busy ? (stage ?? "Submitting…") : overCap ? `Exceeds pool depth · max ${maxContracts!.toLocaleString()}` : `Buy ${nContracts} ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} · $${orderCost.toFixed(2)}`}
                         </button>
                       )}
-                      <p className="oc-note">Buys {nContracts} whole {sel!.side} {nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.</p>
+                      <p className="oc-note">{currency === "mUSDC"
+                        ? `Buys ${nContracts} whole ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"}, priced live off the DeepBook book — settled to the Pelagos USDC vault on Sui (~$0.003 gas).`
+                        : `Buys ${nContracts} whole ${sel!.side} ${nContracts === 1 ? "contract" : "contracts"} as a live on-chain DeepBook Predict range — priced off the book (real bid/ask), settled on Sui testnet.`}</p>
                     </>
                   ) : (
                     <div className="oc-indic-box">

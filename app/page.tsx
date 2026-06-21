@@ -3,18 +3,13 @@
 import Link from "next/link";
 import React, { useEffect, useState } from "react";
 import { Header, PageFrame } from "./app/_components/Header";
-import { C, FD, FM, FS, BACKEND_URL, EASE, fmtUsd } from "./app/_lib/tokens";
+import { C, FD, FM, FS, BACKEND_URL, EASE } from "./app/_lib/tokens";
 import { monotonePath } from "./app/_lib/curve";
 import {
   DistributionCandidate,
   fetchDistributionCandidates,
 } from "./app/_lib/distribution-client";
 
-type VaultSource = { name: string; apy: number; live: boolean };
-
-/* Representative figures for illustrative readouts (no live wallet yet). */
-const NOTIONAL = 50_000;
-const MATURITY_DAYS = 30;
 
 /* ------------------------------------------------------------------ */
 /* Inline icons — stroke inherits currentColor.                       */
@@ -756,17 +751,6 @@ const SHOWCASE: Showcase[] = [
     caption: "Note held at its floor while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor", dashed: true, op: 0.75 }],
   },
-  {
-    id: "basket",
-    eyebrow: "Diversified events",
-    title: "Baskets",
-    href: "/app/basket",
-    Icon: IconBasket,
-    lead: "Curated baskets of uncorrelated event markets — pooled so the basket resolves with far less variance than any single leg.",
-    specs: ["NLP-decorrelated event legs", "Pooled, lower-variance payoff", "One click, settled on Sui"],
-    caption: "Pooled basket resolves above its uncorrelated components",
-    legend: [{ name: "Basket" }, { name: "Components", op: 0.3 }],
-  },
 ];
 
 function FeatureRow({ item, index }: { item: Showcase; index: number }) {
@@ -910,7 +894,6 @@ export default function HomePage() {
   const [candidates, setCandidates] = useState<DistributionCandidate[]>([]);
   const [forward, setForward] = useState<ContForward | null>(null);
   const [liveDist, setLiveDist] = useState<LiveDist | null>(null);
-  const [vaults, setVaults] = useState<VaultSource[]>([]);
   const [chartReady, setChartReady] = useState(false);
 
   useGlobalScrollFade();
@@ -957,18 +940,6 @@ export default function HomePage() {
         if (best) setForward(best);
       })
       .catch(() => {});
-    fetch(`${BACKEND_URL}/api/vaults/yields`, { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (cancelled || !body) return;
-        setVaults(
-          (body.sources ?? [])
-            .filter((source: VaultSource) => typeof source?.apy === "number")
-            .map((source: VaultSource) => ({ name: source.name, apy: source.apy, live: source.live }))
-            .slice(0, 5),
-        );
-      })
-      .catch(() => {});
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -985,11 +956,6 @@ export default function HomePage() {
     (forward ? bellFromForward(forward) : null) ??
     candidates[0] ??
     null;
-  const bestVault = vaults[0] ?? null;
-  const net = NOTIONAL * (1 - 0.0042);
-  const vaultApy = bestVault?.apy ?? 0.0716;
-  const protectedVaultPct = 1 / Math.pow(1 + vaultApy / 365, MATURITY_DAYS);
-  const basketPct = Math.max(0, 1 - protectedVaultPct);
 
   return (
     <>
@@ -1056,9 +1022,15 @@ export default function HomePage() {
 
           /* ---- product showcase (scroll-driven feature rows) ---- */
           .lp-showcase { display: grid; gap: 56px; margin-top: 64px; }
-          /* clean scroll fade — pure opacity, scrubbed by JS via --reveal */
+          /* clean scroll fade — opacity scrubbed by JS via --reveal */
           .scroll-fade { opacity: var(--reveal, 1); will-change: opacity; }
+          /* product rows rise + settle as they scroll into the reading band:
+             the chart panel and copy ease up by slightly different amounts so the
+             pair feels alive, not a single flat block — scrubbed off --reveal. */
           .feat-row { display: grid; grid-template-columns: 1.06fr 0.94fr; gap: 60px; align-items: center; }
+          .feat-row .feat-panel, .feat-row .feat-text { transition: transform 0.12s linear; will-change: transform; }
+          .feat-row .feat-panel { transform: translateY(calc((1 - var(--reveal, 1)) * 40px)); }
+          .feat-row .feat-text { transform: translateY(calc((1 - var(--reveal, 1)) * 20px)); }
           .feat-row.is-rev .feat-panel { order: 2; }
           .feat-row.is-rev .feat-text { order: 1; }
           .wf-stack { transform: scaleY(0); }
@@ -1094,32 +1066,23 @@ export default function HomePage() {
           .feat-link .lp-ar { transition: transform 0.18s ${EASE}; }
           .feat-link:hover .lp-ar { transform: translateX(4px); }
 
-          /* ---- flow pipeline (connected schematic) ---- */
-          .lp-pipe { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; margin-top: 56px; position: relative; }
-          /* connector runs through the node-row centre (node sits below the index eyebrow). */
-          .lp-pipe::before { content: ""; position: absolute; top: 55px; left: 12%; right: 12%; height: 1px; background: linear-gradient(90deg, ${C.tealLight}00, ${C.tealLight}5a 12%, ${C.tealLight}28 88%, ${C.tealLight}00); }
-          .pipe-stage { position: relative; display: flex; flex-direction: column; align-items: flex-start; }
-          /* step index — left-aligned eyebrow above the node, so number / node / name / sub all share one left edge. */
-          .pipe-idx { display: block; height: 14px; line-height: 14px; margin-bottom: 16px; color: ${C.tealLight}; opacity: 0.8; font-family: ${FM}; font-size: 12px; letter-spacing: 0.24em; }
-          .pipe-node { position: relative; z-index: 1; width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; border: 0.5px solid ${C.tealLight}40; background: ${C.surface}; color: ${C.tealLight}; box-shadow: 0 0 0 6px ${C.bg}, 0 8px 22px ${C.tealLight}14; }
-          .pipe-name { color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; margin-top: 20px; }
-          .pipe-sub { color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.04em; margin-top: 7px; }
+          /* ---- flow stages — vertical, each slides in from alternating sides ---- */
+          .lp-flow { display: grid; gap: 13px; margin-top: 44px; max-width: 660px; }
+          .flow-stage { display: flex; align-items: center; gap: 20px; padding: 19px 24px; border: 0.5px solid ${C.border}; border-radius: 14px; background: ${C.panelGradient}; transition: transform 0.12s linear; will-change: transform; }
+          .flow-stage.from-left { transform: translateX(calc((1 - var(--reveal, 1)) * -64px)); }
+          .flow-stage.from-right { transform: translateX(calc((1 - var(--reveal, 1)) * 64px)); }
+          .flow-node { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; border: 0.5px solid ${C.tealLight}40; background: ${C.surface}; color: ${C.tealLight}; flex: none; box-shadow: 0 6px 18px ${C.tealLight}14; }
+          .flow-text { min-width: 0; }
+          .flow-name { display: flex; align-items: baseline; gap: 13px; color: ${C.textPrimary}; font-family: ${FD}; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; }
+          .flow-idx { color: ${C.tealLight}; opacity: 0.8; font-family: ${FM}; font-size: 12px; letter-spacing: 0.2em; }
+          .flow-sub { color: ${C.textMuted}; font-family: ${FM}; font-size: 11px; letter-spacing: 0.04em; margin-top: 6px; }
 
-          /* ---- closing (single spec-sheet panel) ---- */
-          .lp-close { display: grid; grid-template-columns: 0.86fr 1.14fr; border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.cardGradient}; overflow: hidden; }
-          .lp-close-left { padding: 36px; display: flex; flex-direction: column; border-right: 0.5px solid ${C.border}; }
-          .lp-close-left h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 22px; line-height: 1.18; letter-spacing: -0.022em; font-weight: 600; margin: 16px 0 0; max-width: 320px; text-wrap: balance; }
-          .lp-close-left p { color: ${C.textSubtle}; font-family: ${FS}; font-size: 14px; line-height: 1.6; margin: 14px 0 0; max-width: 340px; text-wrap: pretty; }
-          .lp-close-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 28px; color: ${C.tealLight}; font-family: ${FD}; font-size: 13px; font-weight: 600; text-decoration: none; width: fit-content; }
-          .lp-close-cta .lp-ar { transition: transform 0.2s ${EASE}; }
-          .lp-close-cta:hover .lp-ar { transform: translateX(4px); }
-          .lp-spec { display: flex; flex-direction: column; }
-          .lp-spec-row { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 22px 28px; border-top: 0.5px solid ${C.border}; transition: background 0.18s ${EASE}; }
-          .lp-spec-row:first-child { border-top: 0; }
-          .lp-spec-row:hover { background: ${C.cardHover}; }
-          .lp-spec-row .sk { color: ${C.textMuted}; font-family: ${FM}; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
-          .lp-spec-row .st { color: ${C.textPrimary}; font-family: ${FD}; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-          .lp-spec-row .sv { color: ${C.textSecondary}; font-family: ${FM}; font-size: 12px; text-align: right; white-space: nowrap; }
+          /* ---- closing CTA (clean, centered) ---- */
+          .lp-cta { text-align: center; }
+          .lp-cta-inner { max-width: 580px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+          .lp-cta-inner h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 38px; line-height: 1.08; letter-spacing: -0.035em; font-weight: 600; font-feature-settings: "ss01"; text-wrap: balance; }
+          .lp-cta-inner p { margin: 16px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 480px; text-wrap: pretty; }
+          .lp-cta-actions { justify-content: center; margin-top: 34px; }
 
           /* ---- footer ---- */
           .lp-footer { border-top: 0.5px solid ${C.border}; padding: 64px 0 0; }
@@ -1142,6 +1105,7 @@ export default function HomePage() {
             .lp-area { animation: none; opacity: 1; }
             .lp-live i.is-live { animation: none; }
             .scroll-fade { opacity: 1; }
+            .feat-row .feat-panel, .feat-row .feat-text, .flow-stage { transform: none; }
             .feat-line { animation: none; stroke-dashoffset: 0; }
             .feat-area, .feat-dash, .feat-end { animation: none; opacity: 1; }
             .wf-stack { animation: none; transform: none; }
@@ -1150,21 +1114,14 @@ export default function HomePage() {
 
           @media (max-width: 1080px) {
             .lp-hero { grid-template-columns: 1fr; gap: 40px; padding-top: 40px; }
-            .lp-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 28px; }
-            .lp-pipe::before { display: none; }
             .feat-row { grid-template-columns: 1fr; gap: 28px; }
             .feat-row.is-rev .feat-panel { order: 1; }
             .feat-row.is-rev .feat-text { order: 2; }
-            .lp-close { grid-template-columns: 1fr; }
-            .lp-close-left { border-right: 0; border-bottom: 0.5px solid ${C.border}; }
             .lp-foot-main { grid-template-columns: 1fr; gap: 32px; }
           }
           @media (max-width: 620px) {
-            .lp-pipe { grid-template-columns: 1fr; }
             .lp-readout { grid-template-columns: repeat(2, 1fr); gap: 16px 0; }
             .lp-readout > div:nth-child(3) { border-left: 0; padding-left: 0; }
-            .lp-spec-row { grid-template-columns: 1fr; gap: 6px; }
-            .lp-spec-row .sv { text-align: left; }
             .lp-trust { flex-wrap: wrap; gap: 8px 0; }
           }
         `}</style>
@@ -1216,44 +1173,30 @@ export default function HomePage() {
               <h2>Market pricing in, an on-chain position out</h2>
               <p>Four stages take a live quote to a settled Sui position.</p>
             </div>
-            <div className="lp-pipe">
+            <div className="lp-flow">
               {PIPE.map((p, i) => (
-                <div className="pipe-stage" key={p.name}>
-                  <span className="pipe-idx">0{i + 1}</span>
-                  <div className="pipe-node"><p.Icon size={19} /></div>
-                  <div className="pipe-name">{p.name}</div>
-                  <div className="pipe-sub">{p.sub}</div>
+                <div className={`flow-stage scroll-fade${i % 2 ? " from-right" : " from-left"}`} key={p.name}>
+                  <div className="flow-node"><p.Icon size={20} /></div>
+                  <div className="flow-text">
+                    <div className="flow-name"><span className="flow-idx">0{i + 1}</span>{p.name}</div>
+                    <div className="flow-sub">{p.sub}</div>
+                  </div>
                 </div>
               ))}
             </div>
           </section>
 
-          {/* ---------------- CLOSING / EXECUTION ---------------- */}
-          <section className="lp-section scroll-fade">
-            <div className="lp-close">
-              <div className="lp-close-left">
-                <div className="lp-eyebrow">Execution rails</div>
-                <h3>The plumbing stays out of your way</h3>
-                <p>Pelagos folds live order books and yields into one quote, then writes the position to Sui.</p>
-                <div className="lp-actions">
-                  <Link className="lp-btn lp-btn-primary" href="/app">
-                    Enter app <span className="lp-ar"><IconArrow /></span>
-                  </Link>
-                </div>
-              </div>
-              <div className="lp-spec">
-                {[
-                  ["Market data", candidate?.title ?? "Distribution candidates", candidate ? `${candidate.clob_book_count}/${candidate.band_count} CLOB books` : "Gamma + CLOB"],
-                  ["Quote asset", "USDC collateral, net-route accounting", fmtUsd(net, 0)],
-                  ["Vault split", "Protected sleeve vs. market upside", `${pct(protectedVaultPct, 1)} / ${pct(basketPct, 1)}`],
-                  ["On-chain", "Sui testnet · Pelagos USDC package route", "Configured"],
-                ].map(([k, t, v]) => (
-                  <div className="lp-spec-row" key={k}>
-                    <span className="sk">{k}</span>
-                    <span className="st">{t}</span>
-                    <span className="sv">{v}</span>
-                  </div>
-                ))}
+          {/* ---------------- CLOSING CTA ---------------- */}
+          <section className="lp-section lp-cta scroll-fade">
+            <div className="lp-cta-inner">
+              <div className="lp-eyebrow">Get started</div>
+              <h2>Structured products, one signature away</h2>
+              <p>Live DeepBook pricing, USDC collateral, settled on Sui. Connect a wallet and trade — no setup, no bridge.</p>
+              <div className="lp-actions lp-cta-actions">
+                <Link className="lp-btn lp-btn-primary" href="/app">
+                  Enter app <span className="lp-ar"><IconArrow /></span>
+                </Link>
+                <a className="lp-btn lp-btn-ghost" href="#products">Explore the products</a>
               </div>
             </div>
           </section>

@@ -7,6 +7,7 @@ import {
 import {
   listContinuousMarkets,
   listContinuousMarketsLive,
+  ensureContinuousMarketsReady,
   quoteContinuous,
   prepareContinuousOpen,
   confirmContinuousOpen,
@@ -141,8 +142,9 @@ router.post('/continuous/seed-all', (_req, res) => {
   }
 });
 
-router.post('/continuous/quote', (req, res) => {
+router.post('/continuous/quote', async (req, res) => {
   try {
+    await ensureContinuousMarketsReady();
     res.json(
       quoteContinuous({
         marketId: String(req.body?.market_id ?? ''),
@@ -161,6 +163,7 @@ router.post('/continuous/open/prepare', async (req, res) => {
   try {
     const owner = String(req.body?.wallet_address ?? '');
     if (!/^0x[0-9a-fA-F]+$/.test(owner)) throw new Error('wallet_address (0x...) is required');
+    await ensureContinuousMarketsReady();
     res.json(
       await prepareContinuousOpen({
         owner,

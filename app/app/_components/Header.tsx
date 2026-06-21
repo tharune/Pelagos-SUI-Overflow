@@ -15,9 +15,9 @@ import { ModeToggle } from "../_lib/mode";
 // routes still resolve for deep links, just not in the primary nav.
 const NAV_LEFT = [
   { id: "portfolio",    label: "Portfolio",           href: "/app/portfolio" },
-  { id: "distribution", label: "Distributed Options", href: "/app/distribution" },
+  { id: "distribution", label: "Distribution Markets", href: "/app/distribution" },
   { id: "volatility",   label: "Volatility",          href: "/app/volatility" },
-  { id: "deepbook",     label: "DeepBook",            href: "/app/deepbook" },
+  { id: "deepbook",     label: "Range Strips",            href: "/app/deepbook" },
   { id: "basket",       label: "Baskets",             href: "/app/basket", beta: true },
   { id: "docs",         label: "About",               href: "/app/docs" },
 ];

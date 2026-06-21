@@ -675,7 +675,7 @@ const SURFACES: Array<{
   href: string;
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
-  { id: "deepbook", eyebrow: "Range strips", title: "DeepBook Strategies", body: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
+  { id: "deepbook", eyebrow: "Built on DeepBook", title: "Range Strips", body: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
   { id: "vol", eyebrow: "Implied vs realized", title: "Volatility", body: "Trade the implied-vol smile against realized — straddles, strangles, condors — built from real DeepBook range strips, with a delta-neutral hedge.", href: "/app/volatility", Icon: IconVol },
   { id: "distribution", eyebrow: "Range ladder", title: "Distribution Markets", body: "Drag μ and σ and mint a strip of real DeepBook range options that mirrors your whole view of where BTC lands — in one signature.", href: "/app/distribution", Icon: IconCurve },
   { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple.", href: "/app/tranche", Icon: IconSlices },
@@ -698,8 +698,8 @@ type Showcase = {
 const SHOWCASE: Showcase[] = [
   {
     id: "deepbook",
-    eyebrow: "Range strips",
-    title: "DeepBook Strategies",
+    eyebrow: "Built on DeepBook",
+    title: "Range Strips",
     href: "/app/deepbook",
     Icon: IconCube,
     lead: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.",

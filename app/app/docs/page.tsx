@@ -213,9 +213,8 @@ function HackathonNote() {
         investment advice, and no real capital is routed through any of
         its flows. Prices and settlement are live off real DeepBook
         Predict liquidity, but every balance — both dUSDC and Pelagos
-        USDC — is a testnet token with no monetary value. There are no
-        plans to deploy to mainnet, issue a token, or continue
-        maintenance after the event.
+        USDC — is a testnet token with no monetary value. Post Sui Overflow, we hope to push Pelagos to mainnet and continue
+        developing it with support from the Sui ecosystem.
       </p>
     </aside>
   );
@@ -1725,7 +1724,7 @@ function FaqAll() {
       />
       <Faq
         q="Will the protocol be deployed to mainnet?"
-        a="No. The repository will remain available as a reference, but there are no plans to deploy to mainnet, issue a token, or continue maintenance after the hackathon."
+        a="That is the goal. Post Sui Overflow, we hope to push Pelagos to mainnet and continue development with support from the Sui ecosystem; the repository stays available as a reference in the meantime."
       />
       <Faq
         q="What is DeepBook Predict and what does Pelagos add?"

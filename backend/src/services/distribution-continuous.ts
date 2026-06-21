@@ -479,6 +479,20 @@ export function listContinuousMarkets(): ContinuousMarket[] {
   return [...marketCache.values()].sort(bySourceThenVolume).slice(0, 10);
 }
 
+/**
+ * Guarantee the in-memory market registry is populated before a synchronous
+ * lookup (quote / open). On a cold cache this awaits the live build so a known
+ * market id never 404s as "Unknown continuous market"; when already warm but
+ * stale it refreshes in the background without blocking the request.
+ */
+export async function ensureContinuousMarketsReady(): Promise<void> {
+  if (marketCache.size === 0) {
+    await listContinuousMarketsLive();
+  } else if (Date.now() - liveBuiltAt > LIVE_TTL_MS) {
+    void listContinuousMarketsLive();
+  }
+}
+
 function getContinuousMarket(id: string): ContinuousMarket | undefined {
   return marketCache.get(id);
 }

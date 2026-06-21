@@ -265,7 +265,7 @@ function BasicOptionsChain() {
           <div className="oc-head">
             <div>
               <div className="oc-eyebrow">BTC · DeepBook Predict</div>
-              <h1>Distributed Options</h1>
+              <h1>Distribution Markets</h1>
               <p>The live BTC options chain — calls and puts across every on-chain expiry. Each contract is a DeepBook Predict range, priced live off the protocol&apos;s own liquidity (real bid/ask, whole contracts). Settled on Sui.</p>
             </div>
           </div>
@@ -886,7 +886,7 @@ function AdvancedDistribution() {
             BTC · DeepBook Predict
           </div>
           <h1 style={{ fontFamily: FD, fontSize: 34, fontWeight: 600, letterSpacing: "-0.03em", color: C.textPrimary, margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
-            Distributed Options
+            Distribution Markets
           </h1>
           <p style={{ fontFamily: FS, fontSize: 14.5, color: C.textSecondary, margin: "8px 0 0", maxWidth: 680, lineHeight: 1.6 }}>
             Trade your <strong style={{ color: C.textPrimary }}>whole view</strong>{" "}of where BTC settles, not one strike.

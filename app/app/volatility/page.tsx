@@ -15,7 +15,7 @@
 // is simulated on testnet.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
@@ -523,7 +523,7 @@ function BasicDesk(p: DeskProps) {
       <div className="vd-main">
         <div className="vd-card vd-payoff">
           <div className="vd-card-head"><Cap>Payoff at expiry · {q?.strategy_label ?? meta.label}</Cap><span className="vd-dim">P&L vs BTC settlement</span></div>
-          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={accent} />
+          <PayoffDiagram quote={q} markPrice={p.markPrice} accent={accent} h={404} />
         </div>
       </div>
 
@@ -1088,19 +1088,23 @@ function skewOf(slice: VolDeskSurface["slices"][number]): string {
 // ratio and counter-scale each text/marker horizontally by 1/r about its own
 // anchor x — positions/numbers stay identical, only the distortion is removed.
 function useSvgXRatio(viewBoxW: number) {
-  const ref = useRef<SVGSVGElement | null>(null);
   const [ratio, setRatio] = useState(1);
-  useEffect(() => {
-    const el = ref.current;
+  const roRef = useRef<ResizeObserver | null>(null);
+  // Callback ref: (re)measure whenever the SVG actually mounts — including after a
+  // loading placeholder is swapped for the chart. The old mount-effect ran while
+  // ref.current was still null (chart not yet rendered) and never re-ran, leaving
+  // ratio=1 so the un-stretch correction was an identity matrix (stretched text).
+  const ref = useCallback((el: SVGSVGElement | null) => {
+    if (roRef.current) { roRef.current.disconnect(); roRef.current = null; }
     if (!el) return;
     const measure = () => {
-      const w = el.clientWidth || el.getBoundingClientRect().width;
+      const w = el.getBoundingClientRect().width || el.clientWidth;
       if (w > 0) setRatio(w / viewBoxW);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, [viewBoxW]);
   return { ref, ratio };
 }

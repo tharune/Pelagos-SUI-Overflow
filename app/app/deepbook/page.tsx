@@ -22,7 +22,7 @@
 // strip deploy routes through the existing predict strip open flow.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE } from "../_lib/tokens";
 import { useMode } from "../_lib/mode";
@@ -125,7 +125,7 @@ export default function DeepBookPage() {
           <div className="db-head">
             <div>
               <div className="db-eyebrow">STRUCTURED STRATEGIES · BUILT ON DEEPBOOK</div>
-              <h1>DeepBook</h1>
+              <h1>Range Strips</h1>
               <p>
                 Prebuilt range-strip strategies priced live off the DeepBook order book, plus principal-protected
                 notes that route real Sui DeFi yield into a deployed DeepBook upside strip.
@@ -190,17 +190,20 @@ function StrategiesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWall
 
   // price the selected strategy (debounced)
   const timer = useRef<number | null>(null);
+  const lastNotional = useRef(notionalNum);
   useEffect(() => {
     if (!selected || !valid) { setQuote(null); return; }
     let alive = true;
     setPricing(true);
+    const _immediate = lastNotional.current === notionalNum; // button click → instant; typing → debounced
+    lastNotional.current = notionalNum;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       quoteDeepBookStrategy({ strategy_id: selected, notional_usd: notionalNum, expiry_pref: expiryPref, oracle_id: mode === "advanced" && oracleId ? oracleId : undefined, sender: wallet.address ?? undefined })
         .then((q) => { if (alive) { setQuote(q); setQErr(null); } })
         .catch((e) => { if (alive) setQErr(e instanceof Error ? e.message : String(e)); })
         .finally(() => { if (alive) setPricing(false); });
-    }, 220);
+    }, _immediate ? 0 : 220);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); };
   }, [selected, notionalNum, valid, expiryPref, oracleId, mode, wallet.address]);
 
@@ -373,7 +376,7 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
   const best = ui(quote.strip.realized_max_payout_raw);
   const mult = cost > 0 ? best / cost : 0;
   return (
-    <div className="db-basic">
+    <div className="db-basic" style={{ opacity: pricing ? 0.55 : 1, transition: "opacity .12s ease" }}>
       {/* the payoff chart is the hero — full width, front and centre */}
       <div className="db-card db-payoff db-hero">
         <div className="db-card-head"><span className="db-cap">Payoff at expiry</span><span className="db-dim">{quote.name}</span></div>
@@ -383,7 +386,7 @@ function StrategyBasic({ quote, pricing, accent, deployBtn, result, openErr, tra
 
       <div className="db-quote-row">
         <div className="db-card db-quote-card">
-          <div className="db-card-head"><span className="db-cap">Quote</span><span className="db-dim">{tradeable} legs · live</span></div>
+          <div className="db-card-head"><span className="db-cap">Quote</span><span className="db-dim">{pricing ? "updating…" : `${tradeable} legs · live`}</span></div>
           <div className="db-metrics">
             <Metric label="Cost to deploy" value={usd(quote.strip.total_cost_raw)} />
             <Metric label="Max payout" value={usd(quote.strip.realized_max_payout_raw)} color={accent} />
@@ -424,7 +427,7 @@ function StrategyAdvanced({ quote, pricing, accent, deployBtn, result, openErr, 
   // per-day number is no longer meaningful, so show "—" with a short-tenor note.
   const thetaSaturated = Math.abs(g.theta_usd_day) >= 0.9 * Math.abs(g.position_value_usd);
   return (
-    <div className="db-adv">
+    <div className="db-adv" style={{ opacity: pricing ? 0.55 : 1, transition: "opacity .12s ease" }}>
       {/* top: payoff chart front-and-centre (big) + greeks / deploy beside it */}
       <div className="db-adv-top">
         <div className="db-card db-payoff db-hero">
@@ -524,17 +527,20 @@ function NotesSurface({ wallet, mode }: { wallet: ReturnType<typeof useWalletSig
   const visiblePresets = !presets ? [] : mode === "advanced" ? presets : presets.slice(0, 3);
 
   const timer = useRef<number | null>(null);
+  const lastPrincipal = useRef(principalNum);
   useEffect(() => {
     if (!selected || !valid) { setQuote(null); return; }
     let alive = true;
     setPricing(true);
+    const _immediate = lastPrincipal.current === principalNum; // button click → instant; typing → debounced
+    lastPrincipal.current = principalNum;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       quoteNote({ principal_usd: principalNum, preset_id: selected, tenor_days: effTenor })
         .then((q) => { if (alive) { setQuote(q); setQErr(null); } })
         .catch((e) => { if (alive) setQErr(e instanceof Error ? e.message : String(e)); })
         .finally(() => { if (alive) setPricing(false); });
-    }, 220);
+    }, _immediate ? 0 : 220);
     return () => { alive = false; if (timer.current) window.clearTimeout(timer.current); };
   }, [selected, principalNum, valid, effTenor]);
 
@@ -885,19 +891,23 @@ function ProjRow({ label, value, note, color, width, barColor }: { label: string
 // the live ratio and counter-scale each label horizontally by 1/r about its own
 // anchor x so positions/numbers stay identical, only the distortion is removed.
 function useSvgXRatio(viewBoxW: number) {
-  const ref = useRef<SVGSVGElement | null>(null);
   const [ratio, setRatio] = useState(1);
-  useEffect(() => {
-    const el = ref.current;
+  const roRef = useRef<ResizeObserver | null>(null);
+  // Callback ref: (re)measure whenever the SVG actually mounts — including after a
+  // loading placeholder is swapped for the chart. The old mount-effect ran while
+  // ref.current was still null (chart not yet rendered) and never re-ran, leaving
+  // ratio=1 so the un-stretch correction was an identity matrix (stretched text).
+  const ref = useCallback((el: SVGSVGElement | null) => {
+    if (roRef.current) { roRef.current.disconnect(); roRef.current = null; }
     if (!el) return;
     const measure = () => {
-      const w = el.clientWidth || el.getBoundingClientRect().width;
+      const w = el.getBoundingClientRect().width || el.clientWidth;
       if (w > 0) setRatio(w / viewBoxW);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, [viewBoxW]);
   return { ref, ratio };
 }

@@ -705,6 +705,13 @@ type Showcase = {
   specs: string[];
   caption: string;
   legend: Array<{ name: string; dashed?: boolean; op?: number }>;
+  beta?: boolean;
+};
+
+const RISK_SLICE = {
+  lead: "Take any basket and slice it into senior, mezzanine, and junior tranches — senior is paid first, junior takes first loss for the biggest multiple.",
+  specs: ["Senior: defensive, paid first", "Junior: first loss, biggest multiple", "Tranches of the same event baskets"],
+  href: "/app/tranche",
 };
 
 const SHOWCASE: Showcase[] = [
@@ -756,6 +763,7 @@ const SHOWCASE: Showcase[] = [
     id: "basket",
     eyebrow: "Diversified events",
     title: "Baskets",
+    beta: true,
     href: "/app/basket",
     Icon: IconBasket,
     lead: "Curated baskets of uncorrelated event markets — pooled so the whole basket resolves with far less variance than any single bet.",
@@ -763,21 +771,11 @@ const SHOWCASE: Showcase[] = [
     caption: "Noisy component events vs the smooth pooled basket NAV",
     legend: [{ name: "Components", op: 0.3 }, { name: "Basket NAV" }],
   },
-  {
-    id: "risk",
-    eyebrow: "Built on baskets",
-    title: "Risk Slices",
-    href: "/app/tranche",
-    Icon: IconSlices,
-    lead: "Take any basket and slice it into senior, mezzanine, and junior tranches — senior is paid first, junior takes first loss for the biggest multiple.",
-    specs: ["Senior: defensive, paid first", "Junior: first loss, biggest multiple", "Tranches of the same event baskets"],
-    caption: "Capital stack and loss waterfall",
-    legend: [{ name: "Senior", op: 0.9 }, { name: "Mezzanine", op: 0.6 }, { name: "Junior", op: 0.36 }],
-  },
 ];
 
 function FeatureRow({ item, index }: { item: Showcase; index: number }) {
   const reverse = index % 2 === 1;
+  const [riskOpen, setRiskOpen] = useState(false);
   return (
     <div className={`feat-row scroll-fade${reverse ? " is-rev" : ""}`}>
       <div className="feat-panel">
@@ -798,7 +796,7 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
       </div>
       <div className="feat-text">
         <div className="feat-tag"><item.Icon size={16} />{item.eyebrow}</div>
-        <h3>{item.title}</h3>
+        <h3>{item.title}{item.beta && <sup style={{ marginLeft: 7, fontFamily: FM, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.tealLight, verticalAlign: "super" }}>beta</sup>}</h3>
         <p>{item.lead}</p>
         <ul className="feat-specs">
           {item.specs.map((s) => (
@@ -808,6 +806,24 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
         <Link className="feat-link" href={item.href}>
           Open {item.title} <span className="lp-ar"><IconArrow /></span>
         </Link>
+        {item.id === "basket" && (
+          <div style={{ marginTop: 20, borderTop: `0.5px solid ${C.border}`, paddingTop: 16 }}>
+            <button onClick={() => setRiskOpen((o) => !o)} aria-expanded={riskOpen} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "transparent", border: 0, cursor: "pointer", padding: 0, textAlign: "left" }}>
+              <span style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ color: C.textMuted, fontFamily: FM, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase" }}>Built on baskets</span>
+                <span style={{ color: C.textPrimary, fontFamily: FD, fontSize: 15, fontWeight: 600 }}>Risk Slices</span>
+              </span>
+              <span style={{ color: C.tealLight, fontFamily: FM, fontSize: 17, lineHeight: 1, transform: riskOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s ease" }}>›</span>
+            </button>
+            <div style={{ overflow: "hidden", maxHeight: riskOpen ? 280 : 0, opacity: riskOpen ? 1 : 0, transition: "max-height 0.28s ease, opacity 0.22s ease" }}>
+              <p style={{ color: C.textSecondary, fontFamily: FS, fontSize: 13.5, lineHeight: 1.55, margin: "12px 0 10px" }}>{RISK_SLICE.lead}</p>
+              <ul className="feat-specs" style={{ marginBottom: 12 }}>
+                {RISK_SLICE.specs.map((sp) => (<li key={sp}>{sp}</li>))}
+              </ul>
+              <Link className="feat-link" href={RISK_SLICE.href}>Open Risk Slices <span className="lp-ar"><IconArrow /></span></Link>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

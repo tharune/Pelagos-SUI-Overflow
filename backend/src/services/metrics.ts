@@ -1,3 +1,9 @@
+/**
+ * In-memory protocol metrics collector powering /api/metrics and /monitor.
+ * Exports the `metrics` singleton (request/cron/model-usage/filter ring buffers
+ * plus latency percentiles, RPM buckets, error rate, route breakdown) and the
+ * `metricsMiddleware` that records a RequestSample on each response finish.
+ */
 import type { Request, Response, NextFunction } from 'express';
 
 /**

@@ -1,3 +1,10 @@
+/**
+ * Live pricing service — bridges Polymarket probabilities to bundle valuation.
+ * Maintains a 60s vault-price cache (getVaultPrice/warmVaultPriceCache),
+ * recomputes live NAV and issue price by refreshing leg probabilities
+ * (getLiveNAV, getIssuePriceForBundle), and detects leg resolutions, mirroring
+ * them to the DB and on-chain (checkAndUpdateResolutions).
+ */
 import { Leg, NAVResult } from '../types';
 import { calculateNAV, calculateIssuePrice } from './nav';
 import { getMarketProbability, fetchMarketByConditionId } from './polymarket';

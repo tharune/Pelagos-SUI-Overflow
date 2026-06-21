@@ -1,3 +1,10 @@
+/**
+ * Low-level Programmable Transaction Block (PTB) builders for DeepBook Predict.
+ * Each `add*` helper appends Move calls (createManager, deposit, mint/redeem,
+ * range mint/redeem, supply/withdraw) or read-only previews (getTradeAmounts,
+ * getRangeTradeAmounts) to a caller-owned Transaction for atomic composition.
+ * Also exports the MarketKeyParams / RangeKeyParams shapes used across the service.
+ */
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { PREDICT, predictTarget } from './config';
 

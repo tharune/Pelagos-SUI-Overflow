@@ -1,3 +1,9 @@
+/**
+ * Scheduled background refresh jobs. Exports startCronJobs, which warms the
+ * vault-price cache on boot and schedules a 2-minute task to refresh all active
+ * bundles: pulls live NAV + Polymarket data, persists NAV snapshots, detects
+ * newly resolved legs, fires price alerts, and records each run into metrics.
+ */
 import cron from 'node-cron';
 import { getAllBundles, createNAVSnapshot, getActiveAlertsByBundle, triggerAlert } from '../db/queries';
 import { getLiveNAV, checkAndUpdateResolutions, getVaultPrice, warmVaultPriceCache } from './pricing';

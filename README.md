@@ -42,8 +42,10 @@ Three Pelagos Move packages, plus Mysten's **DeepBook Predict** (which we *call*
 **Non-custodial:** the backend builds *unsigned* programmable transaction blocks; the user's wallet
 (`@mysten/dapp-kit`) signs them. The backend never custodies user funds.
 
-**Collateral:** **dUSDC** (DeepBook Predict's quote asset, faucet-gated) for every Predict leg;
-**MOCK_USDC** (freely mintable) for Pelagos's own vault / basket flows so demos never bottleneck.
+**Collateral:** every product settles in **either** currency, 1:1 in USD, chosen per order.
+**dUSDC** (DeepBook Predict's quote asset, faucet-gated) routes through Predict directly; **Pelagos
+USDC** (`MOCK_USDC`, freely mintable) settles on Pelagos's own generic `Vault<T>` — same DeepBook
+pricing, with an unlimited test supply so demos never bottleneck on the dUSDC faucet.
 
 → Full deployed package + object IDs and verified on-chain flows: **[`DEPLOYMENT.md`](DEPLOYMENT.md)**.
 

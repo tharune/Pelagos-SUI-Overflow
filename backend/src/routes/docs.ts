@@ -34,12 +34,6 @@ const apiDocs = {
     },
     {
       method: 'GET',
-      path: '/api/sui/status',
-      description: 'Reports active Sui environment, active address, package IDs, mock-USDC type, and Sui/mock-USDC balances.',
-      response: '{ network, active_env, active_address, package_id, mock_usdc_type, balances }',
-    },
-    {
-      method: 'GET',
       path: '/api/distribution/candidates',
       description: 'Discovers live launchable distribution-market candidates from Polymarket event groups using outcome-fit classification, NLP quality/category scoring, volume, CLOB depth, spread, and time-to-resolution. The reference curve is the normalized CLOB-implied probability vector.',
       response: '{ candidates: DistributionCandidate[], funnel, fetched_at }',
@@ -63,78 +57,6 @@ const apiDocs = {
         candidate_id: 'Live distribution candidate id',
       },
       response: '{ plan: DistributionLaunchPlan }',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/mock-usdc/mint',
-      description: 'Mints testnet mock USDC to a recipient using the configured local TreasuryCap owner.',
-      body: {
-        recipient: 'Sui address',
-        amount_raw: 'optional raw integer amount in 6-decimal units',
-        amount_ui: 'optional UI amount, converted to 6-decimal raw units',
-      },
-      response: 'Raw Sui CLI JSON transaction response',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/markets',
-      description: 'Creates a Sui prediction-market object through the deployed Pelagos Move package.',
-      body: {
-        question: 'Market question text',
-        close_ms: 'optional close timestamp in milliseconds; current harness accepts 0',
-      },
-      response: 'Raw Sui CLI JSON transaction response',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/markets/:marketId/buy',
-      description: 'Buys YES or NO in a Sui market with an existing mock-USDC coin object.',
-      body: {
-        side: '"yes" | "no"',
-        coin_id: 'Sui Coin<MOCK_USDC> object ID',
-        amount_raw: 'raw integer amount in 6-decimal units',
-      },
-      response: 'Raw Sui CLI JSON transaction response',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/markets/:marketId/resolve',
-      description: 'Resolves a Sui market to YES or NO using the configured market AdminCap.',
-      body: {
-        side: '"yes" | "no"',
-      },
-      response: 'Raw Sui CLI JSON transaction response',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/markets/:marketId/claim',
-      description: 'Claims a winning Sui prediction-market position.',
-      body: {
-        position_id: 'Sui Position object ID',
-      },
-      response: 'Raw Sui CLI JSON transaction response',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/local/basket/deposit',
-      description: 'Local Pelagos bridge used by basket, tranche, and PPN opens. Mints mock USDC, creates a market, buys YES, and returns market/position IDs plus transaction digests.',
-      body: {
-        bundle_id: 'Pelagos UI bundle identifier, such as PBU-HIGH-SHORT',
-        recipient: 'optional Sui recipient address; defaults to active address',
-        amount_raw: 'optional raw integer amount in 6-decimal units',
-        amount_usdc: 'optional UI amount, converted to raw units',
-      },
-      response: '{ chain, network, bundle_id, owner, amount_raw, market_id, position_id, digests }',
-    },
-    {
-      method: 'POST',
-      path: '/api/sui/local/basket/redeem',
-      description: 'Local Pelagos bridge used by basket, tranche, and PPN exits. Resolves the backing market to YES and claims the position.',
-      body: {
-        market_id: 'Sui Market object ID',
-        position_id: 'Sui Position object ID',
-      },
-      response: '{ chain, network, market_id, position_id, digests }',
     },
     {
       method: 'GET',

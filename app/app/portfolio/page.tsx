@@ -1,5 +1,11 @@
 "use client";
 
+// ---------------------------------------------------------------------------
+// Portfolio — a unified position + P&L view across every product (baskets, risk
+// slices, protected notes, distribution, structured sim positions, lending),
+// tracking mUSDC + dUSDC at 1:1 USD, plus a portfolio-driven strategy backtest.
+// ---------------------------------------------------------------------------
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header, PageFrame } from "../_components/Header";

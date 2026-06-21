@@ -1,3 +1,10 @@
+/**
+ * Sui client and signer resolution for the Predict service. Lazily caches a
+ * SuiJsonRpcClient (getSuiClient) and an Ed25519 signer (getSigner), resolved
+ * from PREDICT_SIGNER_PRIVATE_KEY/SUI_PRIVATE_KEY or a Sui CLI keystore at
+ * SUI_KEYSTORE_PATH (matched to SUI_ACTIVE_ADDRESS). signerAddress() returns the
+ * signer's address or null so read-only/devInspect flows work with no key.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';

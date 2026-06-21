@@ -1,3 +1,12 @@
+/**
+ * DeepBook Predict service facade — composes PTB builders into executable flows
+ * and signer-free reads. Writes (createManager, deposit, mint/redeem,
+ * mintRange/redeemRange, supply, withdraw) sign and execute via the configured
+ * keypair; reads (previewTrade, previewRangeBatch, simulateCreateManager,
+ * simulateMint) use devInspect with a fallback sender. previewRangeBatch batches
+ * a whole range strip into one devInspect, with TTL cache, concurrency gate, and
+ * retry to keep live quotes stable against a throttling public RPC.
+ */
 import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 import type { SuiObjectChange } from '@mysten/sui/jsonRpc';

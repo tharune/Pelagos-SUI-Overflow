@@ -1,3 +1,11 @@
+/**
+ * Distribution-market discovery & pricing — turns Polymarket events into
+ * multi-band distribution candidates. Pulls CLOB order books (depth-gated,
+ * cached) and Gamma liquidity, scores/filters candidates
+ * (discoverDistributionCandidates), prices a target curve against the live
+ * reference via a discrete-L2 distribution-AMM (quoteDistributionCandidate),
+ * and builds launch plans (buildDistributionLaunchPlan).
+ */
 import { fetchEvents, fetchMarkets } from './polymarket';
 import { proxiedFetch } from './proxy';
 import { assessQuality, classifyCategory, type Category } from './nlp';

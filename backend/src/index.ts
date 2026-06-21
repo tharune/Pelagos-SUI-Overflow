@@ -1,3 +1,10 @@
+/**
+ * Pelagos backend entrypoint — an Express API (default port 13101) that mounts
+ * the product route groups: live pricing off DeepBook Predict, non-custodial
+ * on-chain transaction prepare/confirm (predict / vault / deposit / sim rails),
+ * Polymarket + DeFiLlama data feeds, and health/metrics. Wallets sign every
+ * mutation; the backend never custodies funds.
+ */
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -14,7 +21,6 @@ import { adminRoutes } from './routes/admin';
 import { leaderboardRoutes } from './routes/leaderboard';
 import { demoRoutes } from './routes/demo';
 import { webhookRoutes } from './routes/webhook';
-import { batchRoutes } from './routes/batch';
 import { ppnRoutes } from './routes/ppn';
 import { alertRoutes } from './routes/alerts';
 import { mlRoutes } from './routes/ml';
@@ -22,12 +28,10 @@ import { onchainRoutes } from './routes/onchain';
 import { metricsRoutes } from './routes/metrics';
 import { lendingRoutes } from './routes/lending';
 import { warmLendingRate } from './services/lending';
-import { hedgeRoutes } from './routes/hedge';
 import portfolioRoutes from './routes/portfolio';
 import vaultRoutes from './routes/vaults';
 import mmRoutes from './routes/mm';
 import { devRoutes } from './routes/dev';
-import { suiRoutes } from './routes/sui';
 import { predictRoutes } from './routes/predict';
 import { volRoutes } from './routes/vol';
 import { distributionRoutes } from './routes/distribution';
@@ -226,18 +230,15 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/demo', demoRoutes);
 app.use('/api/docs', docsRoutes);
 app.use('/api/webhook', webhookRoutes);
-app.use('/api/batch', batchRoutes);
 app.use('/api/ppn', ppnRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/ml', mlRoutes);
 app.use('/api/onchain', onchainRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/lending', lendingRoutes);
-app.use('/api/hedge', hedgeRoutes);
 app.use('/api/vaults', vaultRoutes);
 app.use('/api/portfolio', portfolioLimiter, portfolioRoutes);
 app.use('/api/dev', devRoutes);
-app.use('/api/sui', suiRoutes);
 app.use('/api/predict', predictRoutes);
 app.use('/api/vol', volRoutes);
 app.use('/api/distribution', distributionRoutes);

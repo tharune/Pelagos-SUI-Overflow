@@ -1,5 +1,11 @@
 "use client";
 
+// ---------------------------------------------------------------------------
+// Risk Slices — the tranching-engine landing page. Lists every basket sliced by
+// loss priority (senior paid first, junior takes first loss) and links into the
+// per-basket detail ticket where a slice is priced and deployed.
+// ---------------------------------------------------------------------------
+
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";

@@ -1,3 +1,9 @@
+/**
+ * Correlation service — loads audited ML artifacts and applies decorrelation
+ * at basket-creation time. Exports scoreLegPair (classifier stand-in),
+ * optimizeWeights (greedy decorrelation), assessBasketRisk (VaR/CVaR gate),
+ * and getModelManifest. See the detailed block below for the audit pipeline.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 

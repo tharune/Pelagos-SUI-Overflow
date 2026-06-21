@@ -1,3 +1,9 @@
+/**
+ * Bundle diversification analytics. Exports analyzeDiversification, which
+ * scores a bundle's legs (HHI weight concentration, probability dispersion,
+ * expected/std-dev NAV, best/worst scenarios, and per-leg risk contribution)
+ * into a 0-100 diversification score.
+ */
 import { Leg } from '../types';
 
 /**

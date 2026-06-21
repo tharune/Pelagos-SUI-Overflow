@@ -1,5 +1,11 @@
 "use client";
 
+// ---------------------------------------------------------------------------
+// Distributed Options — a binary options chain ($1 strike contracts priced live
+// off DeepBook Predict range bands) plus a custom distribution-strip builder.
+// Settles in dUSDC (Predict rail) or mUSDC (our Vault<MOCK_USDC> sim rail).
+// ---------------------------------------------------------------------------
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header, PageFrame } from "../_components/Header";
 import { C, FD, FM, FS, EASE, BACKEND_URL } from "../_lib/tokens";

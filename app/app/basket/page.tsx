@@ -1,5 +1,11 @@
 "use client";
 
+// ---------------------------------------------------------------------------
+// Market Baskets — curated baskets of uncorrelated event markets settled on the
+// Pelagos vault. Basic mode is a two-pane selector + detail terminal; Advanced
+// mode exposes each basket's senior / mezzanine / junior risk slices.
+// ---------------------------------------------------------------------------
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Header, PageFrame } from "../_components/Header";

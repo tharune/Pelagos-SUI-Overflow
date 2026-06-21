@@ -2,6 +2,13 @@
 
 Fresh from-scratch deployment under a dedicated wallet. Sui **testnet** (chain `4c78adac`).
 
+## Live hosting
+- **Frontend:** <https://pelagos-sui.vercel.app> (Vercel).
+- **Backend:** non-custodial API on **Akash Network** (container image
+  `ghcr.io/tharune/pelagos-backend`, built by GitHub Actions). The frontend reaches it via
+  `NEXT_PUBLIC_BACKEND_URL`; the public Akash ingress host is lease-bound (changes if the lease moves).
+- **Database:** Supabase (bundles / positions persistence).
+
 ## Deployer / operator wallet
 - **Address:** `0xcad0f800f44a48360c01e9fa2d21e779bd829cb60e7220227ed16bb74d4d73e5`
 - Key in `backend/.env` (`SUI_PRIVATE_KEY`, gitignored) + CLI keystore. Funded with testnet SUI.

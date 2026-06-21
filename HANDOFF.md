@@ -89,13 +89,14 @@ Every trade surface has a currency selector. **mUSDC is now the DEFAULT everywhe
 - Active config: **`backend/.env`** (full, has secrets) + repo-root **`.env.local`**
   (frontend). The `*.sui.local` files are **stale partials** — ignore them.
 - Backend signs from **`SUI_PRIVATE_KEY`** (no `sui` CLI keystore needed); operator/
-  faucet/signer wallet is **`0x450d3450…105d`** (~1 SUI). `ANTHROPIC_API_KEY` is empty.
-- A consolidated teammate-handoff env was generated at **`~/Desktop/pelagos-handoff.env`**
-  (outside the repo, perms 600). All `.env*` are git-ignored — never commit secrets.
+  faucet/signer wallet is **`0xcad0f800…d73e5`** (the 2026-06-16 deployer; see `DEPLOYMENT.md`).
+  `ANTHROPIC_API_KEY` is empty.
+- Keep any consolidated credentials handoff **outside** the repo (perms 600). All `.env*`
+  are git-ignored — never commit secrets.
 
 ## Key files
 - Landing: `app/page.tsx`
-- DeepBook strategies + Protected Notes: `app/app/deepbook/page.tsx`
+- Range Strips (DeepBook strategies) + Protected Notes: `app/app/deepbook/page.tsx`
 - Volatility desk: `app/app/volatility/page.tsx`; 3D surface `…/volatility/_components/VolSurface3D.tsx`
 - Distribution / options chain: `app/app/distribution/page.tsx`
 - Baskets: `app/app/basket/page.tsx`, `app/app/basket/[id]/page.tsx`

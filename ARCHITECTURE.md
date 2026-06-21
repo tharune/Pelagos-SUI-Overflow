@@ -35,12 +35,30 @@ Deployed IDs live in **`DEPLOYMENT.md`**. Pricing uses the protocol's own `get_r
 (real MM bid/ask + slippage); a mintable-band filter ([2%, 98%]) keeps every surfaced bucket actually
 mintable. Settlement is native to DeepBook Predict (oracle settles → permissionless `redeem_range`).
 
+## Why Sui (architectural dependencies)
+
+The design leans on Sui-specific primitives — it is not chain-agnostic:
+
+- **DeepBook Predict** (Mysten, Sui-native) is the pricing + settlement venue for every option / vol /
+  range-strip / PPN-upside leg. No equivalent on-chain range/options primitive exists elsewhere to
+  build this against.
+- **Programmable Transaction Blocks** make each multi-leg product a *single* wallet signature — e.g. a
+  PPN that splits dUSDC into a PLP-floor supply **and** an N-leg upside strip mint atomically, or the
+  combined mUSDC+dUSDC+SUI faucet PTB.
+- **`devInspect`** prices every strip band against live vault state (real MM bid/ask + slippage) with
+  zero gas and no write — the source of all pre-trade quotes.
+- **Object model** — positions are owned objects (`VaultShare<T>`, `NotePosition<T>`, minted ranges),
+  transferable and composable rather than ledger rows.
+- **Parallel execution + shared objects** (Vault, Predict root, Faucet) give the responsive,
+  low-gas, wallet-signed UX; **Sui DeFi** (Bluefin / DeepBook CLOB / Pyth; Suilend / Navi / Scallop /
+  Kai) supplies the BTC mark and the protected-note yield.
+
 ## Backend engines (`backend/src/services`)
 
 - **`options-chain`** — the BTC options chain: each strike priced off DeepBook Predict range liquidity,
   IV from the live SVI smile, depth/risk caps per strike.
 - **`predict/`** — SVI surface, implied density, range-strip pricing + mint PTBs (the shared core under
-  Distributed Options *and* Volatility).
+  Distribution Markets, Volatility, *and* Range Strips).
 - **`volatility`** — prebuilt vol structures + greeks.
 - **`custom-basket` / `baskets` / `market-filter` / `nlp`** — Polymarket discovery → 5-stage NLP quality
   filter → correlation-decorrelated weighting → tranching.

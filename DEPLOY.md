@@ -23,7 +23,9 @@ site's browser fetches localhost — every call fails. So set them **before buil
 for **both Production and Preview** environments.
 
 1. In **Vercel → Project → Settings → Environment Variables**, add the following for
-   **Production AND Preview** (values mirror `.env.local.example`):
+   **Production AND Preview** — the frontend reads only these four. It pulls all canonical on-chain
+   IDs (package, coin types, object IDs) from the backend at runtime, so the package/coin vars do
+   **not** need to be set in Vercel:
 
    | Variable | Value |
    | --- | --- |
@@ -31,12 +33,6 @@ for **both Production and Preview** environments.
    | `NEXT_PUBLIC_CHAIN` | `sui` |
    | `NEXT_PUBLIC_SUI_NETWORK` | `testnet` |
    | `NEXT_PUBLIC_SUI_RPC_URL` | `https://fullnode.testnet.sui.io:443` |
-   | `NEXT_PUBLIC_SUI_ACTIVE_ADDRESS` | `0x78f0be0d03f277c11d696436a3dd2f02c02f9cce118f6c0286fbc701a29ec411` |
-   | `NEXT_PUBLIC_SUI_PACKAGE_ID` | `0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45` |
-   | `NEXT_PUBLIC_SUI_MARKET_MODULE` | `prediction_market` |
-   | `NEXT_PUBLIC_MOCK_USDC_TYPE` | `0x598434be38a69bf97b70490d320a698445990de38eb36e2f4c9d41dbe1ff3e45::mock_usdc::MOCK_USDC` |
-   | `NEXT_PUBLIC_MOCK_USDC_DECIMALS` | `6` |
-   | `NEXT_PUBLIC_MOCK_USDC_METADATA_ID` | `0x952435fcae9412796ddf2a9f0e173c9a2caba7b2f26079714a9e1a3bfd33a287` |
 
    (Optional: `BACKEND_URL` = same as `NEXT_PUBLIC_BACKEND_URL` if any server-side
    route reads the non-public name.)

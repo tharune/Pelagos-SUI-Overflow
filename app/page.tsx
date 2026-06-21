@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Header, PageFrame } from "./app/_components/Header";
 import { C, FD, FM, FS, BACKEND_URL, EASE, fmtUsd } from "./app/_lib/tokens";
 import { monotonePath } from "./app/_lib/curve";
@@ -106,13 +106,6 @@ function pct(value: number, digits = 1): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
-function shortUsd(value: number): string {
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
-  return fmtUsd(value, 0);
-}
-
 /* Clean, non-overshooting curve shared with every chart in the app. */
 function smoothPath(pts: Array<[number, number]>): string {
   return monotonePath(pts);
@@ -212,6 +205,13 @@ function CurveTerminal({ candidate, ready }: { candidate: DistributionCandidate 
           </g>
         )}
       </svg>
+
+      <div className="lp-readout">
+        <div><span className="k">Peak band</span><span className="v">{pct(series[topIndex])}</span></div>
+        <div><span className="k">Live bands</span><span className="v">{candidate ? `${candidate.clob_book_count}/${candidate.band_count}` : `${n}`}</span></div>
+        <div><span className="k">Collateral</span><span className="v">USDC</span></div>
+        <div><span className="k">Settles</span><span className="v">Sui testnet</span></div>
+      </div>
     </div>
   );
 }
@@ -563,9 +563,71 @@ function DistributionViz({ caption }: { caption: string }) {
   );
 }
 
+/* DeepBook Strategies — the core integration, made visible: a live Predict
+   order-book ladder of BTC strike levels with real depth, and the range strip
+   you mint highlighted across the middle bands (Pin / Spread / Wide). */
+function DeepBookViz({ caption }: { caption: string }) {
+  const top = cPlotT;
+  const bottom = cPlotB;
+  const H = bottom - top;
+  const levels = [
+    { px: "70k", depth: 0.30 },
+    { px: "68k", depth: 0.55 },
+    { px: "66k", depth: 0.82, inRange: true },
+    { px: "64k", depth: 1.0, inRange: true, forward: true },
+    { px: "62k", depth: 0.86, inRange: true },
+    { px: "60k", depth: 0.52 },
+    { px: "58k", depth: 0.30 },
+  ];
+  const rowH = H / levels.length;
+  const labX = cPlotL + 6;
+  const barX = labX + 56;
+  const barMax = 220;
+  const spineX = barX - 11;
+  const firstIn = levels.findIndex((l) => l.inRange);
+  const lastIn = levels.length - 1 - [...levels].reverse().findIndex((l) => l.inRange);
+  const bandTop = top + firstIn * rowH;
+  const bandBot = top + (lastIn + 1) * rowH;
+  const chipW = 88;
+  return (
+    <svg viewBox={`0 0 ${CW} ${CH}`} className="feat-chart" role="img" aria-label={caption}>
+      {/* the minted strip — a highlighted depth band across the in-range strikes */}
+      <rect x={spineX} y={bandTop} width={cPlotR - spineX} height={bandBot - bandTop} fill={C.tealLight} fillOpacity="0.06" />
+      <line x1={spineX} x2={cPlotR} y1={bandTop} y2={bandTop} stroke={C.tealLight} strokeOpacity="0.22" strokeWidth="1" strokeDasharray="4 4" />
+      <line x1={spineX} x2={cPlotR} y1={bandBot} y2={bandBot} stroke={C.tealLight} strokeOpacity="0.22" strokeWidth="1" strokeDasharray="4 4" />
+      {/* SPREAD STRIP chip, horizontal at the band's top-right */}
+      <g className="wf-lab">
+        <rect x={cPlotR - chipW} y={bandTop + 6} width={chipW} height={17} rx={4} fill={C.tealLight} fillOpacity="0.14" />
+        <text x={cPlotR - chipW / 2} y={bandTop + 17.5} textAnchor="middle" fill={C.tealLight} fontFamily={FM} fontSize="9" letterSpacing="0.12em">SPREAD STRIP</text>
+      </g>
+      {/* y-axis spine + max-depth reference (matches the other four charts) */}
+      <line x1={spineX} x2={spineX} y1={top} y2={bottom} stroke={C.border} strokeWidth="1" />
+      <line x1={barX + barMax} x2={barX + barMax} y1={top} y2={bottom} stroke={C.border} strokeWidth="1" strokeOpacity="0.5" strokeDasharray="2 5" />
+      {/* depth ladder — one row per live strike; bar ∝ live on-chain book depth */}
+      <g className="wf-stack" style={{ transformBox: "fill-box", transformOrigin: "left center" }}>
+        {levels.map((l, i) => {
+          const cyRow = top + i * rowH + rowH / 2;
+          const w = Math.max(10, l.depth * barMax);
+          const op = l.forward ? 0.95 : l.inRange ? 0.52 : 0.22;
+          return (
+            <g key={l.px}>
+              <text x={labX} y={cyRow + 3.5} textAnchor="start" fill={l.forward ? C.textPrimary : C.textMuted} fontFamily={FM} fontSize="11" fontWeight={l.forward ? 600 : 400}>{l.px}</text>
+              <rect x={barX} y={cyRow - 6} width={w} height={12} rx={2.5} fill={C.tealLight} fillOpacity={op} />
+              {l.forward && (
+                <text x={barX + w + 10} y={cyRow + 3.5} textAnchor="start" fill={C.tealLight} fontFamily={FM} fontSize="10.5" letterSpacing="0.03em">forward · ask $0.41</text>
+              )}
+            </g>
+          );
+        })}
+      </g>
+      <text x={(cPlotL + cPlotR) / 2} y={CH - 9} textAnchor="middle" fill={C.textMuted} fontFamily={FM} fontSize="9.5" letterSpacing="0.05em">{caption}</text>
+    </svg>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 
-type SurfaceId = "distribution" | "basket" | "risk" | "ppn";
+type SurfaceId = "deepbook" | "distribution" | "basket" | "risk" | "ppn";
 
 const SURFACES: Array<{
   id: SurfaceId;
@@ -575,7 +637,8 @@ const SURFACES: Array<{
   href: string;
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
-  { id: "distribution", eyebrow: "Range ladder", title: "Distribution", body: "Drag μ and σ and mint a strip of real DeepBook range options that mirrors your whole view of where BTC lands — in one signature.", href: "/app/distribution", Icon: IconCurve },
+  { id: "deepbook", eyebrow: "Range strips", title: "DeepBook Strategies", body: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
+  { id: "distribution", eyebrow: "Range ladder", title: "Distribution Markets", body: "Drag μ and σ and mint a strip of real DeepBook range options that mirrors your whole view of where BTC lands — in one signature.", href: "/app/distribution", Icon: IconCurve },
   { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple. Plus a cross-venue hybrid.", href: "/app/tranche", Icon: IconSlices },
   { id: "ppn", eyebrow: "Principal protected", title: "Protected Notes", body: "The floor earns itself back in the PLP house pool, the remainder buys an upside range strip — both in one transaction.", href: "/app/ppn", Icon: IconShield },
   { id: "basket", eyebrow: "Strips + events", title: "Baskets", body: "Curated DeepBook BTC strips — Pin, Spread, Wide — across every live expiry, plus uncorrelated event baskets. One venue, one click.", href: "/app/basket", Icon: IconBasket },
@@ -595,13 +658,35 @@ type Showcase = {
 
 const SHOWCASE: Showcase[] = [
   {
+    id: "deepbook",
+    eyebrow: "Range strips",
+    title: "DeepBook Strategies",
+    href: "/app/deepbook",
+    Icon: IconCube,
+    lead: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.",
+    specs: ["Priced live off the DeepBook book", "Pin, Spread, Wide conviction widths", "Every rolling BTC expiry, sub-hour to weeks"],
+    caption: "A range strip minted off the live DeepBook Predict book",
+    legend: [{ name: "Book depth", op: 0.5 }, { name: "Minted strip" }],
+  },
+  {
+    id: "distribution",
+    eyebrow: "Curve trade",
+    title: "Distribution Markets",
+    href: "/app/distribution",
+    Icon: IconCurve,
+    lead: "Trade your whole view of where a number lands — a continuous curve, not a single yes/no.",
+    specs: ["Set your own μ and σ", "Trade your curve against the market's", "Continuous payout, settles on Sui"],
+    caption: "Your sharper view vs the market's implied distribution",
+    legend: [{ name: "Your view" }, { name: "Market", op: 0.3 }, { name: "μ", dashed: true, op: 0.6 }],
+  },
+  {
     id: "basket",
-    eyebrow: "Strips + events",
+    eyebrow: "Diversified events",
     title: "Baskets",
     href: "/app/basket",
     Icon: IconBasket,
-    lead: "Curated BTC strips — Pin, Spread, Wide — on every live DeepBook expiry, plus uncorrelated event baskets.",
-    specs: ["Pin, Spread, Wide shapes", "Live on-chain book per expiry", "Plus uncorrelated event baskets"],
+    lead: "Curated baskets of uncorrelated event markets — pooled so the basket resolves with far less variance than any single leg.",
+    specs: ["NLP-decorrelated event legs", "Pooled, lower-variance payoff", "One click, settled on Sui"],
     caption: "Pooled basket resolves above its uncorrelated components",
     legend: [{ name: "Basket" }, { name: "Components", op: 0.3 }],
   },
@@ -627,17 +712,6 @@ const SHOWCASE: Showcase[] = [
     caption: "Note held at its floor while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor", dashed: true, op: 0.75 }],
   },
-  {
-    id: "distribution",
-    eyebrow: "Curve trade",
-    title: "Distribution Markets",
-    href: "/app/distribution",
-    Icon: IconCurve,
-    lead: "Trade your whole view of where a number lands — a continuous curve, not a single yes/no.",
-    specs: ["Set your own μ and σ", "Trade your curve against the market's", "Continuous payout, settles on Sui"],
-    caption: "Your sharper view vs the market's implied distribution",
-    legend: [{ name: "Your view" }, { name: "Market", op: 0.3 }, { name: "μ", dashed: true, op: 0.6 }],
-  },
 ];
 
 function FeatureRow({ item, index }: { item: Showcase; index: number }) {
@@ -645,9 +719,7 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
   return (
     <div className={`feat-row scroll-fade${reverse ? " is-rev" : ""}`}>
       <div className="feat-panel">
-        <div className="feat-panel-head">
-          <span className="feat-eyebrow">{item.eyebrow}</span>
-        </div>
+        {item.id === "deepbook" && <DeepBookViz caption={item.caption} />}
         {item.id === "basket" && <BasketChart caption={item.caption} />}
         {item.id === "risk" && <WaterfallViz caption={item.caption} />}
         {item.id === "ppn" && <ProtectedViz caption={item.caption} />}
@@ -805,18 +877,6 @@ export default function HomePage() {
   const protectedVaultPct = 1 / Math.pow(1 + vaultApy / 365, MATURITY_DAYS);
   const basketPct = Math.max(0, 1 - protectedVaultPct);
 
-  const depthUsd = candidate?.aggregate_depth_usd ?? 240_000;
-  const volumeUsd = candidate?.aggregate_volume_usd ?? 4_200_000;
-  const stats = useMemo(
-    () => [
-      { label: "Quoting volume", value: shortUsd(volumeUsd), note: "Across live markets" },
-      { label: "Order-book depth", value: shortUsd(depthUsd), note: "CLOB-implied, all bands" },
-      { label: "CLOB books live", value: candidate ? `${candidate.clob_book_count} / ${candidate.band_count}` : "7 / 7", note: "Order books quoting now" },
-      { label: "USDC vault APY", value: pct(vaultApy, 2), note: bestVault?.name ?? "Best Sui yield source" },
-    ],
-    [bestVault, candidate, depthUsd, vaultApy, volumeUsd],
-  );
-
   return (
     <>
       <Header />
@@ -827,12 +887,12 @@ export default function HomePage() {
           .lp-section { padding: 108px 0; border-top: 0.5px solid ${C.border}; }
           .lp-eyebrow { color: ${C.tealLight}; font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; }
           .lp-head { max-width: 660px; }
-          .lp-head h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.12; letter-spacing: -0.03em; font-weight: 600; text-wrap: balance; }
+          .lp-head h2 { margin: 14px 0 0; color: ${C.textPrimary}; font-family: ${FD}; font-size: 28px; line-height: 1.14; letter-spacing: -0.025em; font-weight: 600; text-wrap: balance; }
           .lp-head p { margin: 14px 0 0; color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.6; max-width: 560px; text-wrap: pretty; }
 
           /* ---- hero ---- */
           .lp-hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr); gap: 60px; align-items: center; padding: 76px 0 84px; }
-          .lp-hero-title { color: ${C.textPrimary}; font-family: ${FD}; font-size: clamp(44px, 4.8vw, 64px); line-height: 1.06; letter-spacing: -0.035em; font-weight: 600; margin: 16px 0 0; text-wrap: balance; }
+          .lp-hero-title { color: ${C.textPrimary}; font-family: ${FD}; font-size: clamp(44px, 4.8vw, 62px); line-height: 1.04; letter-spacing: -0.04em; font-weight: 600; font-feature-settings: "ss01", "cv05"; margin: 16px 0 0; text-wrap: balance; }
           .lp-hero-title em { font-style: normal; color: ${C.tealLight}; }
           .lp-hero-sub { color: ${C.textSubtle}; font-family: ${FS}; font-size: 16px; line-height: 1.65; max-width: 520px; margin: 20px 0 0; text-wrap: pretty; }
           .lp-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 32px; }
@@ -877,12 +937,6 @@ export default function HomePage() {
           .lp-readout .v { color: ${C.textPrimary}; font-family: ${FD}; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 
           /* ---- live stat strip (single contained panel) ---- */
-          .lp-stats { display: grid; grid-template-columns: repeat(4, 1fr); border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.cardGradient}; overflow: hidden; }
-          .lp-stat { padding: 28px 28px; border-left: 0.5px solid ${C.border}; }
-          .lp-stat:first-child { border-left: 0; }
-          .lp-stat .k { display: block; color: ${C.textDim}; font-family: ${FM}; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
-          .lp-stat .v { display: block; color: ${C.textPrimary}; font-family: ${FD}; font-size: 30px; font-weight: 600; letter-spacing: -0.035em; margin: 16px 0 0; font-variant-numeric: tabular-nums; }
-          .lp-stat .n { display: block; color: ${C.textMuted}; font-family: ${FS}; font-size: 12.5px; margin-top: 9px; }
 
           /* ---- product showcase (scroll-driven feature rows) ---- */
           .lp-showcase { display: grid; gap: 56px; margin-top: 64px; }
@@ -915,7 +969,7 @@ export default function HomePage() {
           .feat-legend i.dash { background: linear-gradient(90deg, ${C.tealLight} 55%, transparent 0); background-size: 6px 100%; }
 
           .feat-tag { display: inline-flex; align-items: center; gap: 9px; color: ${C.tealLight}; font-family: ${FM}; font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; }
-          .feat-text h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 32px; line-height: 1.05; letter-spacing: -0.03em; font-weight: 600; margin: 16px 0 0; }
+          .feat-text h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 34px; line-height: 1.04; letter-spacing: -0.032em; font-weight: 600; margin: 16px 0 0; }
           .feat-text p { color: ${C.textSubtle}; font-family: ${FS}; font-size: 15px; line-height: 1.62; margin: 16px 0 0; max-width: 440px; }
           .feat-specs { list-style: none; margin: 24px 0 0; display: grid; gap: 11px; }
           .feat-specs li { display: flex; align-items: center; gap: 13px; color: ${C.textSubtle}; font-family: ${FS}; font-size: 14px; }
@@ -938,7 +992,7 @@ export default function HomePage() {
           /* ---- closing (single spec-sheet panel) ---- */
           .lp-close { display: grid; grid-template-columns: 0.86fr 1.14fr; border: 0.5px solid ${C.border}; border-radius: 16px; background: ${C.cardGradient}; overflow: hidden; }
           .lp-close-left { padding: 36px; display: flex; flex-direction: column; border-right: 0.5px solid ${C.border}; }
-          .lp-close-left h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 26px; line-height: 1.14; letter-spacing: -0.03em; font-weight: 600; margin: 16px 0 0; max-width: 320px; text-wrap: balance; }
+          .lp-close-left h3 { color: ${C.textPrimary}; font-family: ${FD}; font-size: 22px; line-height: 1.18; letter-spacing: -0.022em; font-weight: 600; margin: 16px 0 0; max-width: 320px; text-wrap: balance; }
           .lp-close-left p { color: ${C.textSubtle}; font-family: ${FS}; font-size: 14px; line-height: 1.6; margin: 14px 0 0; max-width: 340px; text-wrap: pretty; }
           .lp-close-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 28px; color: ${C.tealLight}; font-family: ${FD}; font-size: 13px; font-weight: 600; text-decoration: none; width: fit-content; }
           .lp-close-cta .lp-ar { transition: transform 0.2s ${EASE}; }
@@ -980,10 +1034,8 @@ export default function HomePage() {
 
           @media (max-width: 1080px) {
             .lp-hero { grid-template-columns: 1fr; gap: 40px; padding-top: 40px; }
-            .lp-stats, .lp-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .lp-pipe { gap: 36px 28px; }
+            .lp-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 28px; }
             .lp-pipe::before { display: none; }
-            .lp-stat:nth-child(3) { border-left: 0; }
             .feat-row { grid-template-columns: 1fr; gap: 28px; }
             .feat-row.is-rev .feat-panel { order: 1; }
             .feat-row.is-rev .feat-text { order: 2; }
@@ -992,8 +1044,7 @@ export default function HomePage() {
             .lp-foot-main { grid-template-columns: 1fr; gap: 32px; }
           }
           @media (max-width: 620px) {
-            .lp-stats, .lp-pipe { grid-template-columns: 1fr; }
-            .lp-stat { border-left: 0; }
+            .lp-pipe { grid-template-columns: 1fr; }
             .lp-readout { grid-template-columns: repeat(2, 1fr); gap: 16px 0; }
             .lp-readout > div:nth-child(3) { border-left: 0; padding-left: 0; }
             .lp-spec-row { grid-template-columns: 1fr; gap: 6px; }
@@ -1006,14 +1057,14 @@ export default function HomePage() {
           {/* ---------------- HERO ---------------- */}
           <section className="lp-hero">
             <div>
-              <div className="lp-eyebrow">Sui testnet · structured markets</div>
+              <div className="lp-eyebrow">Sui testnet · DeepBook Predict</div>
               <h1 className="lp-hero-title">
                 Structured products on <em>live market probability</em>
               </h1>
               <p className="lp-hero-sub">
-                Pelagos turns prediction-market pricing into four composable products: distribution
-                curves, baskets, risk slices, and protected notes. Each is collateralized in USDC and
-                settled on Sui.
+                Pelagos turns live DeepBook Predict pricing into composable structured products — range
+                strips, distribution curves, baskets, risk slices, and protected notes — each
+                collateralized in USDC and settled on Sui.
               </p>
               <div className="lp-actions">
                 <Link className="lp-btn lp-btn-primary" href="/app/portfolio">
@@ -1031,19 +1082,6 @@ export default function HomePage() {
             </div>
 
             <CurveTerminal candidate={candidate} ready={chartReady} />
-          </section>
-
-          {/* ---------------- LIVE STAT STRIP ---------------- */}
-          <section className="scroll-fade">
-            <div className="lp-stats" aria-label="Live Pelagos metrics">
-              {stats.map((s) => (
-                <div key={s.label} className="lp-stat">
-                  <span className="k">{s.label}</span>
-                  <span className="v">{s.value}</span>
-                  <span className="n">{s.note}</span>
-                </div>
-              ))}
-            </div>
           </section>
 
           {/* ---------------- PRODUCT SHOWCASE (scroll-driven) ---------------- */}

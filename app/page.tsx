@@ -94,6 +94,14 @@ function IconCube({ size = 18 }: IconProps) {
   );
 }
 
+function IconVol({ size = 18 }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden>
+      <path d="M3 7c3 0 3.5 9 6.5 9S13 8.5 16 8.5 18 16 21 16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -625,9 +633,44 @@ function DeepBookViz({ caption }: { caption: string }) {
   );
 }
 
+/* Volatility — the implied-vol smile across strikes (lower at ATM, higher in the
+   wings) traded against the flat realized line: the spread is the vol edge. */
+function VolatilityViz({ caption }: { caption: string }) {
+  const smile = [80, 62, 51, 46, 52, 63, 74];
+  const realized = 52;
+  const atmIdx = 3;
+  const n = smile.length;
+  return (
+    <ChartFrame
+      id="vol"
+      caption={caption}
+      yMin={30}
+      yMax={90}
+      yTicks={[{ v: 30, label: "30%" }, { v: 60, label: "60%" }, { v: 90, label: "90%" }]}
+      xLabels={["56k", "60k", "62k", "64k", "66k", "68k", "72k"]}
+    >
+      {(cy, fillId) => (
+        <>
+          {/* realized vol — the flat line the smile is traded against */}
+          {seriesPaths({ values: Array(n).fill(realized), dashed: true, op: 0.5 }, cy, fillId, "rv")}
+          <text className="feat-dash" x={cPlotR - 2} y={cy(realized) - 7} textAnchor="end" fill={C.textMuted} fontFamily={FM} fontSize="9.5">realized {realized}%</text>
+          {/* the implied-vol smile */}
+          {seriesPaths({ values: smile, bold: true, delay: 0.16 }, cy, fillId, "iv")}
+          {/* ATM minimum — the cheapest vol */}
+          <g className="feat-end" style={{ animationDelay: "0.3s" }}>
+            <line x1={cx(atmIdx, n)} x2={cx(atmIdx, n)} y1={cy(smile[atmIdx])} y2={cPlotB} stroke={C.tealLight} strokeWidth="1" strokeOpacity="0.35" strokeDasharray="3 4" />
+            <circle cx={cx(atmIdx, n)} cy={cy(smile[atmIdx])} r={3.6} fill={C.tealLight} />
+            <text x={cx(atmIdx, n)} y={cy(smile[atmIdx]) - 11} textAnchor="middle" fill={C.textPrimary} fontFamily={FM} fontSize="11" fontWeight={600}>ATM {smile[atmIdx]}%</text>
+          </g>
+        </>
+      )}
+    </ChartFrame>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 
-type SurfaceId = "deepbook" | "distribution" | "basket" | "risk" | "ppn";
+type SurfaceId = "deepbook" | "vol" | "distribution" | "basket" | "risk" | "ppn";
 
 const SURFACES: Array<{
   id: SurfaceId;
@@ -638,10 +681,11 @@ const SURFACES: Array<{
   Icon: (p: IconProps) => React.ReactElement;
 }> = [
   { id: "deepbook", eyebrow: "Range strips", title: "DeepBook Strategies", body: "Mint a strip of real DeepBook Predict range options — Pin, Spread, Wide — priced live off the on-chain order book, in one signature.", href: "/app/deepbook", Icon: IconCube },
+  { id: "vol", eyebrow: "Implied vs realized", title: "Volatility", body: "Trade the implied-vol smile against realized — straddles, strangles, condors — built from real DeepBook range strips, with a delta-neutral hedge.", href: "/app/volatility", Icon: IconVol },
   { id: "distribution", eyebrow: "Range ladder", title: "Distribution Markets", body: "Drag μ and σ and mint a strip of real DeepBook range options that mirrors your whole view of where BTC lands — in one signature.", href: "/app/distribution", Icon: IconCurve },
-  { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple. Plus a cross-venue hybrid.", href: "/app/tranche", Icon: IconSlices },
+  { id: "risk", eyebrow: "Conviction slices", title: "Risk Slices", body: "One strip sliced into senior, mezzanine, and junior by width — senior covers wide and defensive, junior pins the forward for the biggest multiple.", href: "/app/tranche", Icon: IconSlices },
   { id: "ppn", eyebrow: "Principal protected", title: "Protected Notes", body: "The floor earns itself back in the PLP house pool, the remainder buys an upside range strip — both in one transaction.", href: "/app/ppn", Icon: IconShield },
-  { id: "basket", eyebrow: "Strips + events", title: "Baskets", body: "Curated DeepBook BTC strips — Pin, Spread, Wide — across every live expiry, plus uncorrelated event baskets. One venue, one click.", href: "/app/basket", Icon: IconBasket },
+  { id: "basket", eyebrow: "Diversified events", title: "Baskets", body: "Curated baskets of uncorrelated event markets, pooled so the basket resolves with far less variance than any single leg.", href: "/app/basket", Icon: IconBasket },
 ];
 
 type Showcase = {
@@ -669,6 +713,17 @@ const SHOWCASE: Showcase[] = [
     legend: [{ name: "Book depth", op: 0.5 }, { name: "Minted strip" }],
   },
   {
+    id: "vol",
+    eyebrow: "Implied vs realized",
+    title: "Volatility",
+    href: "/app/volatility",
+    Icon: IconVol,
+    lead: "Trade the implied-vol smile against realized — straddles, strangles, and condors built from real DeepBook range strips, with a delta-neutral hedge.",
+    specs: ["Implied-vol smile across every strike", "Straddle, strangle, condor structures", "Optional delta-neutral perp hedge"],
+    caption: "Implied-vol smile traded against realized vol",
+    legend: [{ name: "Implied vol" }, { name: "Realized", dashed: true, op: 0.55 }],
+  },
+  {
     id: "distribution",
     eyebrow: "Curve trade",
     title: "Distribution Markets",
@@ -678,17 +733,6 @@ const SHOWCASE: Showcase[] = [
     specs: ["Set your own μ and σ", "Trade your curve against the market's", "Continuous payout, settles on Sui"],
     caption: "Your sharper view vs the market's implied distribution",
     legend: [{ name: "Your view" }, { name: "Market", op: 0.3 }, { name: "μ", dashed: true, op: 0.6 }],
-  },
-  {
-    id: "basket",
-    eyebrow: "Diversified events",
-    title: "Baskets",
-    href: "/app/basket",
-    Icon: IconBasket,
-    lead: "Curated baskets of uncorrelated event markets — pooled so the basket resolves with far less variance than any single leg.",
-    specs: ["NLP-decorrelated event legs", "Pooled, lower-variance payoff", "One click, settled on Sui"],
-    caption: "Pooled basket resolves above its uncorrelated components",
-    legend: [{ name: "Basket" }, { name: "Components", op: 0.3 }],
   },
   {
     id: "risk",
@@ -712,6 +756,17 @@ const SHOWCASE: Showcase[] = [
     caption: "Note held at its floor while the underlying keeps the upside",
     legend: [{ name: "Note value" }, { name: "Underlying", op: 0.42 }, { name: "Floor", dashed: true, op: 0.75 }],
   },
+  {
+    id: "basket",
+    eyebrow: "Diversified events",
+    title: "Baskets",
+    href: "/app/basket",
+    Icon: IconBasket,
+    lead: "Curated baskets of uncorrelated event markets — pooled so the basket resolves with far less variance than any single leg.",
+    specs: ["NLP-decorrelated event legs", "Pooled, lower-variance payoff", "One click, settled on Sui"],
+    caption: "Pooled basket resolves above its uncorrelated components",
+    legend: [{ name: "Basket" }, { name: "Components", op: 0.3 }],
+  },
 ];
 
 function FeatureRow({ item, index }: { item: Showcase; index: number }) {
@@ -720,6 +775,7 @@ function FeatureRow({ item, index }: { item: Showcase; index: number }) {
     <div className={`feat-row scroll-fade${reverse ? " is-rev" : ""}`}>
       <div className="feat-panel">
         {item.id === "deepbook" && <DeepBookViz caption={item.caption} />}
+        {item.id === "vol" && <VolatilityViz caption={item.caption} />}
         {item.id === "basket" && <BasketChart caption={item.caption} />}
         {item.id === "risk" && <WaterfallViz caption={item.caption} />}
         {item.id === "ppn" && <ProtectedViz caption={item.caption} />}

@@ -128,6 +128,7 @@ curl http://localhost:13101/api/health
 
 - **[`DEPLOYMENT.md`](DEPLOYMENT.md)** — live testnet package/object IDs + verified on-chain flows.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — topology, backend engines, data sources, and why Sui.
+- **[`PRODUCTS.md`](PRODUCTS.md)** — every product: how it's built, priced, and settled.
 - **[`README_DEEPBOOK.md`](README_DEEPBOOK.md)** — detailed DeepBook Predict integration writeup.
 - **[`MARKET_FILTER.md`](MARKET_FILTER.md)** — the 5-stage NLP market-quality filter behind baskets.
 - **[`backend/README.md`](backend/README.md)** · **[`backend/SETUP.md`](backend/SETUP.md)** — backend setup.
